@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/uvwt/agentdock/internal/auth"
 	"github.com/uvwt/agentdock/internal/config"
@@ -116,6 +115,10 @@ func TestOAuthDynamicRegistrationAuthorizationCodeAndRefreshFlow(t *testing.T) {
 		t.Fatalf("token payload = %#v", tokenPayload)
 	}
 	assertAuthorizedAccessToken(t, cfg, store, tokenPayload.AccessToken)
+	queryTokenRequest := httptest.NewRequest(http.MethodPost, "/mcp?access_token="+url.QueryEscape(tokenPayload.AccessToken), nil)
+	if authorizedOAuth(queryTokenRequest, cfg, store) {
+		t.Fatal("access token supplied through the query string was accepted")
+	}
 
 	wrongClientID := oauthRegisteredClientID(t, store, "https://other.example/callback")
 	wrongClientRefresh := url.Values{
@@ -157,6 +160,13 @@ func TestOAuthDynamicRegistrationAuthorizationCodeAndRefreshFlow(t *testing.T) {
 		t.Fatalf("refreshed token payload = %#v", refreshed)
 	}
 	assertAuthorizedAccessToken(t, cfg, store, refreshed.AccessToken)
+	wrongResourceConfig := cfg
+	wrongResourceConfig.OAuthServerURL = "https://other-agentdock.example"
+	wrongResourceRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	wrongResourceRequest.Header.Set("Authorization", "Bearer "+refreshed.AccessToken)
+	if authorizedOAuth(wrongResourceRequest, wrongResourceConfig, store) {
+		t.Fatal("resource-bound access token was accepted by another OAuth issuer")
+	}
 
 	replayResponse := postTokenRequest(t, cfg, store, tokenValues)
 	assertOAuthError(t, replayResponse, http.StatusBadRequest, "invalid_grant")
@@ -171,15 +181,6 @@ func TestOAuthDynamicRegistrationAuthorizationCodeAndRefreshFlow(t *testing.T) {
 	}
 	assertOAuthError(t, postTokenRequest(t, cfg, store, refreshedValues), http.StatusBadRequest, "invalid_grant")
 
-	wrongAudienceRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	wrongAudienceToken, err := auth.IssueToken(cfg.OAuthServerURL, cfg.OAuthServerURL+"/other", "grant-id", oauthSigningKey(), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrongAudienceRequest.Header.Set("Authorization", "Bearer "+wrongAudienceToken)
-	if authorizedOAuth(wrongAudienceRequest, cfg, store) {
-		t.Fatal("wrong-audience access token was accepted")
-	}
 }
 
 func assertAuthorizedAccessToken(t *testing.T, cfg config.Config, store *auth.OAuthStore, token string) {
@@ -502,15 +503,8 @@ func TestOAuthTokenGrantsRequireResource(t *testing.T) {
 	cfg := oauthTestConfig(t)
 	store := auth.NewOAuthStore()
 	clientID := oauthRegisteredClientID(t, store, oauthTestRedirect)
-	code, err := store.Create(auth.OAuthCode{
-		ClientID: clientID, RedirectURI: oauthTestRedirect,
-		Challenge: oauthTestChallenge, Resource: cfg.OAuthServerURL + "/mcp",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	missingCodeResource := url.Values{
-		"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID},
+		"grant_type": {"authorization_code"}, "code": {"unused-code"}, "client_id": {clientID},
 		"redirect_uri": {oauthTestRedirect}, "code_verifier": {oauthTestVerifier},
 	}
 	assertOAuthError(t, postTokenRequest(t, cfg, store, missingCodeResource), http.StatusBadRequest, "invalid_target")

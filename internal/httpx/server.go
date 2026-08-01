@@ -18,6 +18,9 @@ import (
 	"sync"
 	"time"
 
+	gooauth2 "github.com/go-oauth2/oauth2/v4"
+	oautherrors "github.com/go-oauth2/oauth2/v4/errors"
+	oauthserver "github.com/go-oauth2/oauth2/v4/server"
 	"github.com/uvwt/agentdock/internal/auth"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/httpx/requestmeta"
@@ -698,19 +701,10 @@ func handleAuthorize(w http.ResponseWriter, r *http.Request, cfg config.Config, 
 		writeAuthorizeForm(w, values, "invalid password", registration.ClientName)
 		return
 	}
-	code, err := codes.Create(auth.OAuthCode{
-		ClientID: clientID, RedirectURI: redirectURI, Challenge: challenge, Resource: resource,
-	})
-	if err != nil {
-		redirectOAuthError(w, r, redirectURI, state, "server_error")
-		return
+	protocol := newOAuthProtocolServer(cfg, codes)
+	if err := protocol.HandleAuthorizeRequest(w, r); err != nil {
+		slog.Warn("OAuth authorize request failed", "error", err)
 	}
-	responseValues := url.Values{"code": []string{code}}
-	if state != "" {
-		responseValues.Set("state", state)
-	}
-	location := auth.AppendQuery(redirectURI, responseValues)
-	http.Redirect(w, r, location, http.StatusFound)
 }
 
 var authorizationParameterNames = []string{
@@ -766,11 +760,17 @@ func handleToken(w http.ResponseWriter, r *http.Request, cfg config.Config, stor
 		writeJSONStatus(w, status, map[string]any{"error": "invalid_client"})
 		return
 	}
-	if grantType == "refresh_token" {
-		handleRefreshTokenGrant(w, r, cfg, store)
+	resource := strings.TrimSpace(r.PostForm.Get("resource"))
+	if len(r.PostForm["resource"]) != 1 || resource == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_target"})
 		return
 	}
-	handleAuthorizationCodeGrant(w, r, cfg, store)
+	issuer := issuerFor(cfg, r)
+	r = r.WithContext(auth.WithOAuthRequest(r.Context(), issuer, resource, strings.TrimSpace(r.PostForm.Get("client_id"))))
+	protocol := newOAuthProtocolServer(cfg, store)
+	if err := protocol.HandleTokenRequest(w, r); err != nil {
+		slog.Warn("OAuth token request failed", "error", err)
+	}
 }
 
 func parseOAuthTokenForm(r *http.Request) error {
@@ -796,106 +796,50 @@ func parseOAuthTokenForm(r *http.Request) error {
 	return nil
 }
 
-func handleAuthorizationCodeGrant(w http.ResponseWriter, r *http.Request, cfg config.Config, store *auth.OAuthStore) {
-	clientID := strings.TrimSpace(r.PostForm.Get("client_id"))
-	resource := strings.TrimSpace(r.PostForm.Get("resource"))
-	if len(r.PostForm["resource"]) != 1 || resource == "" {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_target"})
-		return
-	}
-	code, ok, replay := store.Redeem(
-		r.PostForm.Get("code"), clientID, r.PostForm.Get("redirect_uri"),
-		r.PostForm.Get("code_verifier"), resource,
-	)
-	if replay {
-		if err := store.RevokeGrant(code.GrantID, oauthRefreshTokenTTL); err != nil {
-			writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": "server_error"})
-			return
-		}
-	}
-	if !ok {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_grant"})
-		return
-	}
-	resource = code.Resource
-	issuer := issuerFor(cfg, r)
-	grantTTL := oauthAccessTokenTTL
-	if store.ClientAllowsGrant(clientID, "refresh_token") {
-		grantTTL = oauthRefreshTokenTTL
-	}
-	if err := store.ActivateGrant(clientID, resource, code.GrantID, grantTTL); err != nil {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_grant"})
-		return
-	}
-	accessToken, err := auth.IssueToken(issuer, resource, code.GrantID, oauthSigningKey(), oauthAccessTokenTTL)
-	if err != nil {
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": "server_error"})
-		return
-	}
-	refreshToken := ""
-	if store.ClientAllowsGrant(clientID, "refresh_token") {
-		refreshToken, err = store.IssueRefreshToken(clientID, resource, code.GrantID, oauthRefreshTokenTTL)
-		if err != nil {
-			writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": "server_error"})
-			return
-		}
-	}
-	writeOAuthTokenResponse(w, accessToken, refreshToken)
-}
-
-func handleRefreshTokenGrant(w http.ResponseWriter, r *http.Request, cfg config.Config, store *auth.OAuthStore) {
-	clientID := strings.TrimSpace(r.FormValue("client_id"))
-	resource := strings.TrimSpace(r.FormValue("resource"))
-	if len(r.PostForm["resource"]) != 1 || resource == "" {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_target"})
-		return
-	}
-	newRefreshToken, resource, grantID, ok, err := store.RotateRefreshToken(
-		r.FormValue("refresh_token"),
-		clientID,
-		resource,
-		oauthRefreshTokenTTL,
-	)
-	if err != nil {
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": "server_error"})
-		return
-	}
-	if !ok {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_grant"})
-		return
-	}
-	accessToken, err := auth.IssueToken(issuerFor(cfg, r), resource, grantID, oauthSigningKey(), oauthAccessTokenTTL)
-	if err != nil {
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": "server_error"})
-		return
-	}
-	writeOAuthTokenResponse(w, accessToken, newRefreshToken)
-}
-
-func writeOAuthTokenResponse(w http.ResponseWriter, accessToken, refreshToken string) {
-	payload := map[string]any{
-		"access_token": accessToken,
-		"token_type":   "Bearer",
-		"expires_in":   int(oauthAccessTokenTTL / time.Second),
-	}
-	if refreshToken != "" {
-		payload["refresh_token"] = refreshToken
-	}
-	writeJSON(w, payload)
-}
-
 func authorizedOAuth(r *http.Request, cfg config.Config, store *auth.OAuthStore) bool {
 	if !cfg.OAuthEnabled {
 		return false
 	}
-	token, ok := auth.ParseBearerToken(r.Header.Get("Authorization"))
-	if !ok {
-		return false
-	}
 	issuer := issuerFor(cfg, r)
-	audience := issuer + "/mcp"
-	grantID, valid := auth.ValidateToken(token, issuer, audience, oauthSigningKey())
-	return valid && store.GrantActive(grantID)
+	resource := issuer + "/mcp"
+	ctx := auth.WithOAuthRequest(r.Context(), issuer, resource, "")
+	_, err := newOAuthProtocolServer(cfg, store).ValidationBearerToken(r.WithContext(ctx))
+	return err == nil
+}
+
+func newOAuthProtocolServer(cfg config.Config, store *auth.OAuthStore) *oauthserver.Server {
+	manager := auth.NewOAuthManager(
+		store,
+		oauthSigningKey(),
+		oauthAccessTokenTTL,
+		oauthRefreshTokenTTL,
+	)
+	protocolConfig := oauthserver.NewConfig()
+	protocolConfig.AllowedResponseTypes = []gooauth2.ResponseType{gooauth2.Code}
+	protocolConfig.AllowedGrantTypes = []gooauth2.GrantType{gooauth2.AuthorizationCode, gooauth2.Refreshing}
+	protocolConfig.AllowedCodeChallengeMethods = []gooauth2.CodeChallengeMethod{gooauth2.CodeChallengeS256}
+	protocolConfig.ForcePKCE = true
+
+	protocol := oauthserver.NewServer(protocolConfig, manager)
+	protocol.SetClientInfoHandler(oauthserver.ClientFormHandler)
+	protocol.SetAccessTokenResolveHandler(func(request *http.Request) (string, bool) {
+		return auth.ParseBearerToken(request.Header.Get("Authorization"))
+	})
+	protocol.SetClientAuthorizedHandler(func(clientID string, grant gooauth2.GrantType) (bool, error) {
+		return store.ClientAllowsGrant(clientID, grant.String()), nil
+	})
+	protocol.SetUserAuthorizationHandler(func(http.ResponseWriter, *http.Request) (string, error) {
+		return "agentdock-user", nil
+	})
+	protocol.SetResponseErrorHandler(func(response *oautherrors.Response) {
+		switch response.Error {
+		case oautherrors.ErrInvalidGrant, oautherrors.ErrInvalidAuthorizeCode,
+			oautherrors.ErrInvalidRefreshToken, oautherrors.ErrExpiredRefreshToken:
+			response.Error = oautherrors.ErrInvalidGrant
+			response.StatusCode = http.StatusBadRequest
+		}
+	})
+	return protocol
 }
 
 func oauthSigningKey() string { return os.Getenv("AGENTDOCK_OAUTH_TOKEN_SECRET") }

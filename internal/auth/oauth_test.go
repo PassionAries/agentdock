@@ -43,163 +43,6 @@ func TestRandomTokenUsesRequestedEntropyLength(t *testing.T) {
 	}
 }
 
-func TestOAuthStoreRedeemDoesNotConsumeCodeOnBindingFailure(t *testing.T) {
-	store := NewOAuthStore()
-	original := OAuthCode{
-		ClientID:    "client-id",
-		RedirectURI: "https://client.example/callback",
-		Challenge:   "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-		Resource:    "https://agentdock.example/mcp",
-	}
-	code, err := store.Create(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, _ := store.Redeem(code, original.ClientID, original.RedirectURI, strings.Repeat("x", 43), original.Resource); ok {
-		t.Fatal("authorization code accepted with the wrong verifier")
-	}
-	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-	if _, ok, _ := store.Redeem(code, original.ClientID, original.RedirectURI, verifier, original.Resource); !ok {
-		t.Fatal("binding failure consumed the authorization code")
-	}
-	if _, ok, replay := store.Redeem(code, original.ClientID, original.RedirectURI, verifier, original.Resource); ok || !replay {
-		t.Fatal("successfully redeemed authorization code was accepted twice")
-	}
-}
-
-func TestOAuthStoreRedeemRejectsAndRemovesExpiredCode(t *testing.T) {
-	store := NewOAuthStore()
-	code, err := store.Create(OAuthCode{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.mu.Lock()
-	expired := store.codes[code]
-	expired.ExpiresAt = time.Now().Add(-time.Second)
-	store.codes[code] = expired
-	store.mu.Unlock()
-	if _, ok, _ := store.Redeem(code, "", "", "", ""); ok {
-		t.Fatal("expired authorization code was accepted")
-	}
-	if _, remains := store.codes[code]; remains {
-		t.Fatal("expired authorization code was not removed")
-	}
-}
-
-func TestOAuthStoreCreatePrunesExpiredCodesAtCapacity(t *testing.T) {
-	store := NewOAuthStore()
-	for index := 0; index < maxOAuthCodes; index++ {
-		store.codes[fmt.Sprintf("expired-%d", index)] = OAuthCode{ExpiresAt: time.Now().Add(-time.Minute)}
-	}
-	if _, err := store.Create(OAuthCode{}); err != nil {
-		t.Fatalf("Create() after expired code pruning: %v", err)
-	}
-	if len(store.codes) != 1 {
-		t.Fatalf("authorization code count = %d, want 1", len(store.codes))
-	}
-}
-
-func TestRevokedGrantPreventsLaterRefreshTokenIssuanceAcrossReload(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "oauth", "state-v1.json")
-	store, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RevokeGrant(oauthTestGrantID, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.IssueRefreshToken("client", "https://agentdock.example/mcp", oauthTestGrantID, time.Hour); err == nil {
-		t.Fatal("IssueRefreshToken() accepted a revoked grant")
-	}
-	reloaded, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reloaded.IssueRefreshToken("client", "https://agentdock.example/mcp", oauthTestGrantID, time.Hour); err == nil {
-		t.Fatal("IssueRefreshToken() accepted a persisted revoked grant")
-	}
-}
-
-func TestPersistentOAuthStoreRotatesRefreshTokensAcrossReloads(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "oauth", "state-v1.json")
-	store, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const clientID = "signed-client-id"
-	const resource = "https://agentdock.example/mcp"
-	if err := store.ActivateGrant(clientID, resource, oauthTestGrantID, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	refreshToken, err := store.IssueRefreshToken(clientID, resource, oauthTestGrantID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), refreshToken) {
-		t.Fatal("OAuth state persisted the raw refresh token")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
-		t.Fatalf("OAuth state mode = %o, want 600", info.Mode().Perm())
-	}
-
-	reloaded, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rotated, gotResource, _, ok, err := reloaded.RotateRefreshToken(refreshToken, clientID, resource, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok || rotated == "" || rotated == refreshToken || gotResource != resource {
-		t.Fatalf("rotation = token:%t resource:%q ok:%v", rotated != "", gotResource, ok)
-	}
-	reloadedAgain, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondRotation, _, _, ok, err := reloadedAgain.RotateRefreshToken(rotated, clientID, resource, time.Hour)
-	if err != nil || !ok || secondRotation == "" {
-		t.Fatalf("persisted rotated token = token:%t ok:%v err:%v", secondRotation != "", ok, err)
-	}
-	if _, _, _, ok, err := reloadedAgain.RotateRefreshToken(refreshToken, clientID, resource, time.Hour); err != nil || ok {
-		t.Fatalf("consumed refresh token replay = ok:%v err:%v", ok, err)
-	}
-	if _, _, _, ok, err := reloadedAgain.RotateRefreshToken(secondRotation, clientID, resource, time.Hour); err != nil || ok {
-		t.Fatalf("refresh token family remained active after replay = ok:%v err:%v", ok, err)
-	}
-}
-
-func TestRefreshGenerationRotationRemainsBounded(t *testing.T) {
-	store := NewOAuthStore()
-	const clientID = "client-id"
-	const resource = "https://agentdock.example/mcp"
-	if err := store.ActivateGrant(clientID, resource, oauthTestGrantID, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := store.IssueRefreshToken(clientID, resource, oauthTestGrantID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for index := 0; index < 2500; index++ {
-		next, _, _, ok, err := store.RotateRefreshToken(raw, clientID, resource, time.Hour)
-		if err != nil || !ok {
-			t.Fatalf("rotation %d failed: ok=%v err=%v", index, ok, err)
-		}
-		raw = next
-	}
-	if len(store.grants) != 1 || store.grants[oauthTestGrantID].CurrentGeneration != 2501 {
-		t.Fatalf("grant state = %#v", store.grants)
-	}
-}
-
 func TestPersistentOAuthStoreRegistersShortClientAcrossReloads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oauth", "state-v1.json")
 	store, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
@@ -255,30 +98,6 @@ func TestPersistentOAuthStoreRegistersShortClientAcrossReloads(t *testing.T) {
 	}
 }
 
-func TestPersistentOAuthStoreWritesVersionOneState(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "oauth", "state-v1.json")
-	store, err := NewPersistentOAuthStore(path, "test-refresh-signing-key-32-bytes-long")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ActivateGrant("client", "https://agentdock.example/mcp", oauthTestGrantID, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state struct {
-		Version int `json:"version"`
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		t.Fatal(err)
-	}
-	if state.Version != 1 {
-		t.Fatalf("OAuth state version = %d, want 1", state.Version)
-	}
-}
-
 func TestPersistentOAuthStoreRejectsVersionTwoState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "oauth", "state-v1.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -318,28 +137,6 @@ func TestPersistentOAuthStoreRejectsVersionFourState(t *testing.T) {
 	}
 }
 
-func TestOAuthRefreshTokenRejectsClientAndResourceMismatchWithoutConsumption(t *testing.T) {
-	store := NewOAuthStore()
-	const clientID = "client-id"
-	const resource = "https://agentdock.example/mcp"
-	if err := store.ActivateGrant(clientID, resource, oauthTestGrantID, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	refreshToken, err := store.IssueRefreshToken(clientID, resource, oauthTestGrantID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, ok, err := store.RotateRefreshToken(refreshToken, "other-client", resource, time.Hour); err != nil || ok {
-		t.Fatalf("wrong client rotation = ok:%v err:%v", ok, err)
-	}
-	if _, _, _, ok, err := store.RotateRefreshToken(refreshToken, clientID, "https://agentdock.example/other", time.Hour); err != nil || ok {
-		t.Fatalf("wrong resource rotation = ok:%v err:%v", ok, err)
-	}
-	if rotated, _, _, ok, err := store.RotateRefreshToken(refreshToken, clientID, resource, time.Hour); err != nil || !ok || rotated == "" {
-		t.Fatalf("valid rotation after mismatches = token:%t ok:%v err:%v", rotated != "", ok, err)
-	}
-}
-
 func TestPersistentOAuthStoreRejectsCorruptState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state-v1.json")
 	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
@@ -376,59 +173,7 @@ func TestVerifyPKCEUsesS256(t *testing.T) {
 	}
 }
 
-func TestIssueAndValidateToken(t *testing.T) {
-	const issuer = "https://agentdock.example"
-	const audience = issuer + "/mcp"
-	const key = "test-signing-key"
-	const grantID = oauthTestGrantID
-	token, err := IssueToken(issuer, audience, grantID, key, time.Hour)
-	if err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
-	}
-	if gotGrantID, ok := ValidateToken(token, issuer, audience, key); !ok || gotGrantID != grantID {
-		t.Fatal("ValidateToken() rejected freshly issued token")
-	}
-	if _, ok := ValidateToken(token, "https://other.example", audience, key); ok {
-		t.Fatal("ValidateToken() accepted wrong issuer")
-	}
-	if _, ok := ValidateToken(token, issuer, "https://other.example/mcp", key); ok {
-		t.Fatal("ValidateToken() accepted wrong audience")
-	}
-	if _, ok := ValidateToken(token, issuer, audience, "wrong-key"); ok {
-		t.Fatal("ValidateToken() accepted wrong signing key")
-	}
-	parts := strings.Split(token, ".")
-	parts[1] = strings.Repeat("A", len(parts[1]))
-	if _, ok := ValidateToken(strings.Join(parts, "."), issuer, audience, key); ok {
-		t.Fatal("ValidateToken() accepted tampered signature")
-	}
-}
-
-func TestIssueTokenValidatesRequiredInputs(t *testing.T) {
-	tests := []struct {
-		name     string
-		issuer   string
-		audience string
-		grantID  string
-		key      string
-		ttl      time.Duration
-	}{
-		{name: "missing issuer", audience: "audience", grantID: "grant", key: "key", ttl: time.Hour},
-		{name: "missing audience", issuer: "issuer", grantID: "grant", key: "key", ttl: time.Hour},
-		{name: "missing grant", issuer: "issuer", audience: "audience", key: "key", ttl: time.Hour},
-		{name: "missing key", issuer: "issuer", audience: "audience", grantID: "grant", ttl: time.Hour},
-		{name: "non-positive ttl", issuer: "issuer", audience: "audience", grantID: "grant", key: "key"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := IssueToken(test.issuer, test.audience, test.grantID, test.key, test.ttl); err == nil {
-				t.Fatal("IssueToken() error = nil, want validation error")
-			}
-		})
-	}
-}
-
-func TestValidateTokenRejectsInvalidClaims(t *testing.T) {
+func TestValidateLegacyAccessTokenRejectsInvalidClaims(t *testing.T) {
 	const issuer = "https://agentdock.example"
 	const audience = issuer + "/mcp"
 	const key = "test-signing-key"
@@ -475,13 +220,13 @@ func TestValidateTokenRejectsInvalidClaims(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			token := signClaimsForTest(t, test.claims, key)
-			if _, ok := ValidateToken(token, issuer, audience, key); ok {
+			if _, ok := validateLegacyAccessToken(token, issuer, audience, key); ok {
 				t.Fatal("ValidateToken() accepted invalid claims")
 			}
 		})
 	}
 	for _, token := range []string{"", "one-part", "not-base64.signature", "e30.invalid-signature"} {
-		if _, ok := ValidateToken(token, issuer, audience, key); ok {
+		if _, ok := validateLegacyAccessToken(token, issuer, audience, key); ok {
 			t.Fatalf("ValidateToken(%q) = true, want false", token)
 		}
 	}

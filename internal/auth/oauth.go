@@ -33,12 +33,15 @@ const (
 )
 
 type OAuthStore struct {
-	mu         sync.Mutex
-	codes      map[string]OAuthCode
-	grants     map[string]OAuthGrant
-	clients    map[string]OAuthClientRegistration
-	statePath  string
-	signingKey string
+	mu          sync.Mutex
+	codes       map[string]OAuthCode
+	grants      map[string]OAuthGrant
+	clients     map[string]OAuthClientRegistration
+	accessIndex map[string]string
+	statePath   string
+	signingKey  string
+	accessTTL   time.Duration
+	refreshTTL  time.Duration
 }
 
 type OAuthCode struct {
@@ -54,6 +57,10 @@ type OAuthCode struct {
 type OAuthGrant struct {
 	ClientID          string `json:"client_id"`
 	Resource          string `json:"resource"`
+	AccessTokenHash   string `json:"access_token_hash,omitempty"`
+	AccessIssuedAt    int64  `json:"access_issued_at,omitempty"`
+	AccessExpiresAt   int64  `json:"access_expires_at,omitempty"`
+	RefreshIssuedAt   int64  `json:"refresh_issued_at,omitempty"`
 	CurrentGeneration uint64 `json:"current_generation"`
 	ExpiresAt         int64  `json:"expires_at"`
 	Revoked           bool   `json:"revoked,omitempty"`
@@ -93,10 +100,13 @@ func NewOAuthStore() *OAuthStore {
 		panic(fmt.Sprintf("generate in-memory OAuth signing key: %v", err))
 	}
 	return &OAuthStore{
-		codes:      map[string]OAuthCode{},
-		grants:     map[string]OAuthGrant{},
-		clients:    map[string]OAuthClientRegistration{},
-		signingKey: key,
+		codes:       map[string]OAuthCode{},
+		grants:      map[string]OAuthGrant{},
+		clients:     map[string]OAuthClientRegistration{},
+		accessIndex: map[string]string{},
+		signingKey:  key,
+		accessTTL:   time.Hour,
+		refreshTTL:  90 * 24 * time.Hour,
 	}
 }
 
@@ -180,6 +190,7 @@ func NewPersistentOAuthStore(path, signingKey string) (*OAuthStore, error) {
 	}
 	store.grants = state.Grants
 	store.clients = state.Clients
+	store.rebuildAccessIndexLocked()
 	if pruned {
 		store.mu.Lock()
 		err = store.persistStateLocked()
@@ -191,156 +202,12 @@ func NewPersistentOAuthStore(path, signingKey string) (*OAuthStore, error) {
 	return store, nil
 }
 
-func (s *OAuthStore) Create(code OAuthCode) (string, error) {
-	value, err := RandomToken(32)
-	if err != nil {
-		return "", fmt.Errorf("generate authorization code: %w", err)
-	}
-	if code.GrantID == "" {
-		code.GrantID, err = RandomToken(24)
-		if err != nil {
-			return "", fmt.Errorf("generate authorization grant ID: %w", err)
-		}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	s.pruneExpiredCodesLocked(now)
-	if len(s.codes) >= maxOAuthCodes {
-		return "", fmt.Errorf("OAuth authorization code limit %d reached", maxOAuthCodes)
-	}
-	code.ExpiresAt = now.Add(5 * time.Minute)
-	s.codes[value] = code
-	return value, nil
-}
-
 func (s *OAuthStore) pruneExpiredCodesLocked(now time.Time) {
 	for raw, code := range s.codes {
 		if !code.ExpiresAt.After(now) {
 			delete(s.codes, raw)
 		}
 	}
-}
-
-// Redeem validates every authorization-code binding while holding the store
-// lock and consumes the code only after all checks succeed.
-func (s *OAuthStore) Redeem(raw, clientID, redirectURI, verifier, resource string) (OAuthCode, bool, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	code, ok := s.codes[strings.TrimSpace(raw)]
-	if !ok || time.Now().After(code.ExpiresAt) {
-		delete(s.codes, strings.TrimSpace(raw))
-		return OAuthCode{}, false, false
-	}
-	if code.Redeemed {
-		return code, false, true
-	}
-	if code.ClientID != strings.TrimSpace(clientID) ||
-		code.RedirectURI != strings.TrimSpace(redirectURI) ||
-		!EquivalentResourceURI(code.Resource, resource) ||
-		!VerifyPKCE(verifier, code.Challenge) {
-		return OAuthCode{}, false, false
-	}
-	code.Redeemed = true
-	s.codes[strings.TrimSpace(raw)] = code
-	return code, true, false
-}
-
-func (s *OAuthStore) ActivateGrant(clientID, resource, grantID string, ttl time.Duration) error {
-	clientID, resource, grantID = strings.TrimSpace(clientID), strings.TrimSpace(resource), strings.TrimSpace(grantID)
-	if clientID == "" || resource == "" || grantID == "" || ttl <= 0 {
-		return errors.New("client ID, resource, grant ID, and positive TTL are required")
-	}
-	now := time.Now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pruneExpiredGrantsLocked(now.Unix())
-	if existing, ok := s.grants[grantID]; ok {
-		if existing.Revoked {
-			return errors.New("authorization grant is revoked")
-		}
-		return errors.New("authorization grant already exists")
-	}
-	if len(s.grants) >= maxOAuthGrants {
-		return fmt.Errorf("OAuth grant limit %d reached", maxOAuthGrants)
-	}
-	s.grants[grantID] = OAuthGrant{ClientID: clientID, Resource: resource, ExpiresAt: now.Add(ttl).Unix()}
-	if err := s.persistStateLocked(); err != nil {
-		delete(s.grants, grantID)
-		return err
-	}
-	return nil
-}
-
-func (s *OAuthStore) IssueRefreshToken(clientID, resource, grantID string, ttl time.Duration) (string, error) {
-	clientID, resource, grantID = strings.TrimSpace(clientID), strings.TrimSpace(resource), strings.TrimSpace(grantID)
-	if clientID == "" || resource == "" || grantID == "" || ttl <= 0 {
-		return "", errors.New("client ID, resource, grant ID, and positive TTL are required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	s.pruneExpiredGrantsLocked(now.Unix())
-	grant, ok := s.grants[grantID]
-	if !ok || grant.Revoked || grant.ClientID != clientID || !EquivalentResourceURI(grant.Resource, resource) || grant.CurrentGeneration != 0 {
-		return "", errors.New("authorization grant is not eligible for refresh token issuance")
-	}
-	raw, err := s.signRefreshToken(refreshTokenClaims{GrantID: grantID, Generation: 1})
-	if err != nil {
-		return "", err
-	}
-	previous := grant
-	grant.CurrentGeneration = 1
-	grant.ExpiresAt = now.Add(ttl).Unix()
-	s.grants[grantID] = grant
-	if err := s.persistStateLocked(); err != nil {
-		s.grants[grantID] = previous
-		return "", err
-	}
-	return raw, nil
-}
-
-func (s *OAuthStore) RotateRefreshToken(raw, clientID, requestedResource string, ttl time.Duration) (string, string, string, bool, error) {
-	clientID, requestedResource = strings.TrimSpace(clientID), strings.TrimSpace(requestedResource)
-	if strings.TrimSpace(raw) == "" || clientID == "" || requestedResource == "" || ttl <= 0 {
-		return "", "", "", false, nil
-	}
-	claims, ok := s.verifyRefreshToken(raw)
-	if !ok {
-		return "", "", "", false, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now()
-	s.pruneExpiredGrantsLocked(now.Unix())
-	grant, ok := s.grants[claims.GrantID]
-	if !ok || grant.Revoked || grant.ClientID != clientID || !EquivalentResourceURI(grant.Resource, requestedResource) {
-		return "", "", "", false, nil
-	}
-	if claims.Generation != grant.CurrentGeneration {
-		grant.Revoked = true
-		s.grants[claims.GrantID] = grant
-		if err := s.persistStateLocked(); err != nil {
-			grant.Revoked = false
-			s.grants[claims.GrantID] = grant
-			return "", "", "", false, err
-		}
-		return "", "", "", false, nil
-	}
-	nextGeneration := grant.CurrentGeneration + 1
-	newRaw, err := s.signRefreshToken(refreshTokenClaims{GrantID: claims.GrantID, Generation: nextGeneration})
-	if err != nil {
-		return "", "", "", false, err
-	}
-	previous := grant
-	grant.CurrentGeneration = nextGeneration
-	grant.ExpiresAt = now.Add(ttl).Unix()
-	s.grants[claims.GrantID] = grant
-	if err := s.persistStateLocked(); err != nil {
-		s.grants[claims.GrantID] = previous
-		return "", "", "", false, err
-	}
-	return newRaw, grant.Resource, claims.GrantID, true, nil
 }
 
 func (s *OAuthStore) RevokeGrant(grantID string, ttl time.Duration) error {
@@ -361,10 +228,14 @@ func (s *OAuthStore) RevokeGrant(grantID string, ttl time.Duration) error {
 	if grant.ExpiresAt < now.Add(ttl).Unix() {
 		grant.ExpiresAt = now.Add(ttl).Unix()
 	}
+	delete(s.accessIndex, previous.AccessTokenHash)
 	s.grants[grantID] = grant
 	if err := s.persistStateLocked(); err != nil {
 		if existed {
 			s.grants[grantID] = previous
+			if previous.AccessTokenHash != "" {
+				s.accessIndex[previous.AccessTokenHash] = grantID
+			}
 		} else {
 			delete(s.grants, grantID)
 		}
@@ -373,17 +244,20 @@ func (s *OAuthStore) RevokeGrant(grantID string, ttl time.Duration) error {
 	return nil
 }
 
-func (s *OAuthStore) GrantActive(grantID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	grant, ok := s.grants[strings.TrimSpace(grantID)]
-	return ok && !grant.Revoked && grant.ExpiresAt > time.Now().Unix()
-}
-
 func (s *OAuthStore) pruneExpiredGrantsLocked(now int64) {
 	for grantID, grant := range s.grants {
 		if grant.ExpiresAt <= now {
+			delete(s.accessIndex, grant.AccessTokenHash)
 			delete(s.grants, grantID)
+		}
+	}
+}
+
+func (s *OAuthStore) rebuildAccessIndexLocked() {
+	s.accessIndex = make(map[string]string, len(s.grants))
+	for grantID, grant := range s.grants {
+		if !grant.Revoked && grant.AccessTokenHash != "" {
+			s.accessIndex[grant.AccessTokenHash] = grantID
 		}
 	}
 }
@@ -505,11 +379,13 @@ func (s *OAuthStore) RegisterClient(clientName string, redirectURIs, grantTypes 
 	previousClients := cloneClientRegistrations(s.clients)
 	previousGrants := cloneOAuthGrants(s.grants)
 	previousCodes := cloneOAuthCodes(s.codes)
+	previousAccessIndex := cloneStringMap(s.accessIndex)
 	s.pruneExpiredClientsLocked(now.Unix())
 	if len(s.clients) >= maxOAuthClients {
 		s.clients = previousClients
 		s.grants = previousGrants
 		s.codes = previousCodes
+		s.accessIndex = previousAccessIndex
 		return "", fmt.Errorf("OAuth client limit %d reached", maxOAuthClients)
 	}
 	s.clients[clientID] = registration
@@ -517,6 +393,7 @@ func (s *OAuthStore) RegisterClient(clientName string, redirectURIs, grantTypes 
 		s.clients = previousClients
 		s.grants = previousGrants
 		s.codes = previousCodes
+		s.accessIndex = previousAccessIndex
 		return "", err
 	}
 	return clientID, nil
@@ -528,6 +405,7 @@ func (s *OAuthStore) PruneExpiredClients(now time.Time) (int, error) {
 	previousClients := cloneClientRegistrations(s.clients)
 	previousGrants := cloneOAuthGrants(s.grants)
 	previousCodes := cloneOAuthCodes(s.codes)
+	previousAccessIndex := cloneStringMap(s.accessIndex)
 	removed := s.pruneExpiredClientsLocked(now.Unix())
 	if removed == 0 {
 		return 0, nil
@@ -536,6 +414,7 @@ func (s *OAuthStore) PruneExpiredClients(now time.Time) (int, error) {
 		s.clients = previousClients
 		s.grants = previousGrants
 		s.codes = previousCodes
+		s.accessIndex = previousAccessIndex
 		return 0, err
 	}
 	return removed, nil
@@ -554,6 +433,7 @@ func (s *OAuthStore) pruneExpiredClientsLocked(now int64) int {
 	}
 	for grantID, grant := range s.grants {
 		if _, remove := expired[grant.ClientID]; remove {
+			delete(s.accessIndex, grant.AccessTokenHash)
 			delete(s.grants, grantID)
 		}
 	}
@@ -618,11 +498,13 @@ func (s *OAuthStore) clientRegistration(clientID string) (OAuthClientRegistratio
 	previousClients := cloneClientRegistrations(s.clients)
 	previousGrants := cloneOAuthGrants(s.grants)
 	previousCodes := cloneOAuthCodes(s.codes)
+	previousAccessIndex := cloneStringMap(s.accessIndex)
 	if s.pruneExpiredClientsLocked(now) > 0 {
 		if err := s.persistStateLocked(); err != nil {
 			s.clients = previousClients
 			s.grants = previousGrants
 			s.codes = previousCodes
+			s.accessIndex = previousAccessIndex
 			slog.Warn("persist OAuth client cleanup failed", "error", err)
 		}
 	}
@@ -667,6 +549,14 @@ func cloneOAuthCodes(input map[string]OAuthCode) map[string]OAuthCode {
 	cloned := make(map[string]OAuthCode, len(input))
 	for raw, code := range input {
 		cloned[raw] = code
+	}
+	return cloned
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	cloned := make(map[string]string, len(input))
+	for key, value := range input {
+		cloned[key] = value
 	}
 	return cloned
 }
@@ -733,42 +623,9 @@ func uniqueNonEmptyStrings(values []string) []string {
 	return clean
 }
 
-func IssueToken(issuer, audience, grantID, key string, ttl time.Duration) (string, error) {
-	if key == "" {
-		return "", errors.New("token signing key is required")
-	}
-	if issuer == "" {
-		return "", errors.New("token issuer is required")
-	}
-	if audience == "" {
-		return "", errors.New("token audience is required")
-	}
-	if grantID == "" {
-		return "", errors.New("token grant ID is required")
-	}
-	if ttl <= 0 {
-		return "", errors.New("token TTL must be positive")
-	}
-	now := time.Now()
-	claims := tokenClaims{
-		Issuer:    issuer,
-		Audience:  audience,
-		IssuedAt:  now.Unix(),
-		ExpiresAt: now.Add(ttl).Unix(),
-		GrantID:   grantID,
-	}
-	body, err := json.Marshal(claims)
-	if err != nil {
-		return "", fmt.Errorf("encode token claims: %w", err)
-	}
-	encoded := base64.RawURLEncoding.EncodeToString(body)
-	mac := hmac.New(sha256.New, []byte(key))
-	_, _ = mac.Write([]byte(encoded))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return encoded + "." + sig, nil
-}
-
-func ValidateToken(token, issuer, audience, key string) (string, bool) {
+// validateLegacyAccessToken 仅用于平滑接管迁移前已签发的 JWT-like Access Token。
+// 新令牌均由 go-oauth2 生成并通过 TokenStore 哈希索引校验。
+func validateLegacyAccessToken(token, issuer, audience, key string) (string, bool) {
 	if key == "" {
 		return "", false
 	}

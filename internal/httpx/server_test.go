@@ -559,12 +559,8 @@ func TestAuthorizedOAuthFalseWhenOAuthDisabled(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.OAuthServerURL = "https://agentdock.example.com"
 	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-secret")
-	token, err := auth.IssueToken("https://agentdock.example.com", "https://agentdock.example.com/mcp", "grant-id", "token-secret", time.Hour)
-	if err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
-	}
 	req := newMCPRequest(http.MethodGet, "/mcp", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer disabled-oauth-token")
 	if authorizedOAuth(req, cfg, auth.NewOAuthStore()) {
 		t.Fatalf("authorizedOAuth() = true when OAuth is disabled")
 	}
