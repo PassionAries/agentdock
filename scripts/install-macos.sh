@@ -437,17 +437,75 @@ PLIST
   mv -f "$plist_tmp" "$PLIST_PATH"
 }
 
+resolve_cloudflared_binary() {
+  local candidate="$1"
+  local link_target resolved_dir
+  local link_count=0
+
+  [[ -n "$candidate" ]] || return 1
+  if [[ "$candidate" != /* ]]; then
+    if [[ "$candidate" == */* ]]; then
+      resolved_dir="$(cd -P "$(dirname "$candidate")" 2>/dev/null && pwd)" || return 1
+      candidate="$resolved_dir/$(basename "$candidate")"
+    else
+      candidate="$(command -v "$candidate" 2>/dev/null || true)"
+    fi
+  fi
+  [[ -n "$candidate" ]] || return 1
+
+  # Homebrew 等包管理器通常通过软链接暴露命令。只解析链接并复制真实文件，
+  # 不直接把外部路径写入 LaunchAgent，避免后续 shell PATH 变化影响服务启动。
+  while [[ -L "$candidate" ]]; do
+    (( link_count += 1 ))
+    (( link_count <= 40 )) || return 1
+    link_target="$(readlink "$candidate")" || return 1
+    if [[ "$link_target" == /* ]]; then
+      candidate="$link_target"
+    else
+      candidate="$(dirname "$candidate")/$link_target"
+    fi
+  done
+
+  resolved_dir="$(cd -P "$(dirname "$candidate")" 2>/dev/null && pwd)" || return 1
+  candidate="$resolved_dir/$(basename "$candidate")"
+  [[ -f "$candidate" && ! -L "$candidate" && -x "$candidate" ]] || return 1
+  "$candidate" --version >/dev/null 2>&1 || return 1
+  print -r -- "$candidate"
+}
+
 install_cloudflared() {
   local source_binary="$CLOUDFLARED_SOURCE_BINARY"
-  local archive asset
+  local discovered_binary resolved_binary
+  local archive asset staged_target
 
-  if [[ -z "$source_binary" && -x "$CLOUDFLARED_TARGET" && ! -L "$CLOUDFLARED_TARGET" ]]; then
-    "$CLOUDFLARED_TARGET" --version >/dev/null
+  if [[ -z "$source_binary" && -f "$CLOUDFLARED_TARGET" && ! -L "$CLOUDFLARED_TARGET" && \
+        -x "$CLOUDFLARED_TARGET" ]] && "$CLOUDFLARED_TARGET" --version >/dev/null 2>&1; then
     return
   fi
-  if [[ -z "$source_binary" ]]; then
-    source_binary="$(command -v cloudflared || true)"
+
+  if [[ -n "$source_binary" ]]; then
+    resolved_binary="$(resolve_cloudflared_binary "$source_binary")" || \
+      die "AGENTDOCK_CLOUDFLARED_BINARY 指向的 cloudflared 无效：$source_binary"
+    source_binary="$resolved_binary"
+  else
+    if [[ -L "$CLOUDFLARED_TARGET" ]] && \
+       resolved_binary="$(resolve_cloudflared_binary "$CLOUDFLARED_TARGET")"; then
+      source_binary="$resolved_binary"
+      print -- "==> 复用现有 cloudflared：$CLOUDFLARED_TARGET"
+    fi
+    if [[ -z "$source_binary" ]]; then
+      discovered_binary="$(command -v cloudflared 2>/dev/null || true)"
+      if [[ -n "$discovered_binary" ]]; then
+        if resolved_binary="$(resolve_cloudflared_binary "$discovered_binary")"; then
+          source_binary="$resolved_binary"
+          print -- "==> 复用系统 cloudflared：$discovered_binary"
+        else
+          print -u2 -- "警告：忽略 PATH 中无效的 cloudflared：$discovered_binary"
+        fi
+      fi
+    fi
   fi
+
   if [[ -z "$source_binary" ]]; then
     asset="cloudflared-darwin-${release_arch}.tgz"
     archive="$tmp_dir/$asset"
@@ -456,12 +514,23 @@ install_cloudflared() {
     mkdir -p "$tmp_dir/cloudflared"
     tar -xzf "$archive" -C "$tmp_dir/cloudflared"
     source_binary="$tmp_dir/cloudflared/cloudflared"
+    resolved_binary="$(resolve_cloudflared_binary "$source_binary")" || \
+      die "下载的 cloudflared 无效：$source_binary"
+    source_binary="$resolved_binary"
   fi
 
-  [[ -f "$source_binary" && ! -L "$source_binary" && -x "$source_binary" ]] || \
-    die "cloudflared 必须是可执行普通文件：$source_binary"
   if [[ "$source_binary" != "$CLOUDFLARED_TARGET" ]]; then
-    install -m 0755 "$source_binary" "$CLOUDFLARED_TARGET"
+    mkdir -p "$(dirname "$CLOUDFLARED_TARGET")"
+    staged_target="$CLOUDFLARED_TARGET.tmp.$$"
+    rm -f "$staged_target"
+    if ! install -m 0755 "$source_binary" "$staged_target"; then
+      rm -f "$staged_target"
+      die "安装 cloudflared 失败：$CLOUDFLARED_TARGET"
+    fi
+    if ! mv -f "$staged_target" "$CLOUDFLARED_TARGET"; then
+      rm -f "$staged_target"
+      die "替换 cloudflared 失败：$CLOUDFLARED_TARGET"
+    fi
   fi
   "$CLOUDFLARED_TARGET" --version >/dev/null
 }

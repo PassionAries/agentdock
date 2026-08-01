@@ -183,18 +183,21 @@ backup_count="$(find "$backup_dir" -type f -name 'agentdock.*' | wc -l | tr -d '
 test "$backup_count" = "3"
 
 # Named / Quick Tunnel 必须集成进安装器，并保持 Cloudflare Token 与 AgentDock env 隔离。
-fake_cloudflared="$TMP_ROOT/fake-cloudflared"
+# 模拟 Homebrew 的 PATH 入口：命令是相对软链接，安装器应复制真实文件到受控路径。
+fake_cloudflared="$TMP_ROOT/fake-cloudflared-cellar/cloudflared"
+fake_cloudflared_bin="$TMP_ROOT/fake-cloudflared-bin"
+mkdir -p "$(dirname "$fake_cloudflared")" "$fake_cloudflared_bin"
 cat > "$fake_cloudflared" <<'SCRIPT'
 #!/bin/zsh
 [[ "${1:-}" == "--version" ]] && print -- "cloudflared version test"
 SCRIPT
 chmod 0755 "$fake_cloudflared"
+ln -s ../fake-cloudflared-cellar/cloudflared "$fake_cloudflared_bin/cloudflared"
 env -i \
   HOME="$home_dir" \
-  PATH="$TEST_PATH" \
+  PATH="$fake_cloudflared_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  AGENTDOCK_CLOUDFLARED_BINARY="$fake_cloudflared" \
   AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='named-token-value' \
   zsh "$ROOT_DIR/scripts/install-macos.sh" \
     --tunnel named \
@@ -205,6 +208,8 @@ tunnel_env="$app_support/cloudflared.env"
 tunnel_start="$app_support/start-cloudflared.sh"
 tunnel_plist="$home_dir/Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist"
 test -x "$home_dir/.local/bin/cloudflared"
+test ! -L "$home_dir/.local/bin/cloudflared"
+cmp "$fake_cloudflared" "$home_dir/.local/bin/cloudflared"
 test "$(mode_of "$tunnel_env")" = "600"
 test "$(mode_of "$tunnel_start")" = "700"
 assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=named'

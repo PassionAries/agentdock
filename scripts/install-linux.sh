@@ -650,18 +650,76 @@ OPENRC
   rm -f "$tmp_file"
 }
 
+resolve_cloudflared_binary() {
+  local candidate="$1"
+  local link_target resolved_dir
+  local link_count=0
+
+  [[ -n "$candidate" ]] || return 1
+  if [[ "$candidate" != /* ]]; then
+    if [[ "$candidate" == */* ]]; then
+      resolved_dir="$(cd -P "$(dirname "$candidate")" 2>/dev/null && pwd)" || return 1
+      candidate="$resolved_dir/$(basename "$candidate")"
+    else
+      candidate="$(command -v "$candidate" 2>/dev/null || true)"
+    fi
+  fi
+  [[ -n "$candidate" ]] || return 1
+
+  # 包管理器通常通过软链接暴露命令。安装服务前复制真实文件到固定路径，
+  # 避免服务依赖登录 shell 的 PATH，也避免覆盖软链接指向的外部文件。
+  while [[ -L "$candidate" ]]; do
+    (( link_count += 1 ))
+    (( link_count <= 40 )) || return 1
+    link_target="$(readlink "$candidate")" || return 1
+    if [[ "$link_target" == /* ]]; then
+      candidate="$link_target"
+    else
+      candidate="$(dirname "$candidate")/$link_target"
+    fi
+  done
+
+  resolved_dir="$(cd -P "$(dirname "$candidate")" 2>/dev/null && pwd)" || return 1
+  candidate="$resolved_dir/$(basename "$candidate")"
+  [[ -f "$candidate" && ! -L "$candidate" && -x "$candidate" ]] || return 1
+  "$candidate" --version >/dev/null 2>&1 || return 1
+  printf '%s\n' "$candidate"
+}
+
 install_cloudflared() {
   local target_binary="$1"
   local source_binary="$CLOUDFLARED_SOURCE_BINARY"
-  local machine arch download_url tmp_file
+  local discovered_binary resolved_binary
+  local machine arch download_url tmp_file staged_target
 
-  if [[ -z "$source_binary" && -x "$target_binary" && ! -L "$target_binary" ]]; then
-    "$target_binary" --version >/dev/null
+  if [[ -z "$source_binary" && -f "$target_binary" && ! -L "$target_binary" && \
+        -x "$target_binary" ]] && "$target_binary" --version >/dev/null 2>&1; then
     return
   fi
-  if [[ -z "$source_binary" ]]; then
-    source_binary="$(command -v cloudflared || true)"
+
+  if [[ -n "$source_binary" ]]; then
+    resolved_binary="$(resolve_cloudflared_binary "$source_binary")" || \
+      die "AGENTDOCK_CLOUDFLARED_BINARY 指向的 cloudflared 无效：$source_binary"
+    source_binary="$resolved_binary"
+  else
+    if [[ -L "$target_binary" ]] && \
+       resolved_binary="$(resolve_cloudflared_binary "$target_binary")"; then
+      source_binary="$resolved_binary"
+      log "复用现有 cloudflared：$target_binary"
+    fi
+    if [[ -z "$source_binary" ]]; then
+      discovered_binary="$(command -v cloudflared 2>/dev/null || true)"
+      if [[ -n "$discovered_binary" ]]; then
+        if resolved_binary="$(resolve_cloudflared_binary "$discovered_binary")"; then
+          source_binary="$resolved_binary"
+          log "复用系统 cloudflared：$discovered_binary"
+        else
+          log "警告：忽略 PATH 中无效的 cloudflared：$discovered_binary"
+        fi
+      fi
+    fi
   fi
+
   if [[ -z "$source_binary" ]]; then
     machine="$(uname -m)"
     case "$machine" in
@@ -674,17 +732,30 @@ install_cloudflared() {
     log "下载 Cloudflare cloudflared：$download_url"
     curl -fL --retry 3 --retry-delay 1 "$download_url" -o "$tmp_file"
     chmod 0755 "$tmp_file"
-    source_binary="$tmp_file"
+    if ! resolved_binary="$(resolve_cloudflared_binary "$tmp_file")"; then
+      rm -f "$tmp_file"
+      die "下载的 cloudflared 无效：$download_url"
+    fi
+    source_binary="$resolved_binary"
   fi
 
-  [[ -f "$source_binary" && ! -L "$source_binary" && -x "$source_binary" ]] || \
-    die "cloudflared 必须是可执行普通文件：$source_binary"
   if [[ "$source_binary" != "$target_binary" ]]; then
     run_root mkdir -p "$(dirname "$target_binary")"
-    run_root install -m 0755 -o root -g root "$source_binary" "$target_binary"
+    staged_target="$target_binary.tmp.$$"
+    run_root rm -f "$staged_target"
+    if ! run_root install -m 0755 -o root -g root "$source_binary" "$staged_target"; then
+      run_root rm -f "$staged_target"
+      [[ -z "${tmp_file:-}" ]] || rm -f "$tmp_file"
+      die "安装 cloudflared 失败：$target_binary"
+    fi
+    if ! run_root mv -f "$staged_target" "$target_binary"; then
+      run_root rm -f "$staged_target"
+      [[ -z "${tmp_file:-}" ]] || rm -f "$tmp_file"
+      die "替换 cloudflared 失败：$target_binary"
+    fi
   fi
-  run_root "$target_binary" --version >/dev/null
   [[ -z "${tmp_file:-}" ]] || rm -f "$tmp_file"
+  run_root "$target_binary" --version >/dev/null
 }
 
 write_cloudflared_env() {
