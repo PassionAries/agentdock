@@ -35,12 +35,13 @@ type ServerConfig struct {
 }
 
 type Tool struct {
-	Name         string         `json:"name"`
-	Title        string         `json:"title,omitempty"`
-	Description  string         `json:"description,omitempty"`
-	InputSchema  map[string]any `json:"inputSchema"`
-	OutputSchema map[string]any `json:"outputSchema,omitempty"`
-	Annotations  map[string]any `json:"annotations,omitempty"`
+	Name           string         `json:"name"`
+	Title          string         `json:"title,omitempty"`
+	Description    string         `json:"description,omitempty"`
+	InputSchema    map[string]any `json:"inputSchema"`
+	OutputSchema   map[string]any `json:"outputSchema,omitempty"`
+	Annotations    map[string]any `json:"annotations,omitempty"`
+	inputValidator *toolInputValidator
 }
 
 type ToolSummary struct {

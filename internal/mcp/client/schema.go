@@ -1,328 +1,207 @@
 package client
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math"
-	"reflect"
 	"strconv"
+	"strings"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 )
 
-// Dynamic MCP accepts the deterministic JSON Schema subset needed by common MCP
-// tool inputs. Unknown annotation keywords stay forward-compatible, while the
-// structural keywords below are enforced before forwarding a tools/call request.
-func validateToolInputSchema(schema map[string]any) error {
-	if len(schema) == 0 {
-		return fmt.Errorf("inputSchema must not be empty")
+const toolInputSchemaResource = "urn:agentdock:mcp-tool-input-schema"
+
+type toolInputValidator struct {
+	schema *jsonschema.Schema
+}
+
+type localSchemaLoader struct{}
+
+func (localSchemaLoader) Load(url string) (any, error) {
+	return nil, fmt.Errorf("external schema reference is not allowed: %s", url)
+}
+
+func compileToolInputSchema(raw map[string]any) (*toolInputValidator, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("inputSchema must not be empty")
 	}
-	if !schemaAllowsType(schema["type"], "object") {
-		return fmt.Errorf("inputSchema root must allow object")
+	if !schemaRootAllowsObject(raw["type"]) {
+		return nil, fmt.Errorf("inputSchema root must allow object")
 	}
-	return nil
+
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.UseLoader(localSchemaLoader{})
+	if err := compiler.AddResource(toolInputSchemaResource, normalizeNullableSchema(raw)); err != nil {
+		return nil, fmt.Errorf("load inputSchema: %w", err)
+	}
+	compiled, err := compiler.Compile(toolInputSchemaResource)
+	if err != nil {
+		return nil, fmt.Errorf("compile inputSchema: %w", err)
+	}
+	return &toolInputValidator{schema: compiled}, nil
 }
 
 func validateToolArguments(tool Tool, arguments map[string]any) error {
 	if arguments == nil {
 		arguments = map[string]any{}
 	}
-	if err := validateToolInputSchema(tool.InputSchema); err != nil {
-		return newError(
-			"MCP_SCHEMA_INVALID",
-			"upstream MCP tool returned an invalid input schema",
-			false,
-			map[string]any{"tool": tool.Name, "reason": err.Error()},
-			err,
-		)
+	validator := tool.inputValidator
+	if validator == nil {
+		compiled, err := compileToolInputSchema(tool.InputSchema)
+		if err != nil {
+			return newError(
+				"MCP_SCHEMA_INVALID",
+				"upstream MCP tool returned an invalid input schema",
+				false,
+				map[string]any{"tool": tool.Name, "reason": err.Error()},
+				err,
+			)
+		}
+		validator = compiled
 	}
 
-	// Normalize integers and other Go-native numeric values through JSON so the
-	// validator observes the same data model the upstream MCP server receives.
+	// 先经过 JSON 编解码，确保校验器看到的数值和复合类型与真正发送给
+	// 上游 MCP Server 的 JSON 数据模型一致，而不是 Go 调用方的具体类型。
 	raw, err := json.Marshal(arguments)
 	if err != nil {
 		return newError("MCP_ARGUMENT_INVALID", "encode MCP tool arguments", false, map[string]any{"tool": tool.Name}, err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	var normalized any
-	if err := decoder.Decode(&normalized); err != nil {
+	if err := json.Unmarshal(raw, &normalized); err != nil {
 		return newError("MCP_ARGUMENT_INVALID", "decode MCP tool arguments", false, map[string]any{"tool": tool.Name}, err)
 	}
-	if err := validateSchemaValue(tool.InputSchema, normalized, "$"); err != nil {
+	if err := validator.schema.Validate(normalized); err != nil {
 		return newError(
 			"MCP_ARGUMENT_INVALID",
 			"MCP tool arguments do not match the discovered input schema",
 			false,
-			map[string]any{"tool": tool.Name, "reason": err.Error()},
+			map[string]any{"tool": tool.Name, "reason": compactSchemaError(err)},
 			err,
 		)
 	}
 	return nil
 }
 
-func validateSchemaValue(schema map[string]any, value any, path string) error {
-	if nullable, _ := schema["nullable"].(bool); nullable && value == nil {
-		return nil
+func schemaRootAllowsObject(rawType any) bool {
+	if rawType == nil {
+		return true
 	}
-	if rawType, exists := schema["type"]; exists && !schemaMatchesType(rawType, value) {
-		return fmt.Errorf("%s must be %s", path, schemaTypeLabel(rawType))
-	}
-	if enumValues, ok := schema["enum"].([]any); ok && !matchesEnum(value, enumValues) {
-		return fmt.Errorf("%s is not an allowed enum value", path)
-	}
-	if constValue, exists := schema["const"]; exists && !jsonEquivalent(value, constValue) {
-		return fmt.Errorf("%s does not match const", path)
-	}
-	if variants, ok := schema["allOf"].([]any); ok {
-		for _, raw := range variants {
-			variant, ok := raw.(map[string]any)
-			if ok {
-				if err := validateSchemaValue(variant, value, path); err != nil {
-					return err
-				}
+	switch typed := rawType.(type) {
+	case string:
+		return typed == "object"
+	case []any:
+		for _, item := range typed {
+			if item == "object" {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			if item == "object" {
+				return true
 			}
 		}
 	}
-	if variants, ok := schema["anyOf"].([]any); ok && !matchesAnyVariant(variants, value, path) {
-		return fmt.Errorf("%s does not match anyOf", path)
-	}
-	if variants, ok := schema["oneOf"].([]any); ok {
-		matches := 0
-		for _, raw := range variants {
-			variant, ok := raw.(map[string]any)
-			if ok && validateSchemaValue(variant, value, path) == nil {
-				matches++
-			}
-		}
-		if matches != 1 {
-			return fmt.Errorf("%s must match exactly one oneOf schema", path)
-		}
-	}
+	return false
+}
 
+// nullable 是部分 MCP Server 仍会返回的 OpenAPI 兼容扩展。编译前只在
+// 副本中将它转换成标准 JSON Schema 的 null 联合类型，公开 schema 保持原样。
+func normalizeNullableSchema(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
-		properties, _ := schema["properties"].(map[string]any)
-		for _, required := range schemaStringSlice(schema["required"]) {
-			if _, exists := typed[required]; !exists {
-				return fmt.Errorf("%s.%s is required", path, required)
-			}
-		}
-		additional := schema["additionalProperties"]
+		normalized := make(map[string]any, len(typed))
 		for key, child := range typed {
-			childSchema, exists := properties[key].(map[string]any)
-			if exists {
-				if err := validateSchemaValue(childSchema, child, path+"."+key); err != nil {
-					return err
-				}
-				continue
-			}
-			switch rule := additional.(type) {
-			case bool:
-				if !rule {
-					return fmt.Errorf("%s.%s is not allowed", path, key)
-				}
-			case map[string]any:
-				if err := validateSchemaValue(rule, child, path+"."+key); err != nil {
-					return err
-				}
-			}
+			normalized[key] = normalizeNullableSchema(child)
 		}
+		if nullable, _ := typed["nullable"].(bool); nullable {
+			if rawType, exists := normalized["type"]; exists {
+				normalized["type"] = appendNullType(rawType)
+			}
+			delete(normalized, "nullable")
+		}
+		return normalized
 	case []any:
-		if minimum, ok := schemaInteger(schema["minItems"]); ok && len(typed) < minimum {
-			return fmt.Errorf("%s must contain at least %d items", path, minimum)
+		normalized := make([]any, len(typed))
+		for i, child := range typed {
+			normalized[i] = normalizeNullableSchema(child)
 		}
-		if maximum, ok := schemaInteger(schema["maxItems"]); ok && len(typed) > maximum {
-			return fmt.Errorf("%s must contain at most %d items", path, maximum)
-		}
-		if itemSchema, ok := schema["items"].(map[string]any); ok {
-			for index, child := range typed {
-				if err := validateSchemaValue(itemSchema, child, fmt.Sprintf("%s[%d]", path, index)); err != nil {
-					return err
-				}
-			}
-		}
-	case string:
-		if minimum, ok := schemaInteger(schema["minLength"]); ok && len([]rune(typed)) < minimum {
-			return fmt.Errorf("%s must contain at least %d characters", path, minimum)
-		}
-		if maximum, ok := schemaInteger(schema["maxLength"]); ok && len([]rune(typed)) > maximum {
-			return fmt.Errorf("%s must contain at most %d characters", path, maximum)
-		}
-	case json.Number:
-		number, err := typed.Float64()
-		if err != nil {
-			return fmt.Errorf("%s must be a valid number", path)
-		}
-		if minimum, ok := schemaNumber(schema["minimum"]); ok && number < minimum {
-			return fmt.Errorf("%s must be at least %v", path, minimum)
-		}
-		if maximum, ok := schemaNumber(schema["maximum"]); ok && number > maximum {
-			return fmt.Errorf("%s must be at most %v", path, maximum)
-		}
-	}
-	return nil
-}
-
-func schemaMatchesType(rawType any, value any) bool {
-	switch typed := rawType.(type) {
-	case string:
-		return matchesJSONType(typed, value)
-	case []any:
-		for _, item := range typed {
-			name, _ := item.(string)
-			if matchesJSONType(name, value) {
-				return true
-			}
-		}
+		return normalized
 	case []string:
-		for _, name := range typed {
-			if matchesJSONType(name, value) {
-				return true
-			}
+		normalized := make([]any, len(typed))
+		for i, child := range typed {
+			normalized[i] = child
 		}
-	}
-	return false
-}
-
-func schemaAllowsType(rawType any, expected string) bool {
-	if rawType == nil {
-		return expected == "object"
-	}
-	switch typed := rawType.(type) {
-	case string:
-		return typed == expected
-	case []any:
-		for _, item := range typed {
-			if item == expected {
-				return true
-			}
-		}
-	case []string:
-		for _, item := range typed {
-			if item == expected {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func matchesJSONType(typeName string, value any) bool {
-	switch typeName {
-	case "object":
-		_, ok := value.(map[string]any)
-		return ok
-	case "array":
-		_, ok := value.([]any)
-		return ok
-	case "string":
-		_, ok := value.(string)
-		return ok
-	case "number":
-		_, ok := value.(json.Number)
-		return ok
-	case "integer":
-		number, ok := value.(json.Number)
-		if !ok {
-			return false
-		}
-		if _, err := number.Int64(); err == nil {
-			return true
-		}
-		parsed, err := number.Float64()
-		return err == nil && !math.IsInf(parsed, 0) && !math.IsNaN(parsed) && math.Trunc(parsed) == parsed
-	case "boolean":
-		_, ok := value.(bool)
-		return ok
-	case "null":
-		return value == nil
+		return normalized
 	default:
-		return false
+		return value
 	}
 }
 
-func matchesEnum(value any, enumValues []any) bool {
-	for _, allowed := range enumValues {
-		if jsonEquivalent(value, allowed) {
-			return true
-		}
-	}
-	return false
-}
-
-func jsonEquivalent(left, right any) bool {
-	leftJSON, leftErr := json.Marshal(left)
-	rightJSON, rightErr := json.Marshal(right)
-	if leftErr == nil && rightErr == nil {
-		return bytes.Equal(leftJSON, rightJSON)
-	}
-	return reflect.DeepEqual(left, right)
-}
-
-func matchesAnyVariant(variants []any, value any, path string) bool {
-	for _, raw := range variants {
-		variant, ok := raw.(map[string]any)
-		if ok && validateSchemaValue(variant, value, path) == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func schemaStringSlice(value any) []string {
+func appendNullType(value any) any {
 	switch typed := value.(type) {
-	case []any:
-		items := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if text, ok := item.(string); ok {
-				items = append(items, text)
-			}
-		}
-		return items
-	case []string:
-		return append([]string(nil), typed...)
-	default:
+	case nil:
+		// 未声明 type 的 schema 本来就允许 null，不额外收紧。
 		return nil
-	}
-}
-
-func schemaTypeLabel(value any) string {
-	switch typed := value.(type) {
 	case string:
-		return typed
-	case []any:
-		return fmt.Sprint(typed)
-	case []string:
-		return fmt.Sprint(typed)
-	default:
-		return "the declared JSON type"
-	}
-}
-
-func schemaInteger(value any) (int, bool) {
-	switch typed := value.(type) {
-	case int:
-		return typed, true
-	case float64:
-		if math.Trunc(typed) == typed {
-			return int(typed), true
+		if typed == "null" {
+			return typed
 		}
-	case json.Number:
-		parsed, err := strconv.Atoi(string(typed))
-		return parsed, err == nil
+		return []any{typed, "null"}
+	case []any:
+		for _, item := range typed {
+			if item == "null" {
+				return typed
+			}
+		}
+		return append(typed, "null")
+	default:
+		return value
 	}
-	return 0, false
 }
 
-func schemaNumber(value any) (float64, bool) {
-	switch typed := value.(type) {
-	case int:
-		return float64(typed), true
-	case float64:
-		return typed, true
-	case json.Number:
-		parsed, err := typed.Float64()
-		return parsed, err == nil
+func compactSchemaError(err error) string {
+	var validationErr *jsonschema.ValidationError
+	if !errors.As(err, &validationErr) {
+		return strings.Join(strings.Fields(err.Error()), " ")
 	}
-	return 0, false
+	leaf := firstSchemaErrorLeaf(validationErr)
+	path := schemaInstancePath(leaf.InstanceLocation)
+	switch failure := leaf.ErrorKind.(type) {
+	case *kind.Required:
+		if len(failure.Missing) > 0 {
+			return path + "." + failure.Missing[0] + " is required"
+		}
+	case *kind.Type:
+		if len(failure.Want) > 0 {
+			return path + " must be " + strings.Join(failure.Want, " or ")
+		}
+	}
+	return strings.Join(strings.Fields(leaf.Error()), " ")
+}
+
+func firstSchemaErrorLeaf(err *jsonschema.ValidationError) *jsonschema.ValidationError {
+	for len(err.Causes) > 0 {
+		err = err.Causes[0]
+	}
+	return err
+}
+
+func schemaInstancePath(parts []string) string {
+	var path strings.Builder
+	path.WriteByte('$')
+	for _, part := range parts {
+		if _, err := strconv.Atoi(part); err == nil {
+			path.WriteByte('[')
+			path.WriteString(part)
+			path.WriteByte(']')
+			continue
+		}
+		path.WriteByte('.')
+		path.WriteString(part)
+	}
+	return path.String()
 }

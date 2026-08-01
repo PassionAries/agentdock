@@ -543,7 +543,8 @@ func refreshStateLocked(ctx context.Context, cfg ServerConfig, state *serverStat
 		if tool.InputSchema == nil {
 			tool.InputSchema = map[string]any{"type": "object", "additionalProperties": true}
 		}
-		if err := validateToolInputSchema(tool.InputSchema); err != nil {
+		validator, err := compileToolInputSchema(tool.InputSchema)
+		if err != nil {
 			_ = client.close()
 			state.lastError = "MCP tools/list returned an invalid input schema"
 			return nil, newError(
@@ -554,6 +555,7 @@ func refreshStateLocked(ctx context.Context, cfg ServerConfig, state *serverStat
 				err,
 			)
 		}
+		tool.inputValidator = validator
 		tools[tool.Name] = tool
 	}
 	state.client = client
