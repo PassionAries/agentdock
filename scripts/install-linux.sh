@@ -23,6 +23,7 @@ CLOUDFLARED_RELEASE_BASE_URL="${AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL:-https://
 CLOUDFLARED_SOURCE_BINARY="${AGENTDOCK_CLOUDFLARED_BINARY:-}"
 CORE_SKILL_BUNDLE=""
 CORE_SKILL_TEMP_DIR=""
+TUNNEL_PUBLIC_URL=""
 
 cleanup_core_skill_bundle() {
   if [[ -n "$CORE_SKILL_TEMP_DIR" ]]; then
@@ -71,6 +72,7 @@ Alpine/极简系统如果没有 curl/bash：
   AGENTDOCK_REPO_URL、AGENTDOCK_BRANCH、AGENTDOCK_SOURCE_DIR、AGENTDOCK_DATA_DIR、AGENTDOCK_ENV_FILE
   AGENTDOCK_SERVICE_NAME、AGENTDOCK_SERVICE_USER、AGENTDOCK_HOST、AGENTDOCK_PORT
   AGENTDOCK_AUTH_TOKEN、AGENTDOCK_GO_VERSION、AGENTDOCK_SERVER_URL
+  AGENTDOCK_OAUTH_PASSWORD、AGENTDOCK_OAUTH_TOKEN_SECRET
   AGENTDOCK_TUNNEL_MODE、AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN
   AGENTDOCK_CLOUDFLARED_BINARY、AGENTDOCK_CLOUDFLARED_INSTALL_PATH
 
@@ -137,6 +139,20 @@ prompt_required_secret() {
   stty echo <"$TTY_IN" 2>/dev/null || true
   printf '\n' >"$TTY_OUT"
   printf '%s' "$answer"
+}
+
+choose_tunnel_mode() {
+  cat >"$TTY_OUT" <<'CHOICE'
+
+请选择公网访问方式：
+- 有自己的 Cloudflare 域名：使用固定地址，适合长期运行和 OAuth。
+- 没有域名：自动生成临时地址，适合快速体验；Tunnel 重启后地址可能变化。
+CHOICE
+  if confirm '你是否有已接入 Cloudflare 的域名？' n; then
+    printf 'named'
+  else
+    printf 'quick'
+  fi
 }
 
 confirm() {
@@ -374,6 +390,20 @@ PY
   fi
 }
 
+generate_oauth_password() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 12
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PYGEN'
+import secrets
+print(secrets.token_hex(12))
+PYGEN
+  else
+    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24
+    printf '\n'
+  fi
+}
+
 service_user_exists() {
   id "$1" >/dev/null 2>&1
 }
@@ -543,11 +573,26 @@ write_env_file() {
   local nexus_endpoint="$6"
   local nexus_token="$7"
   local server_url="$8"
+  local configure_oauth="$9"
+  local oauth_enabled="${10}"
+  local oauth_password="${11}"
+  local oauth_token_secret="${12}"
 
-  local env_dir tmp_file
+  local env_dir tmp_file managed_keys
   env_dir="$(dirname "$env_file")"
   tmp_file="$(mktemp)"
-  cat >"$tmp_file" <<ENV
+  managed_keys='AGENTDOCK_HOST|AGENTDOCK_PORT|AGENTDOCK_AUTH_TOKEN|AGENTDOCK_LOG_LEVEL|AGENTDOCK_NEXUS_ENDPOINT|AGENTDOCK_NEXUS_TOKEN|AGENTDOCK_SERVER_URL'
+  if [[ "$configure_oauth" == "yes" ]]; then
+    managed_keys+='|AGENTDOCK_OAUTH_ENABLED|AGENTDOCK_OAUTH_PASSWORD|AGENTDOCK_OAUTH_TOKEN_SECRET'
+  fi
+
+  # 重跑安装器时保留浏览器、代理和其他高级配置，只替换本次安装器负责的键。
+  # 同时兼容用户手工写入的 `export KEY=...` 形式，避免重复定义。
+  if [[ -f "$env_file" ]]; then
+    run_root awk -v keys="$managed_keys"       '$0 !~ "^[[:space:]]*(export[[:space:]]+)?(" keys ")[[:space:]]*="'       "$env_file" >"$tmp_file"
+  fi
+
+  cat >>"$tmp_file" <<ENV
 AGENTDOCK_HOST=$host
 AGENTDOCK_PORT=$port
 AGENTDOCK_AUTH_TOKEN=$token
@@ -561,6 +606,11 @@ ENV
   fi
   if [[ -n "$server_url" ]]; then
     printf 'AGENTDOCK_SERVER_URL=%s\n' "$server_url" >>"$tmp_file"
+  fi
+  if [[ "$configure_oauth" == "yes" ]]; then
+    printf 'AGENTDOCK_OAUTH_ENABLED=%s\n' "$oauth_enabled" >>"$tmp_file"
+    printf 'AGENTDOCK_OAUTH_PASSWORD=%s\n' "$oauth_password" >>"$tmp_file"
+    printf 'AGENTDOCK_OAUTH_TOKEN_SECRET=%s\n' "$oauth_token_secret" >>"$tmp_file"
   fi
 
   run_root mkdir -p "$env_dir"
@@ -951,7 +1001,8 @@ start_cloudflared_service() {
     die "AgentDock 已安装，但 Cloudflare Tunnel 启动失败，请检查服务日志"
   fi
   if [[ "$mode" == quick ]]; then
-    log "Quick Tunnel 已连接：$result/mcp"
+    TUNNEL_PUBLIC_URL="$result"
+    log "临时公网地址已连接：$result/mcp"
   else
     log "Named Tunnel 已启动：$server_url/mcp"
   fi
@@ -1120,8 +1171,10 @@ main() {
   local detected_root source_default repo_url branch source_dir data_dir env_file
   local service_name service_user service_group service_manager service_manager_prompt host port token log_level
   local install_mode release_version nexus_endpoint nexus_token update_existing run_full_check install_deps
+  local oauth_password oauth_token_secret oauth_enabled configure_oauth
   local go_version public_domain smoke_url health_host build_from_source binary_installed
   local tunnel_mode tunnel_default tunnel_token server_url existing_server_url existing_tunnel_token
+  local existing_host existing_port existing_log_level existing_token existing_oauth_password existing_oauth_secret
   local cloudflared_binary cloudflared_env_file tunnel_service_name tunnel_target_url
 
   detected_root="$(repo_root_from_script || true)"
@@ -1165,9 +1218,12 @@ INTRO
   fi
   service_name="$(prompt '服务名' "$DEFAULT_SERVICE_NAME")"
   service_user="$(prompt '运行用户' "$DEFAULT_SERVICE_USER")"
-  host="$(prompt '监听地址' "$DEFAULT_HOST")"
-  port="$(prompt '监听端口' "$DEFAULT_PORT")"
-  log_level="$(prompt '日志级别' "$DEFAULT_LOG_LEVEL")"
+  existing_host="$(read_env_assignment "$env_file" AGENTDOCK_HOST)"
+  existing_port="$(read_env_assignment "$env_file" AGENTDOCK_PORT)"
+  existing_log_level="$(read_env_assignment "$env_file" AGENTDOCK_LOG_LEVEL)"
+  host="$(prompt '监听地址' "${existing_host:-$DEFAULT_HOST}")"
+  port="$(prompt '监听端口' "${existing_port:-$DEFAULT_PORT}")"
+  log_level="$(prompt '日志级别' "${existing_log_level:-$DEFAULT_LOG_LEVEL}")"
   validate_abs_path '安装目录' "$source_dir"
   validate_abs_path '运行数据根目录' "$data_dir"
   validate_abs_path '环境变量文件' "$env_file"
@@ -1184,8 +1240,15 @@ INTRO
   if [[ -z "$tunnel_default" ]]; then
     tunnel_default="$(read_env_assignment "$cloudflared_env_file" AGENTDOCK_TUNNEL_MODE)"
   fi
-  tunnel_default="${tunnel_default:-none}"
-  tunnel_mode="$(prompt '公网访问：none/quick/named' "$tunnel_default")"
+  if [[ -n "$tunnel_default" ]]; then
+    tunnel_mode="$tunnel_default"
+    log "沿用公网访问模式：$tunnel_mode"
+  elif noninteractive_enabled; then
+    # 非交互安装不能替用户决定是否暴露公网；需要 Tunnel 时显式设置环境变量。
+    tunnel_mode="none"
+  else
+    tunnel_mode="$(choose_tunnel_mode)"
+  fi
   validate_tunnel_mode "$tunnel_mode"
   if [[ "$tunnel_mode" != none && "$service_manager" == none ]]; then
     die "Quick/Named Tunnel 需要 systemd 或 OpenRC 服务管理器"
@@ -1193,11 +1256,24 @@ INTRO
 
   server_url=""
   tunnel_token=""
+  configure_oauth="no"
+  oauth_enabled="false"
   case "$tunnel_mode" in
     quick)
-      warn "Quick Tunnel 地址会在 cloudflared 重启后变化，不适合 OAuth 或长期部署。"
+      configure_oauth="yes"
+      existing_server_url="$DEFAULT_SERVER_URL"
+      if [[ -z "$existing_server_url" ]]; then
+        existing_server_url="$(read_env_assignment "$env_file" AGENTDOCK_SERVER_URL)"
+      fi
+      server_url="$existing_server_url"
+      if [[ -n "$server_url" ]]; then
+        oauth_enabled="true"
+      fi
+      warn "临时地址在 Tunnel 重启后可能变化；重新运行同一安装脚本即可刷新。"
       ;;
     named)
+      configure_oauth="yes"
+      oauth_enabled="true"
       existing_server_url="$DEFAULT_SERVER_URL"
       if [[ -z "$existing_server_url" ]]; then
         existing_server_url="$(read_env_assignment "$env_file" AGENTDOCK_SERVER_URL)"
@@ -1232,19 +1308,35 @@ INTRO
     if confirm '安装目录已存在时是否尝试 git pull --ff-only？' y; then update_existing="yes"; else update_existing="no"; fi
     if confirm '是否运行 go test ./... 和 go vet ./...？首次部署可跳过以加快安装' n; then run_full_check="yes"; else run_full_check="no"; fi
   fi
-  token="${AGENTDOCK_AUTH_TOKEN:-}"
-  if [[ -z "$token" ]]; then
-    token="$(prompt_secret 'Bearer token')"
-  fi
+  existing_token="$(read_env_assignment "$env_file" AGENTDOCK_AUTH_TOKEN)"
+  token="${existing_token:-${AGENTDOCK_AUTH_TOKEN:-}}"
   if [[ -z "$token" ]]; then
     token="$(generate_token)"
-    log "已自动生成 bearer token，并将写入 $env_file。"
+    log "已自动生成 Bearer Token。"
   fi
-  validate_no_space 'Bearer token' "$token"
+  validate_no_space 'Bearer Token' "$token"
 
-  nexus_endpoint=""
-  nexus_token=""
-  if confirm '是否配置 NexusDock endpoint？用于 Recall memory 和 workflow API' n; then
+  existing_oauth_password="$(read_env_assignment "$env_file" AGENTDOCK_OAUTH_PASSWORD)"
+  oauth_password="${existing_oauth_password:-${AGENTDOCK_OAUTH_PASSWORD:-}}"
+  if [[ "$configure_oauth" == "yes" && -z "$oauth_password" ]]; then
+    oauth_password="$(generate_oauth_password)"
+    log "已自动生成 OAuth 登录密码。"
+  fi
+  existing_oauth_secret="$(read_env_assignment "$env_file" AGENTDOCK_OAUTH_TOKEN_SECRET)"
+  oauth_token_secret="${existing_oauth_secret:-${AGENTDOCK_OAUTH_TOKEN_SECRET:-}}"
+  if [[ "$configure_oauth" == "yes" && -z "$oauth_token_secret" ]]; then
+    oauth_token_secret="$(generate_token)"
+  fi
+  if [[ "$configure_oauth" == "yes" ]]; then
+    validate_no_space 'OAuth 登录密码' "$oauth_password"
+    validate_no_space 'OAuth 签名密钥' "$oauth_token_secret"
+    (( ${#oauth_password} >= 12 )) || die "OAuth 登录密码至少需要 12 个字符"
+    (( ${#oauth_token_secret} >= 32 )) || die "OAuth 签名密钥至少需要 32 个字节"
+  fi
+
+  nexus_endpoint="$(read_env_assignment "$env_file" AGENTDOCK_NEXUS_ENDPOINT)"
+  nexus_token="$(read_env_assignment "$env_file" AGENTDOCK_NEXUS_TOKEN)"
+  if [[ -z "$nexus_endpoint" ]] && confirm '是否配置 NexusDock endpoint？用于 Recall memory 和 workflow API' n; then
     nexus_endpoint="$(prompt 'NexusDock endpoint，例如 https://nexus.example.com 或 http://127.0.0.1:18777' '')"
     if [[ -n "$nexus_endpoint" ]] && confirm 'NexusDock API 是否需要 token？' y; then
       nexus_token="$(prompt_secret 'NexusDock token')"
@@ -1271,7 +1363,8 @@ INTRO
 - 运行用户：$service_user
 - 本机监听：http://$host:$port
 - 公网访问：$tunnel_mode
-- token：已隐藏，将写入 root-only env 文件
+- 认证方式：Bearer Token、OAuth（公网模式自动同时配置）
+- 密钥：安装完成后在终端显示，并写入 root-only env 文件
 
 SUMMARY
   confirm '确认开始执行部署？' y || die '用户取消。'
@@ -1348,7 +1441,8 @@ SUMMARY
   service_group="$(id -gn "$service_user")"
   run_root mkdir -p "$data_dir/.agentdock" "$data_dir/AgentDock"
   run_root chown -R "$service_user:$service_group" "$data_dir"
-  write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" "$server_url"
+  write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" \
+    "$server_url" "$configure_oauth" "$oauth_enabled" "$oauth_password" "$oauth_token_secret"
   case "$service_manager" in
     systemd) write_systemd_unit "$service_name" "$service_user" "$service_group" "$source_dir" "$env_file" ;;
     openrc) write_openrc_service "$service_name" "$service_user" "$service_group" "$source_dir" "$env_file" ;;
@@ -1387,6 +1481,15 @@ SUMMARY
     configure_cloudflared "$service_manager" "$tunnel_service_name" "$service_user" "$service_group" \
       "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$tunnel_mode" \
       "$tunnel_target_url" "$tunnel_token" "$server_url"
+    if [[ "$tunnel_mode" == quick ]]; then
+      server_url="$TUNNEL_PUBLIC_URL"
+      oauth_enabled="true"
+      write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" \
+        "$server_url" yes true "$oauth_password" "$oauth_token_secret"
+      log "已将临时公网地址写入 AgentDock OAuth 配置并重启服务"
+      start_service "$service_manager" "$service_name"
+      curl -fsS "$smoke_url/healthz" >/dev/null
+    fi
   fi
 
   cat >"$TTY_OUT" <<DONE
@@ -1402,15 +1505,25 @@ AgentDock Linux 部署完成。
   $(service_log_command "$service_manager" "$service_name")
   $(service_restart_command "$service_manager" "$service_name")
 
-Bearer token 已写入：
-  $env_file
-需要复制给客户端时，在服务器上执行：
-  sudo awk -F= '/^AGENTDOCK_AUTH_TOKEN=/{print \$2}' $env_file
+认证配置：
+  Bearer Token：$token
+  OAuth 登录密码：${oauth_password:-未配置}
+  OAuth 签名密钥：已安全保存，不显示
+  配置文件：$env_file
 
 DONE
 
   if [[ "$tunnel_mode" != none ]]; then
     cat >"$TTY_OUT" <<TUNNEL_DONE
+╭─ AgentDock 公网安装完成 ─────────────────────
+│ 公网模式：$tunnel_mode
+│ 公网地址：$server_url
+│ MCP 地址：${server_url%/}/mcp
+│ Bearer Token：$token
+│ OAuth 登录密码：$oauth_password
+│ 认证方式：Bearer Token、OAuth 均已启用
+╰──────────────────────────────────────────────
+
 Cloudflare Tunnel：
   模式：$tunnel_mode
   状态：$(cloudflared_status_command "$service_manager" "$tunnel_service_name")
@@ -1426,7 +1539,9 @@ TUNNEL_DONE
 NAMED_DONE
     else
       cat >"$TTY_OUT" <<QUICK_DONE
-  Quick Tunnel URL 可从上述日志命令重新查看；cloudflared 重启后地址会变化。
+  临时地址在 Tunnel 重启后可能变化。
+  地址变化后，重新运行同一安装脚本即可获取新地址；Bearer Token、OAuth 密码和签名密钥保持不变。
+  然后在客户端替换 MCP URL，并重新完成 OAuth 授权。
 
 QUICK_DONE
     fi
@@ -1448,4 +1563,6 @@ PROXY
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

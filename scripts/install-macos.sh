@@ -12,6 +12,10 @@ SERVICE_PORT="${AGENTDOCK_PORT:-8765}"
 SERVICE_LOG_LEVEL="${AGENTDOCK_LOG_LEVEL:-info}"
 AUTH_TOKEN_ARG=""
 AUTH_TOKEN_REPLACE=false
+PUBLIC_AUTH_CONFIGURE=false
+OAUTH_ENABLED_VALUE="false"
+OAUTH_PASSWORD_VALUE=""
+OAUTH_TOKEN_SECRET_VALUE=""
 HOST_EXPLICIT=false
 PORT_EXPLICIT=false
 TUNNEL_MODE="${AGENTDOCK_TUNNEL_MODE:-none}"
@@ -52,6 +56,9 @@ TUNNEL_SERVICE_WAS_LOADED=false
 TUNNEL_PREVIOUS_SERVICE_STOPPED=false
 PREVIOUS_SERVER_URL=""
 PREVIOUS_SERVER_URL_PRESENT=false
+PREVIOUS_OAUTH_ENABLED=""
+PREVIOUS_OAUTH_ENABLED_PRESENT=false
+TUNNEL_PUBLIC_URL=""
 
 usage() {
   cat <<'USAGE'
@@ -67,8 +74,8 @@ AgentDock macOS 预编译版本安装脚本。
   --host HOST              服务监听地址，默认 127.0.0.1
   --port PORT              服务监听端口，默认 8765
   --auth-token TOKEN       首次创建 agentdock.env 时写入 Token；已有 Token 永不覆盖
-  --tunnel MODE            公网访问：none、quick 或 named，默认 none
-  --server-url URL         Named Tunnel 的 HTTPS 公网 Origin，例如 https://agent.example.com
+  --tunnel MODE            高级覆盖：none、quick 或 named；普通安装会直接询问是否有域名
+  --server-url URL         固定域名模式的 HTTPS 公网 Origin，例如 https://agent.example.com
   --no-start               只生成服务文件和 plist，不加载或启动 LaunchAgent
   -h, --help               显示帮助
 
@@ -77,8 +84,10 @@ AgentDock macOS 预编译版本安装脚本。
   AGENTDOCK_INSTALL_DIR       二进制安装目录，默认 ~/.local/bin
   AGENTDOCK_BACKUP_DIR        旧二进制备份目录，默认 ~/.agentdock/backups/bin
   AGENTDOCK_RELEASE_BASE_URL              自定义 AgentDock Release 下载根地址
-  AGENTDOCK_TUNNEL_MODE                  none、quick 或 named
-  AGENTDOCK_SERVER_URL                   Named Tunnel 的 HTTPS 公网 Origin
+  AGENTDOCK_TUNNEL_MODE                  高级覆盖：none、quick 或 named
+  AGENTDOCK_SERVER_URL                   固定域名模式的 HTTPS 公网 Origin
+  AGENTDOCK_OAUTH_PASSWORD               首次安装时可指定 OAuth 登录密码
+  AGENTDOCK_OAUTH_TOKEN_SECRET           首次安装时可指定 OAuth 签名密钥
   AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN      Named Tunnel Token；不写入 agentdock.env
   AGENTDOCK_CLOUDFLARED_BINARY           使用指定的本地 cloudflared 二进制
   AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL 自定义 cloudflared Release 下载根地址
@@ -128,6 +137,16 @@ generate_auth_token() {
   openssl rand -hex 32
 }
 
+generate_oauth_password() {
+  require_command openssl
+  openssl rand -hex 12
+}
+
+generate_oauth_token_secret() {
+  require_command openssl
+  openssl rand -hex 32
+}
+
 read_agentdock_env_key() {
   local key="$1"
   [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || return 0
@@ -136,9 +155,21 @@ read_agentdock_env_key() {
     case "$2" in
       AGENTDOCK_AUTH_TOKEN) print -r -- "${AGENTDOCK_AUTH_TOKEN:-}" ;;
       AGENTDOCK_SERVER_URL) print -r -- "${AGENTDOCK_SERVER_URL:-}" ;;
+      AGENTDOCK_OAUTH_ENABLED) print -r -- "${AGENTDOCK_OAUTH_ENABLED:-}" ;;
+      AGENTDOCK_OAUTH_PASSWORD) print -r -- "${AGENTDOCK_OAUTH_PASSWORD:-}" ;;
+      AGENTDOCK_OAUTH_TOKEN_SECRET) print -r -- "${AGENTDOCK_OAUTH_TOKEN_SECRET:-}" ;;
       *) exit 2 ;;
     esac
   ' _ "$AGENTDOCK_ENV" "$key"
+}
+
+read_existing_tunnel_mode() {
+  [[ -f "$TUNNEL_ENV" && ! -L "$TUNNEL_ENV" ]] || return 0
+  /bin/zsh -c '
+    unset AGENTDOCK_TUNNEL_MODE
+    source "$1" >/dev/null
+    print -r -- "${AGENTDOCK_TUNNEL_MODE:-}"
+  ' _ "$TUNNEL_ENV"
 }
 
 read_existing_tunnel_token() {
@@ -150,11 +181,16 @@ read_existing_tunnel_token() {
   ' _ "$TUNNEL_ENV"
 }
 
-capture_previous_server_url() {
-  local pattern="^[[:space:]]*(export[[:space:]]+)?AGENTDOCK_SERVER_URL[[:space:]]*="
-  if [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] && grep -Eq "$pattern" "$AGENTDOCK_ENV"; then
+capture_previous_public_auth() {
+  local server_pattern="^[[:space:]]*(export[[:space:]]+)?AGENTDOCK_SERVER_URL[[:space:]]*="
+  local oauth_pattern="^[[:space:]]*(export[[:space:]]+)?AGENTDOCK_OAUTH_ENABLED[[:space:]]*="
+  if [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] && grep -Eq "$server_pattern" "$AGENTDOCK_ENV"; then
     PREVIOUS_SERVER_URL="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
     PREVIOUS_SERVER_URL_PRESENT=true
+  fi
+  if [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] && grep -Eq "$oauth_pattern" "$AGENTDOCK_ENV"; then
+    PREVIOUS_OAUTH_ENABLED="$(read_agentdock_env_key AGENTDOCK_OAUTH_ENABLED)"
+    PREVIOUS_OAUTH_ENABLED_PRESENT=true
   fi
 }
 
@@ -175,11 +211,16 @@ remove_agentdock_env_key() {
   mv -f "$tmp_file" "$AGENTDOCK_ENV"
 }
 
-restore_previous_server_url() {
+restore_previous_public_auth() {
   if [[ "$PREVIOUS_SERVER_URL_PRESENT" == true ]]; then
     write_env_key AGENTDOCK_SERVER_URL "$PREVIOUS_SERVER_URL" true
   else
     remove_agentdock_env_key AGENTDOCK_SERVER_URL
+  fi
+  if [[ "$PREVIOUS_OAUTH_ENABLED_PRESENT" == true ]]; then
+    write_env_key AGENTDOCK_OAUTH_ENABLED "$PREVIOUS_OAUTH_ENABLED" true
+  else
+    remove_agentdock_env_key AGENTDOCK_OAUTH_ENABLED
   fi
 }
 
@@ -188,19 +229,62 @@ restart_agentdock_after_server_url_restore() {
   register_and_start_service
 }
 
-ensure_public_auth_token() {
+ensure_public_auth() {
   local current_token="$(read_agentdock_env_key AGENTDOCK_AUTH_TOKEN)"
+  local current_password="$(read_agentdock_env_key AGENTDOCK_OAUTH_PASSWORD)"
+  local current_secret="$(read_agentdock_env_key AGENTDOCK_OAUTH_TOKEN_SECRET)"
+
   if [[ -n "$current_token" ]]; then
-    return
-  fi
-  if [[ -n "$AUTH_TOKEN_ARG" ]]; then
+    AUTH_TOKEN_ARG="$current_token"
+  elif [[ -n "$AUTH_TOKEN_ARG" ]]; then
     AUTH_TOKEN_REPLACE=true
-    return
+  else
+    AUTH_TOKEN_ARG="$(generate_auth_token)"
+    AUTH_TOKEN_REPLACE=true
+    print -- "==> 已自动生成 Bearer Token"
   fi
 
-  AUTH_TOKEN_ARG="$(generate_auth_token)"
-  AUTH_TOKEN_REPLACE=true
-  print -- "==> 已为公网 Tunnel 自动生成 AgentDock Bearer Token"
+  if [[ -n "$current_password" ]]; then
+    OAUTH_PASSWORD_VALUE="$current_password"
+  elif [[ -n "${AGENTDOCK_OAUTH_PASSWORD:-}" ]]; then
+    OAUTH_PASSWORD_VALUE="$AGENTDOCK_OAUTH_PASSWORD"
+  else
+    OAUTH_PASSWORD_VALUE="$(generate_oauth_password)"
+    print -- "==> 已自动生成 OAuth 登录密码"
+  fi
+
+  if [[ -n "$current_secret" ]]; then
+    OAUTH_TOKEN_SECRET_VALUE="$current_secret"
+  elif [[ -n "${AGENTDOCK_OAUTH_TOKEN_SECRET:-}" ]]; then
+    OAUTH_TOKEN_SECRET_VALUE="$AGENTDOCK_OAUTH_TOKEN_SECRET"
+  else
+    OAUTH_TOKEN_SECRET_VALUE="$(generate_oauth_token_secret)"
+  fi
+
+  (( ${#OAUTH_PASSWORD_VALUE} >= 12 )) || die "OAuth 登录密码至少需要 12 个字符"
+  (( ${#OAUTH_TOKEN_SECRET_VALUE} >= 32 )) || die "OAuth 签名密钥至少需要 32 个字节"
+}
+
+choose_tunnel_mode_interactively() {
+  print -- ""
+  print -- "请选择公网访问方式："
+  print -- "- 有自己的 Cloudflare 域名：使用固定地址，适合长期运行和 OAuth"
+  print -- "- 没有域名：自动生成临时地址，适合快速体验；重启后地址可能变化"
+  print -n -- "你是否有已接入 Cloudflare 的域名？ [y/N]: "
+  local answer=""
+  read -r answer
+  case "${answer:l}" in
+    y|yes) TUNNEL_MODE="named" ;;
+    *) TUNNEL_MODE="quick" ;;
+  esac
+  TUNNEL_MODE_EXPLICIT=true
+}
+
+prompt_named_server_url() {
+  [[ -t 0 ]] || die "固定域名模式需要设置 AGENTDOCK_SERVER_URL 或 --server-url"
+  print -n -- "固定 HTTPS 公网地址（例如 https://agent.example.com）: "
+  read -r SERVER_URL
+  [[ -n "$SERVER_URL" ]] || die "固定公网地址不能为空"
 }
 
 prompt_named_tunnel_token() {
@@ -338,6 +422,11 @@ ENV
   write_env_key AGENTDOCK_LOG_LEVEL "$SERVICE_LOG_LEVEL" false
   write_env_key AGENTDOCK_AUTH_TOKEN "$AUTH_TOKEN_ARG" "$AUTH_TOKEN_REPLACE"
   write_env_key AGENTDOCK_SERVER_URL "$SERVER_URL" "$SERVER_URL_EXPLICIT"
+  if [[ "$PUBLIC_AUTH_CONFIGURE" == true ]]; then
+    write_env_key AGENTDOCK_OAUTH_ENABLED "$OAUTH_ENABLED_VALUE" true
+    write_env_key AGENTDOCK_OAUTH_PASSWORD "$OAUTH_PASSWORD_VALUE" false
+    write_env_key AGENTDOCK_OAUTH_TOKEN_SECRET "$OAUTH_TOKEN_SECRET_VALUE" false
+  fi
   write_env_key AGENTDOCK_NEXUS_ENDPOINT "${AGENTDOCK_NEXUS_ENDPOINT:-}" false
   write_env_key AGENTDOCK_NEXUS_TOKEN "${AGENTDOCK_NEXUS_TOKEN:-}" false
 
@@ -780,7 +869,8 @@ register_and_start_tunnel() {
     return 1
   fi
   if [[ "$TUNNEL_MODE" == quick ]]; then
-    print -- "==> Quick Tunnel 已连接：$tunnel_result/mcp"
+    TUNNEL_PUBLIC_URL="$tunnel_result"
+    print -- "==> 临时公网地址已连接：$tunnel_result/mcp"
   else
     print -- "==> Named Tunnel 已启动：$SERVER_URL/mcp"
   fi
@@ -797,7 +887,7 @@ rollback_tunnel_start() {
     restore_tunnel_state || return 1
   fi
 
-  restore_previous_server_url || return 1
+  restore_previous_public_auth || return 1
   restart_agentdock_after_server_url_restore || return 1
   if [[ "$TUNNEL_SERVICE_WAS_LOADED" == true && "$TUNNEL_PREVIOUS_SERVICE_STOPPED" == true ]]; then
     restart_previous_tunnel || return 1
@@ -827,7 +917,7 @@ configure_tunnel() {
     write_tunnel_launch_agent
   ); then
     restore_tunnel_state || die "生成 Tunnel 服务文件失败，且旧 Tunnel 配置恢复失败"
-    restore_previous_server_url || die "生成 Tunnel 服务文件失败，且旧公网地址恢复失败"
+    restore_previous_public_auth || die "生成 Tunnel 服务文件失败，且旧公网认证配置恢复失败"
     restart_agentdock_after_server_url_restore || die "旧公网地址已恢复，但 AgentDock 重启验证失败"
     die "生成 Tunnel 服务文件失败；已恢复安装前 Tunnel 和公网地址"
   fi
@@ -836,7 +926,20 @@ configure_tunnel() {
     print -- "==> 已生成 $TUNNEL_MODE Tunnel 服务文件，按 --no-start 要求未启动"
   elif ! register_and_start_tunnel; then
     rollback_tunnel_start || die "新 Tunnel 启动失败，且安装前 Tunnel 恢复失败"
-    die "新 Tunnel 启动失败；已恢复安装前 Tunnel 和公网地址"
+    die "新 Tunnel 启动失败；已恢复安装前 Tunnel 和公网认证配置"
+  fi
+  if [[ "$TUNNEL_MODE" == quick && "$NO_START" == false ]]; then
+    SERVER_URL="$TUNNEL_PUBLIC_URL"
+    SERVER_URL_EXPLICIT=true
+    OAUTH_ENABLED_VALUE="true"
+    write_env_key AGENTDOCK_SERVER_URL "$SERVER_URL" true
+    write_env_key AGENTDOCK_OAUTH_ENABLED true true
+    chmod 0600 "$AGENTDOCK_ENV"
+    print -- "==> 已将临时公网地址写入 AgentDock OAuth 配置并重启服务"
+    if ! register_and_start_service; then
+      rollback_tunnel_start || die "OAuth 地址更新失败，且安装前 Tunnel 或认证配置恢复失败"
+      die "OAuth 地址更新失败；已恢复安装前 Tunnel 和公网认证配置"
+    fi
   fi
   if [[ "$TUNNEL_MODE" == named ]]; then
     print -- "==> Cloudflare Public Hostname 的 Service 目标：$target_url"
@@ -1022,6 +1125,7 @@ rollback_release_install() {
   fi
 }
 
+main() {
 while (( $# > 0 )); do
   case "$1" in
     --version)
@@ -1084,25 +1188,56 @@ while (( $# > 0 )); do
 done
 
 [[ "$(uname -s)" == "Darwin" ]] || die "此脚本只支持 macOS"
+if [[ "$REGISTER_SERVICE" == true && "$TUNNEL_MODE_EXPLICIT" == false ]]; then
+  existing_tunnel_mode="$(read_existing_tunnel_mode)"
+  case "$existing_tunnel_mode" in
+    quick|named)
+      TUNNEL_MODE="$existing_tunnel_mode"
+      TUNNEL_MODE_EXPLICIT=true
+      print -- "==> 沿用现有公网访问方式：$TUNNEL_MODE"
+      ;;
+    *)
+      if [[ -t 0 ]]; then
+        choose_tunnel_mode_interactively
+      fi
+      ;;
+  esac
+fi
 validate_port "$SERVICE_PORT"
 validate_tunnel_mode "$TUNNEL_MODE"
 if [[ "$TUNNEL_MODE" != none ]]; then
   REGISTER_SERVICE=true
-  ensure_public_auth_token
+  PUBLIC_AUTH_CONFIGURE=true
+  ensure_public_auth
   if [[ "$TUNNEL_MODE" == named ]]; then
     if [[ -z "$SERVER_URL" ]]; then
       SERVER_URL="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
     fi
-    [[ -n "$SERVER_URL" ]] || die "Named Tunnel 需要 --server-url 或 AGENTDOCK_SERVER_URL"
+    [[ -n "$SERVER_URL" ]] || prompt_named_server_url
     SERVER_URL="$(normalize_server_url "$SERVER_URL")"
     SERVER_URL_EXPLICIT=true
+    OAUTH_ENABLED_VALUE="true"
     if [[ -z "$TUNNEL_TOKEN" ]]; then
       TUNNEL_TOKEN="$(read_existing_tunnel_token)"
     fi
     [[ -n "$TUNNEL_TOKEN" ]] || prompt_named_tunnel_token
   else
-    # Quick Tunnel 地址每次启动都会变化，不能保留旧的固定公网 Origin。
-    SERVER_URL=""
+    # 重跑安装器刷新临时地址时，先保留旧 Origin 让现有 OAuth 服务继续可用；
+    # 新 Tunnel 成功后再原子更新地址并重启 AgentDock。--no-start 没有新地址，
+    # 因此必须清空旧 Origin，避免把固定域名或已失效临时地址继续交付给用户。
+    if [[ "$NO_START" == true ]]; then
+      SERVER_URL=""
+      OAUTH_ENABLED_VALUE="false"
+    else
+      if [[ -z "$SERVER_URL" ]]; then
+        SERVER_URL="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
+      fi
+      if [[ -n "$SERVER_URL" ]]; then
+        OAUTH_ENABLED_VALUE="true"
+      else
+        OAUTH_ENABLED_VALUE="false"
+      fi
+    fi
     SERVER_URL_EXPLICIT=true
   fi
 fi
@@ -1154,7 +1289,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "$REGISTER_SERVICE" == true ]]; then
-  capture_previous_server_url
+  capture_previous_public_auth
   snapshot_service_files
 fi
 
@@ -1286,12 +1421,35 @@ LaunchAgent：
   $LOG_DIR
 STATUS
   if [[ "$TUNNEL_MODE_EXPLICIT" == true && "$TUNNEL_MODE" != none ]]; then
+    local_public_url="$SERVER_URL"
+    local_mcp_url="${SERVER_URL%/}/mcp"
+    if [[ "$TUNNEL_MODE" == quick && "$NO_START" == true ]]; then
+      local_public_url="启动 Tunnel 后生成"
+      local_mcp_url="启动 Tunnel 后生成"
+    fi
+    final_auth_token="$(read_agentdock_env_key AGENTDOCK_AUTH_TOKEN)"
+    final_oauth_password="$(read_agentdock_env_key AGENTDOCK_OAUTH_PASSWORD)"
     cat <<STATUS
-Cloudflare Tunnel：
-  模式：$TUNNEL_MODE
-  配置：$TUNNEL_ENV
-  LaunchAgent：$TUNNEL_PLIST_PATH
+
+╭─ AgentDock 安装完成 ─────────────────────────
+│ 公网模式：$TUNNEL_MODE
+│ 公网地址：$local_public_url
+│ MCP 地址：$local_mcp_url
+│ Bearer Token：$final_auth_token
+│ OAuth 登录密码：$final_oauth_password
+│ 认证方式：Bearer Token、OAuth 均已配置
+│ 配置文件：$AGENTDOCK_ENV
+│ Tunnel 日志：$TUNNEL_STDERR_LOG
+╰──────────────────────────────────────────────
 STATUS
+    if [[ "$TUNNEL_MODE" == quick ]]; then
+      if [[ "$NO_START" == true ]]; then
+        print -- "临时模式尚未启动；实际启动后安装器会写入公网地址并启用 OAuth。"
+      else
+        print -- "临时地址在 Tunnel 重启后可能变化；重新运行同一安装命令即可刷新，认证凭据保持不变。"
+        print -- "地址变化后，请在客户端替换 MCP URL 并重新完成 OAuth 授权。"
+      fi
+    fi
   fi
 else
   cat <<STATUS
@@ -1302,4 +1460,9 @@ else
 注册后台服务：
   zsh install-macos.sh --register-service
 STATUS
+fi
+}
+
+if [[ "${ZSH_EVAL_CONTEXT:-toplevel}" != *:file ]]; then
+  main "$@"
 fi

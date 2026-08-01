@@ -140,27 +140,22 @@ docker compose down
 
 ### Cloudflare Tunnel 公网访问
 
-macOS 和 Linux 安装器内置两种 Cloudflare Tunnel 模式：
+macOS 和 Linux 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装时只询问是否有已接入 Cloudflare 的域名：
 
-- `quick`：无需 Cloudflare 账号和域名，自动生成临时 `trycloudflare.com` 地址；重启后地址会变化，不适合 OAuth 或长期部署。
-- `named`：使用固定域名和 Cloudflare Tunnel Token；Token 单独保存在 `cloudflared.env`，不会传给 AgentDock 进程。
+- **有域名**：使用固定地址，适合长期运行；安装器会询问 HTTPS 公网地址和 Tunnel Token。
+- **没有域名**：自动生成临时 `trycloudflare.com` 地址，适合快速体验；Tunnel 重启后地址可能变化。
 
-macOS 临时体验：
+两种方式都会自动生成或复用 **Bearer Token** 与 **OAuth** 配置。安装完成框会显示公网地址、MCP 地址、Bearer Token 和 OAuth 登录密码；OAuth 签名密钥与 Tunnel Token 只保存在受限配置文件中，不会显示或传给无关进程。
 
-```bash
-zsh install-macos.sh --tunnel quick
-```
-
-macOS 固定域名：
+macOS 使用后台服务和公网入口：
 
 ```bash
-export AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='<tunnel-token>'
-zsh install-macos.sh \
-  --tunnel named \
-  --server-url https://agent.example.com
+zsh install-macos.sh --register-service
 ```
 
-Linux 安装器会在问答流程中直接询问 `none/quick/named`。Named Tunnel 需要先在 Cloudflare 控制台创建 Public Hostname，并把 Service 指向安装器输出的本地 AgentDock 地址。
+Linux 直接运行交互式安装器即可。已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。
+
+临时地址变化后，重新运行同一个安装脚本即可生成并回写新地址。安装器会保留原 Bearer Token、OAuth 登录密码和签名密钥；用户只需在客户端替换 MCP URL，并重新完成 OAuth 授权。
 
 Docker Quick Tunnel：
 

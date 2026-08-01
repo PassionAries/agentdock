@@ -2,6 +2,8 @@ package scripts
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -124,7 +126,7 @@ func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.
 	}
 	script := string(data)
 	for _, want := range []string{
-		"公网访问：none/quick/named",
+		"你是否有已接入 Cloudflare 的域名？",
 		"AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN",
 		"AGENTDOCK_TUNNEL_MODE=$mode",
 		"TUNNEL_TOKEN=$token",
@@ -132,6 +134,11 @@ func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.
 		"tunnel --no-autoupdate --url $target_url",
 		"tunnel --no-autoupdate run",
 		"AGENTDOCK_SERVER_URL=%s\\n",
+		"AGENTDOCK_OAUTH_ENABLED=%s\\n",
+		"AGENTDOCK_OAUTH_PASSWORD=%s\\n",
+		"AGENTDOCK_OAUTH_TOKEN_SECRET=%s\\n",
+		"Bearer Token、OAuth 均已启用",
+		`server_url="$TUNNEL_PUBLIC_URL"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("install-linux.sh missing Cloudflare Tunnel integration %q", want)
@@ -139,6 +146,80 @@ func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.
 	}
 	if strings.Contains(script, "--token $token") || strings.Contains(script, "--token \\$TUNNEL_TOKEN") {
 		t.Fatal("cloudflared token must be provided through its private environment file, not process arguments")
+	}
+}
+
+func TestLinuxInstallerPreservesCredentialsAndCapturesQuickURL(t *testing.T) {
+	tempDir := t.TempDir()
+	envFile := filepath.Join(tempDir, "agentdock.env")
+	initial := strings.Join([]string{
+		"AGENTDOCK_HOST=127.0.0.9",
+		"AGENTDOCK_PORT=19999",
+		"AGENTDOCK_AUTH_TOKEN=stable-token",
+		"AGENTDOCK_OAUTH_ENABLED=true",
+		"AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password",
+		"AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef",
+		"AGENTDOCK_BROWSER_ENABLED=true",
+		"",
+	}, "\n")
+	if err := os.WriteFile(envFile, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	script := `
+set -Eeuo pipefail
+source ./install-linux.sh
+run_root() {
+  if [[ "$1" == systemctl ]]; then
+    return 0
+  fi
+  if [[ "$1" == install ]]; then
+    shift
+    local args=()
+    while (( $# > 0 )); do
+      case "$1" in
+        -o|-g) shift 2 ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    command install "${args[@]}"
+    return
+  fi
+  "$@"
+}
+write_env_file "$TEST_ENV_FILE" 127.0.0.1 8765 stable-token info "" "" \
+  https://new.trycloudflare.com yes true stable-oauth-password stable-oauth-secret-0123456789abcdef
+cloudflared_service_active() { return 0; }
+cloudflared_quick_url() { printf 'https://new.trycloudflare.com'; }
+start_cloudflared_service systemd agentdock-cloudflared quick ""
+printf '\nCAPTURED=%s\n' "$TUNNEL_PUBLIC_URL"
+`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = "."
+	cmd.Env = append(os.Environ(), "TEST_ENV_FILE="+envFile)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run installer functions: %v\n%s", err, output)
+	}
+	got, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, want := range []string{
+		"AGENTDOCK_BROWSER_ENABLED=true",
+		"AGENTDOCK_AUTH_TOKEN=stable-token",
+		"AGENTDOCK_OAUTH_ENABLED=true",
+		"AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password",
+		"AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef",
+		"AGENTDOCK_SERVER_URL=https://new.trycloudflare.com",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("rewritten env missing %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(string(output), "CAPTURED=https://new.trycloudflare.com") {
+		t.Fatalf("quick URL was not captured: %s", output)
 	}
 }
 

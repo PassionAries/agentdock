@@ -74,6 +74,15 @@ count_env_key() {
   grep -Ec "^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=" "$file_path" || true
 }
 
+read_env_key() {
+  local file_path="$1"
+  local key="$2"
+  /bin/zsh -c '
+    source "$1" >/dev/null
+    print -r -- "${(P)2:-}"
+  ' _ "$file_path" "$key"
+}
+
 sha256_of() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
@@ -215,21 +224,29 @@ test "$(mode_of "$tunnel_start")" = "700"
 assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=named'
 assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_SERVER_URL=https://agent.example.test'
+assert_file_contains "$agentdock_env" 'AGENTDOCK_OAUTH_ENABLED=true'
 assert_file_not_contains "$agentdock_env" 'named-token-value'
 assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate run'
 plutil -lint "$tunnel_plist" >/dev/null
+named_oauth_password="$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)"
+named_oauth_secret="$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)"
+(( ${#named_oauth_password} >= 12 ))
+(( ${#named_oauth_secret} >= 32 ))
 
-# Named Tunnel 重复安装应复用已有公网 Origin 和私密 Token，不要求再次输入。
+# Named Tunnel 重复安装应自动沿用已有公网模式、Origin、认证凭据和私密 Token。
 env -i \
   HOME="$home_dir" \
   PATH="$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
   zsh "$ROOT_DIR/scripts/install-macos.sh" \
-    --tunnel named \
+    --register-service \
     --no-start
 assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_SERVER_URL=https://agent.example.test'
+assert_file_contains "$agentdock_env" 'AGENTDOCK_OAUTH_ENABLED=true'
+test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)" = "$named_oauth_password"
+test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)" = "$named_oauth_secret"
 assert_file_not_contains "$agentdock_env" 'named-token-value'
 
 env -i \
@@ -243,10 +260,13 @@ env -i \
 assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=quick'
 assert_file_contains "$tunnel_env" "TUNNEL_TOKEN=''"
 assert_file_contains "$agentdock_env" "AGENTDOCK_SERVER_URL=''"
+assert_file_contains "$agentdock_env" 'AGENTDOCK_OAUTH_ENABLED=false'
+test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)" = "$named_oauth_password"
+test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)" = "$named_oauth_secret"
 assert_file_not_contains "$tunnel_env" 'named-token-value'
 assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"'
 
-# Tunnel 配置失败时必须恢复旧 Tunnel 文件与旧公网地址，不能留下半更新状态。
+# Tunnel 配置失败时必须恢复旧 Tunnel 文件与旧公网认证状态，不能留下半更新状态。
 old_tunnel_env_sha="$(sha256_of "$tunnel_env")"
 old_tunnel_start_sha="$(sha256_of "$tunnel_start")"
 old_tunnel_plist_sha="$(sha256_of "$tunnel_plist")"
@@ -274,6 +294,48 @@ test "$(sha256_of "$home_dir/.local/bin/cloudflared")" = "$old_cloudflared_sha"
 assert_file_contains "$agentdock_env" "AGENTDOCK_SERVER_URL=''"
 assert_file_not_contains "$agentdock_env" 'https://broken.example.test'
 assert_file_not_contains "$tunnel_env" 'must-not-survive'
+
+# 模拟 Quick Tunnel 刷新：新地址必须回写并重启 AgentDock，已有双认证凭据不得轮换。
+quick_refresh_home="$TMP_ROOT/quick refresh home"
+quick_refresh_state="$TMP_ROOT/quick refresh state"
+mkdir -p "$quick_refresh_home/Library/Application Support/AgentDock" "$quick_refresh_state"
+quick_refresh_env="$quick_refresh_home/Library/Application Support/AgentDock/agentdock.env"
+cat > "$quick_refresh_env" <<'ENV'
+AGENTDOCK_HOST=127.0.0.1
+AGENTDOCK_PORT=18766
+AGENTDOCK_AUTH_TOKEN=stable-bearer-token
+AGENTDOCK_SERVER_URL=https://old.trycloudflare.com
+AGENTDOCK_OAUTH_ENABLED=true
+AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password
+AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef
+ENV
+chmod 0600 "$quick_refresh_env"
+env -i \
+  HOME="$quick_refresh_home" \
+  PATH="$TEST_PATH" \
+  TEST_QUICK_REFRESH_STATE="$quick_refresh_state" \
+  zsh -c '
+    set -euo pipefail
+    source "$1"
+    TUNNEL_MODE=quick
+    NO_START=false
+    PUBLIC_AUTH_CONFIGURE=true
+    SERVER_URL=https://old.trycloudflare.com
+    snapshot_tunnel_state() { :; }
+    install_cloudflared() { :; }
+    write_tunnel_env() { :; }
+    write_tunnel_start_script() { :; }
+    write_tunnel_launch_agent() { :; }
+    register_and_start_tunnel() { TUNNEL_PUBLIC_URL=https://fresh.trycloudflare.com; }
+    register_and_start_service() { print -- restarted >> "$TEST_QUICK_REFRESH_STATE/restarts"; }
+    configure_tunnel
+  ' _ "$ROOT_DIR/scripts/install-macos.sh"
+assert_file_contains "$quick_refresh_env" 'AGENTDOCK_SERVER_URL=https://fresh.trycloudflare.com'
+assert_file_contains "$quick_refresh_env" 'AGENTDOCK_OAUTH_ENABLED=true'
+assert_file_contains "$quick_refresh_env" 'AGENTDOCK_AUTH_TOKEN=stable-bearer-token'
+assert_file_contains "$quick_refresh_env" 'AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password'
+assert_file_contains "$quick_refresh_env" 'AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef'
+test "$(wc -l < "$quick_refresh_state/restarts" | tr -d ' ')" = "1"
 
 # 注册服务必须坚持标准二进制目标，不能把 plist 指向一处、二进制装到另一处。
 if run_installer --register-service --no-start --install-dir "$TMP_ROOT/nonstandard" >/dev/null 2>&1; then

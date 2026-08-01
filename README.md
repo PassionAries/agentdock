@@ -140,27 +140,22 @@ See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-sta
 
 ### Public access with Cloudflare Tunnel
 
-The macOS and Linux installers include two Cloudflare Tunnel modes:
+The macOS and Linux installers do not require regular users to understand internal `quick` or `named` modes. Public installation asks only whether a Cloudflare-managed domain is available:
 
-- `quick`: creates a temporary `trycloudflare.com` URL without a Cloudflare account or domain. The URL changes after restart and is not suitable for OAuth or long-term deployments.
-- `named`: uses a fixed hostname and a Cloudflare Tunnel Token. The token is stored in a separate `cloudflared.env` file and is never passed to the AgentDock process.
+- **Domain available:** use a fixed hostname for long-running access. The installer asks for the HTTPS public origin and Tunnel Token.
+- **No domain:** create a temporary `trycloudflare.com` URL for immediate testing. The URL may change after `cloudflared` restarts.
 
-Temporary access on macOS:
+Both paths automatically generate or reuse **Bearer Token** and **OAuth** credentials. The completion panel shows the public URL, MCP URL, Bearer Token, and OAuth login password. The OAuth signing secret and Tunnel Token stay only in protected configuration files and are not displayed or passed to unrelated processes.
 
-```bash
-zsh install-macos.sh --tunnel quick
-```
-
-Fixed hostname on macOS:
+On macOS, install the background service and public endpoint with:
 
 ```bash
-export AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='<tunnel-token>'
-zsh install-macos.sh \
-  --tunnel named \
-  --server-url https://agent.example.com
+zsh install-macos.sh --register-service
 ```
 
-The Linux installer asks for `none/quick/named` in its normal questionnaire. For a Named Tunnel, create the Public Hostname in Cloudflare first and point its Service to the local AgentDock address shown by the installer.
+On Linux, run the interactive installer normally. Existing automation may still override the prompt with `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`.
+
+When a temporary URL changes, rerun the same installer. It writes the new URL back to AgentDock while preserving the Bearer Token, OAuth login password, and signing secret. Update the MCP URL in the client and complete OAuth authorization again.
 
 Docker Quick Tunnel:
 
