@@ -1,106 +1,138 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"time"
 
+	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/config"
-	"github.com/uvwt/agentdock/internal/mcp/jsonrpc"
 )
 
 type Server struct {
-	runtime *app.Runtime
-	cfg     config.Config
+	runtime     *app.Runtime
+	sdk         *mcpsdk.Server
+	httpHandler http.Handler
 }
 
-type callToolParams struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
-
-func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
-	return &Server{runtime: runtime, cfg: cfg}
+func NewServer(runtime *app.Runtime, _ config.Config) *Server {
+	server := &Server{runtime: runtime}
+	server.sdk = mcpsdk.NewServer(
+		&mcpsdk.Implementation{Name: config.ServerName, Version: config.Version},
+		&mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}},
+	)
+	if runtime != nil {
+		for _, name := range runtime.ToolNames() {
+			server.registerTool(name)
+		}
+	}
+	server.httpHandler = mcpsdk.NewStreamableHTTPHandler(
+		func(*http.Request) *mcpsdk.Server { return server.sdk },
+		&mcpsdk.StreamableHTTPOptions{
+			Stateless:                    true,
+			JSONResponse:                 true,
+			MaxRequestBodyBytes:          1 << 20,
+			PropagateRequestCancellation: true,
+		},
+	)
+	return server
 }
 
 func (s *Server) AgentDockContext(ctx context.Context) (app.Result, error) {
 	return s.runtime.AgentDockContext(ctx)
 }
 
-func (s *Server) Dispatch(ctx context.Context, req jsonrpc.Request) jsonrpc.Response {
-	if req.JSONRPC != "" && req.JSONRPC != jsonrpc.Version {
-		return jsonrpc.Failure(req.ID, -32600, "Invalid Request", "jsonrpc must be 2.0")
-	}
-	switch req.Method {
-	case "initialize":
-		return jsonrpc.Success(req.ID, map[string]any{
-			"protocolVersion": config.ProtocolVersion,
-			"serverInfo":      map[string]any{"name": config.ServerName, "version": config.Version},
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-		})
-	case "notifications/initialized":
-		return jsonrpc.Success(req.ID, map[string]any{})
-	case "ping":
-		return jsonrpc.Success(req.ID, map[string]any{})
-	case "tools/list":
-		return jsonrpc.Success(req.ID, map[string]any{"tools": s.toolDescriptors()})
-	case "tools/call":
-		return s.callTool(ctx, req)
-	default:
-		return jsonrpc.Failure(req.ID, -32601, "Method not found", req.Method)
-	}
+func (s *Server) HTTPHandler() http.Handler {
+	return s.httpHandler
 }
 
 func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
-	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-	encoder := json.NewEncoder(out)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var req jsonrpc.Request
-		if err := json.Unmarshal(line, &req); err != nil {
-			if writeErr := encoder.Encode(jsonrpc.Failure(nil, -32700, "Parse error", err.Error())); writeErr != nil {
-				return fmt.Errorf("write parse error response: %w", writeErr)
-			}
-			continue
-		}
-		resp := s.Dispatch(context.Background(), req)
-		if req.ID != nil {
-			if err := encoder.Encode(resp); err != nil {
-				return fmt.Errorf("write JSON-RPC response: %w", err)
-			}
-		}
+	if s == nil || s.sdk == nil {
+		return errors.New("MCP server is not initialized")
 	}
-	return scanner.Err()
+	return s.sdk.Run(context.Background(), &mcpsdk.IOTransport{
+		Reader: readCloser{Reader: in},
+		Writer: writeCloser{Writer: out},
+	})
 }
 
-func (s *Server) callTool(ctx context.Context, req jsonrpc.Request) jsonrpc.Response {
+func (s *Server) registerTool(name string) {
+	def, ok := toolDefinition(name)
+	if !ok {
+		return
+	}
+	meta := toolMetadata(def)
+	tool := &mcpsdk.Tool{
+		Name:         name,
+		Title:        def.Title,
+		Description:  def.Description,
+		InputSchema:  inputSchema(name),
+		OutputSchema: outputSchema(name),
+	}
+	if len(meta) > 0 {
+		tool.Meta = mcpsdk.Meta(meta)
+	}
+	// 使用低层 AddTool：AgentDock 的参数校验、权限错误和结构化输出都由
+	// Runtime 统一处理，SDK 只负责协议、会话与传输语义。
+	s.sdk.AddTool(tool, func(ctx context.Context, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		return s.callTool(ctx, name, request)
+	})
+}
+
+func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 	started := time.Now()
-	var params callToolParams
-	if len(req.Params) > 0 {
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			slog.Warn("tool params invalid", "duration_ms", time.Since(started).Milliseconds())
-			return jsonrpc.Failure(req.ID, -32602, "Invalid params", err.Error())
+	arguments := map[string]any{}
+	if request != nil && request.Params != nil && len(request.Params.Arguments) > 0 && string(request.Params.Arguments) != "null" {
+		if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
+			slog.Warn("tool params invalid", "tool", name, "duration_ms", time.Since(started).Milliseconds())
+			return nil, &sdkjsonrpc.Error{Code: sdkjsonrpc.CodeInvalidParams, Message: "tool arguments must be a JSON object"}
 		}
 	}
-	slog.Info("tool started", "tool", params.Name)
-	result, err := s.runtime.Call(ctx, params.Name, params.Arguments)
-	slog.Info("tool finished", "tool", params.Name, "duration_ms", time.Since(started).Milliseconds(), "ok", err == nil)
-	return jsonrpc.Success(req.ID, toolEnvelope(params.Name, result, err))
+	slog.Info("tool started", "tool", name)
+	result, err := s.runtime.Call(ctx, name, arguments)
+	slog.Info("tool finished", "tool", name, "duration_ms", time.Since(started).Milliseconds(), "ok", err == nil)
+
+	encoded, encodeErr := json.Marshal(toolEnvelope(name, result, err))
+	if encodeErr != nil {
+		return nil, fmt.Errorf("encode MCP tool result: %w", encodeErr)
+	}
+	var response mcpsdk.CallToolResult
+	if decodeErr := json.Unmarshal(encoded, &response); decodeErr != nil {
+		return nil, fmt.Errorf("decode MCP tool result: %w", decodeErr)
+	}
+	return &response, nil
 }
 
-func (s *Server) toolDescriptors() []map[string]any {
-	return toolDescriptorsForNames(s.runtime.ToolNames())
+func toolMetadata(def ToolDefinition) map[string]any {
+	meta := map[string]any{}
+	if len(def.FileArgRewritePaths) > 0 {
+		paths := append([]string(nil), def.FileArgRewritePaths...)
+		meta["file_arg_rewrite_paths"] = paths
+		meta["openai/fileParams"] = paths
+	}
+	if len(def.FileResultRewritePaths) > 0 {
+		paths := append([]string(nil), def.FileResultRewritePaths...)
+		meta["file_result_rewrite_paths"] = paths
+		meta["openai/fileResultPaths"] = paths
+		meta["openai/fileOutputs"] = paths
+	}
+	return meta
 }
+
+type readCloser struct{ io.Reader }
+
+func (readCloser) Close() error { return nil }
+
+type writeCloser struct{ io.Writer }
+
+func (writeCloser) Close() error { return nil }
 
 func toolDescriptorsForNames(names []string) []map[string]any {
 	descriptors := make([]map[string]any, 0, len(names))
@@ -113,19 +145,12 @@ func toolDescriptorsForNames(names []string) []map[string]any {
 			"inputSchema":  inputSchema(name),
 			"outputSchema": outputSchema(name),
 		}
-		meta := map[string]any{}
-		if len(def.FileArgRewritePaths) > 0 {
-			paths := append([]string(nil), def.FileArgRewritePaths...)
+		meta := toolMetadata(def)
+		if paths, ok := meta["file_arg_rewrite_paths"].([]string); ok {
 			descriptor["file_arg_rewrite_paths"] = paths
-			meta["file_arg_rewrite_paths"] = paths
-			meta["openai/fileParams"] = paths
 		}
-		if len(def.FileResultRewritePaths) > 0 {
-			paths := append([]string(nil), def.FileResultRewritePaths...)
+		if paths, ok := meta["file_result_rewrite_paths"].([]string); ok {
 			descriptor["file_result_rewrite_paths"] = paths
-			meta["file_result_rewrite_paths"] = paths
-			meta["openai/fileResultPaths"] = paths
-			meta["openai/fileOutputs"] = paths
 		}
 		if len(meta) > 0 {
 			descriptor["_meta"] = meta

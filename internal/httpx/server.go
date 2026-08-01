@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,7 +22,6 @@ import (
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/httpx/requestmeta"
 	"github.com/uvwt/agentdock/internal/mcp"
-	"github.com/uvwt/agentdock/internal/mcp/jsonrpc"
 	"github.com/uvwt/agentdock/internal/publicartifacts"
 )
 
@@ -285,11 +285,8 @@ func agentDockContextHandler(server *mcp.Server, cfg config.Config, oauthStore *
 func mcpEndpointHandler(server *mcp.Server, cfg config.Config, oauthStore *auth.OAuthStore) http.HandlerFunc {
 	authorizer := auth.Bearer{Token: cfg.AuthToken}
 	authRequired := cfg.AuthRequired()
+	transport := server.HTTPHandler()
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		staticOK := cfg.AuthToken != "" && authorizer.Authorized(r)
 		oauthOK := authorizedOAuth(r, cfg, oauthStore)
 		if authRequired && !staticOK && !oauthOK {
@@ -297,19 +294,41 @@ func mcpEndpointHandler(server *mcp.Server, cfg config.Config, oauthStore *auth.
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		var req jsonrpc.Request
-		body := http.MaxBytesReader(w, r.Body, 1<<20)
-		if err := decodeSingleJSON(body, &req); err != nil {
-			writeJSON(w, jsonrpc.Failure(nil, -32700, "Parse error", err.Error()))
+		if r.Method == http.MethodPost && !prepareMCPRequestBody(w, r) {
 			return
 		}
-		resp := server.Dispatch(requestmeta.WithBaseURL(r.Context(), requestPublicBaseURL(cfg, r)), req)
-		if req.ID == nil {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		writeJSON(w, resp)
+		ctx := requestmeta.WithBaseURL(r.Context(), requestPublicBaseURL(cfg, r))
+		transport.ServeHTTP(w, r.WithContext(ctx))
 	}
+}
+
+func prepareMCPRequestBody(w http.ResponseWriter, r *http.Request) bool {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body exceeds 1048576 bytes", http.StatusRequestEntityTooLarge)
+			return false
+		}
+		writeJSON(w, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      nil,
+			"error":   map[string]any{"code": -32700, "message": "Parse error", "data": err.Error()},
+		})
+		return false
+	}
+	var payload json.RawMessage
+	if err := decodeSingleJSON(bytes.NewReader(body), &payload); err != nil {
+		writeJSON(w, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      nil,
+			"error":   map[string]any{"code": -32700, "message": "Parse error", "data": err.Error()},
+		})
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	return true
 }
 
 func decodeSingleJSON(reader io.Reader, target any) error {

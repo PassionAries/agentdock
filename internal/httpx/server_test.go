@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -27,6 +28,13 @@ func testConfig(t *testing.T) config.Config {
 	return cfg
 }
 
+func newMCPRequest(method, target string, body io.Reader) *http.Request {
+	request := httptest.NewRequest(method, target, body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	return request
+}
+
 func TestHTTPServerHasDefensiveConnectionLimits(t *testing.T) {
 	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	server := newHTTPServer("127.0.0.1:0", handler)
@@ -49,7 +57,7 @@ func TestMCPEndpointNotificationReturnsAcceptedWithEmptyBody(t *testing.T) {
 	}
 	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`))
+	req := newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 
@@ -70,7 +78,7 @@ func TestMCPEndpointRejectsTrailingJSONValue(t *testing.T) {
 	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
 	body := `{"jsonrpc":"2.0","id":1,"method":"ping"} {"jsonrpc":"2.0","id":2,"method":"ping"}`
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
+	handler.ServeHTTP(recorder, newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
@@ -88,8 +96,11 @@ func TestMCPEndpointRejectsOversizedBody(t *testing.T) {
 	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
 	body := `{"jsonrpc":"2.0","id":1,"method":"ping"}` + strings.Repeat(" ", (1<<20)+1)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
-	if !strings.Contains(recorder.Body.String(), `"code":-32700`) || !strings.Contains(recorder.Body.String(), "request body too large") {
+	handler.ServeHTTP(recorder, newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; response=%s", recorder.Code, http.StatusRequestEntityTooLarge, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "request body exceeds 1048576 bytes") {
 		t.Fatalf("response = %s", recorder.Body.String())
 	}
 }
@@ -341,7 +352,7 @@ func TestServerURLAloneDoesNotRequireAuthOrDeclareOAuth(t *testing.T) {
 	}
 	handler := mcpEndpointHandler(mcp.NewServer(runtime, cfg), cfg, auth.NewOAuthStore())
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`))
+	req := newMCPRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, req)
 	if recorder.Code != http.StatusAccepted {
@@ -438,7 +449,7 @@ func TestBearerChallengeReferencesPathSpecificResourceMetadata(t *testing.T) {
 	cfg.OAuthEnabled = true
 	cfg.OAuthServerURL = "https://agentdock.example.com"
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request := newMCPRequest(http.MethodPost, "/mcp", nil)
 	setBearerChallenge(recorder, cfg, request, false)
 	want := `Bearer resource_metadata="https://agentdock.example.com/.well-known/oauth-protected-resource/mcp"`
 	if got := recorder.Header().Get("WWW-Authenticate"); got != want {
@@ -552,7 +563,7 @@ func TestAuthorizedOAuthFalseWhenOAuthDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueToken() error = %v", err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req := newMCPRequest(http.MethodGet, "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	if authorizedOAuth(req, cfg, auth.NewOAuthStore()) {
 		t.Fatalf("authorizedOAuth() = true when OAuth is disabled")

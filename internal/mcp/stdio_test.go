@@ -1,94 +1,57 @@
 package mcp
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"strings"
+	"context"
+	"io"
 	"testing"
+	"time"
 
-	"github.com/uvwt/agentdock/internal/mcp/jsonrpc"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/uvwt/agentdock/internal/config"
 )
 
-func TestServeStdioHandlesRequestsErrorsAndNotifications(t *testing.T) {
-	server := &Server{}
-	input := strings.Join([]string{
-		`{"jsonrpc":`,
-		`{"jsonrpc":"2.0","id":1,"method":"ping"}`,
-		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
-	}, "\n") + "\n"
-	var output bytes.Buffer
+func TestServeStdioUsesOfficialSDKTransport(t *testing.T) {
+	server := NewServer(nil, config.Config{})
+	clientInput, serverOutput := io.Pipe()
+	serverInput, clientOutput := io.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- server.ServeStdio(serverInput, serverOutput)
+	}()
 
-	if err := server.ServeStdio(strings.NewReader(input), &output); err != nil {
-		t.Fatalf("ServeStdio() error = %v", err)
+	client := mcpsdk.NewClient(
+		&mcpsdk.Implementation{Name: "agentdock-test", Version: "1.0.0"},
+		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
+	)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	session, err := client.Connect(ctx, &mcpsdk.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("response lines = %d, want 2; output=%q", len(lines), output.String())
+	if result := session.InitializeResult(); result == nil || result.ProtocolVersion == "" {
+		t.Fatalf("InitializeResult() = %#v", result)
 	}
-
-	var parseFailure map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(lines[0]), &parseFailure); err != nil {
-		t.Fatalf("decode parse failure: %v", err)
+	if err := session.Ping(ctx, nil); err != nil {
+		t.Fatalf("Ping() error = %v", err)
 	}
-	if got := string(parseFailure["id"]); got != "null" {
-		t.Fatalf("parse failure id = %s, want null", got)
-	}
-	var rpcError jsonrpc.Error
-	if err := json.Unmarshal(parseFailure["error"], &rpcError); err != nil {
-		t.Fatalf("decode parse error object: %v", err)
-	}
-	if rpcError.Code != -32700 {
-		t.Fatalf("parse error code = %d", rpcError.Code)
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 
-	var pingResponse map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(lines[1]), &pingResponse); err != nil {
-		t.Fatalf("decode ping response: %v", err)
-	}
-	if got := string(pingResponse["id"]); got != "1" {
-		t.Fatalf("ping id = %s, want 1", got)
-	}
-	if _, ok := pingResponse["result"]; !ok {
-		t.Fatalf("ping response omitted result: %s", lines[1])
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			t.Fatalf("ServeStdio() error = %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("ServeStdio() did not stop after client close")
 	}
 }
 
-func TestServeStdioReturnsResponseWriteFailure(t *testing.T) {
-	server := &Server{}
-	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")
-	err := server.ServeStdio(input, failingWriter{})
-	if err == nil || !strings.Contains(err.Error(), "write JSON-RPC response") {
-		t.Fatalf("ServeStdio() error = %v, want response write failure", err)
+func TestServeStdioRejectsUninitializedServer(t *testing.T) {
+	var server *Server
+	if err := server.ServeStdio(nil, nil); err == nil {
+		t.Fatal("ServeStdio() accepted an uninitialized server")
 	}
-}
-
-func TestServeStdioReturnsParseErrorWriteFailure(t *testing.T) {
-	server := &Server{}
-	err := server.ServeStdio(strings.NewReader("{\n"), failingWriter{})
-	if err == nil || !strings.Contains(err.Error(), "write parse error response") {
-		t.Fatalf("ServeStdio() error = %v, want parse-error write failure", err)
-	}
-}
-
-func TestDispatchProtocolAndMethodValidation(t *testing.T) {
-	server := &Server{}
-	invalidVersion := server.Dispatch(t.Context(), jsonrpc.Request{JSONRPC: "1.0", ID: 1, Method: "ping"})
-	if invalidVersion.Error == nil || invalidVersion.Error.Code != -32600 {
-		t.Fatalf("invalid version response = %#v", invalidVersion)
-	}
-	unknown := server.Dispatch(t.Context(), jsonrpc.Request{JSONRPC: "2.0", ID: "id", Method: "unknown"})
-	if unknown.Error == nil || unknown.Error.Code != -32601 {
-		t.Fatalf("unknown method response = %#v", unknown)
-	}
-	ping := server.Dispatch(t.Context(), jsonrpc.Request{JSONRPC: "2.0", ID: 0, Method: "ping"})
-	if ping.Error != nil || ping.Result == nil {
-		t.Fatalf("ping response = %#v", ping)
-	}
-}
-
-type failingWriter struct{}
-
-func (failingWriter) Write([]byte) (int, error) {
-	return 0, errors.New("writer failed")
 }

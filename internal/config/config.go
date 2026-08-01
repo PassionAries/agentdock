@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	ProtocolVersion    = "2025-06-18"
+	ProtocolVersion    = "2026-07-28"
 	ServerName         = "agentdock"
 	Version            = "0.5.4"
 	PathModel          = "host"

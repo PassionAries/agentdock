@@ -23,6 +23,10 @@ func TestManagerStreamableHTTPFlowAndPersistence(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("Authorization = %q", got)
 		}
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		var request struct {
 			ID     any            `json:"id"`
 			Method string         `json:"method"`
@@ -34,9 +38,19 @@ func TestManagerStreamableHTTPFlowAndPersistence(t *testing.T) {
 			return
 		}
 		switch request.Method {
+		case "server/discover":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"error":   map[string]any{"code": -32601, "message": "Method not found"},
+			})
 		case "initialize":
-			if got := r.Header.Get("MCP-Protocol-Version"); got != "2025-06-18" {
-				t.Errorf("initialize protocol version = %q", got)
+			if got := r.Header.Get("MCP-Protocol-Version"); got != "" {
+				t.Errorf("initialize protocol header = %q, want empty before negotiation", got)
+			}
+			if got := request.Params["protocolVersion"]; got != "2025-11-25" {
+				t.Errorf("initialize protocol version = %#v", got)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Mcp-Session-Id", "session-1")
@@ -257,6 +271,12 @@ func TestMCPStdioHelperProcess(t *testing.T) {
 			os.Exit(2)
 		}
 		switch request.Method {
+		case "server/discover":
+			_ = encoder.Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"error":   map[string]any{"code": -32601, "message": "Method not found"},
+			})
 		case "initialize":
 			_ = encoder.Encode(map[string]any{
 				"jsonrpc": "2.0",

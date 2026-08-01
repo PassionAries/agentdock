@@ -1,6 +1,13 @@
 package mcp
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/uvwt/agentdock/internal/app"
+	"github.com/uvwt/agentdock/internal/config"
+)
 
 func TestToolDescriptorsDoNotExposePermissionAnnotations(t *testing.T) {
 	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package"})
@@ -76,5 +83,66 @@ func TestToolEnvelopePassesThroughDynamicMCPContent(t *testing.T) {
 	structured, _ := response["structuredContent"].(map[string]any)
 	if structured["name"] != "figma:get_screenshot" {
 		t.Fatalf("structuredContent = %#v", structured)
+	}
+}
+
+func TestOfficialSDKServerListsAndCallsAgentDockTools(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{AgentDockDefaultDir: root, AgentDockHome: filepath.Join(root, ".agentdock")}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer runtime.Close()
+
+	serverTransport, clientTransport := mcpsdk.NewInMemoryTransports()
+	server := NewServer(runtime, cfg)
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.sdk.Run(t.Context(), serverTransport) }()
+
+	client := mcpsdk.NewClient(
+		&mcpsdk.Implementation{Name: "agentdock-test", Version: "1.0.0"},
+		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
+	)
+	session, err := client.Connect(t.Context(), clientTransport, nil)
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+
+	foundServerInfo := false
+	foundFilePublishMetadata := false
+	for tool, err := range session.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatalf("Tools() error = %v", err)
+		}
+		switch tool.Name {
+		case "server_info":
+			foundServerInfo = true
+		case "file_publish":
+			paths, _ := tool.Meta["openai/fileParams"].([]any)
+			foundFilePublishMetadata = len(paths) == 1 && paths[0] == "file"
+		}
+	}
+	if !foundServerInfo || !foundFilePublishMetadata {
+		t.Fatalf("tool discovery incomplete: server_info=%v file_publish_meta=%v", foundServerInfo, foundFilePublishMetadata)
+	}
+
+	result, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "server_info", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool() error = %v", err)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok || structured["server"] != config.ServerName || result.IsError {
+		t.Fatalf("CallTool() result = %#v", result)
+	}
+
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("Server.Run() error = %v", err)
 	}
 }

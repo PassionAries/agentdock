@@ -14,6 +14,10 @@ import (
 
 func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		var rpc struct {
 			ID     any            `json:"id"`
 			Method string         `json:"method"`
@@ -26,9 +30,15 @@ func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) 
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch rpc.Method {
+		case "server/discover":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      rpc.ID,
+				"error":   map[string]any{"code": -32601, "message": "Method not found"},
+			})
 		case "initialize":
 			writeDynamicMCPRPCResult(t, w, rpc.ID, map[string]any{
-				"protocolVersion": config.ProtocolVersion,
+				"protocolVersion": "2025-11-25",
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo":      map[string]any{"name": "demo-upstream", "version": "1.0.0"},
 			})

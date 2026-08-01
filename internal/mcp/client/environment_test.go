@@ -58,13 +58,19 @@ func TestHTTPHeaderUsesScopedEnvironmentBeforeHost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newStreamableHTTPClient(ServerConfig{
+	headers, err := resolveHTTPHeaders(ServerConfig{
 		Name:       "demo",
-		URL:        server.URL,
 		HeaderEnv:  map[string]string{"Authorization": "MCP_HEADER_TOKEN"},
 		RuntimeEnv: map[string]string{"MCP_HEADER_TOKEN": "scoped-token"},
 	})
-	response, err := client.do(context.Background(), []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&http.Client{Transport: headerRoundTripper{headers: headers}}).Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
