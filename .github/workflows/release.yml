@@ -255,6 +255,8 @@ jobs:
           cp scripts/uninstall-macos.sh dist/uninstall-macos.sh
           cp scripts/install-windows.ps1 dist/install-windows.ps1
           cp scripts/uninstall-windows.ps1 dist/uninstall-windows.ps1
+          cp docker-compose.cloudflare-tunnel.yml dist/docker-compose.cloudflare-tunnel.yml
+          cp docker-compose.cloudflare-tunnel.env.example dist/docker-compose.cloudflare-tunnel.env.example
           python3 - <<'PY'
           import os
           import re
@@ -313,6 +315,7 @@ jobs:
             dist/*.ps1
             dist/*.ps1.sha256
             dist/*.yml
+            dist/*.example
           generate_release_notes: true
 
   publish-container:

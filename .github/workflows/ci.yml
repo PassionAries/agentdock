@@ -47,6 +47,14 @@ jobs:
       - name: Check browser runner syntax
         run: node --check examples/browser-runner/browser-runner.js
 
+      - name: Check Linux script syntax
+        if: runner.os == 'Linux'
+        run: |
+          bash -n \
+            scripts/install-linux.sh \
+            scripts/install-linux-bootstrap.sh \
+            scripts/test-docker-images.sh
+
       - name: Test macOS scripts
         if: runner.os == 'macOS'
         run: |

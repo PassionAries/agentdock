@@ -11,25 +11,47 @@ SERVICE_HOST="${AGENTDOCK_HOST:-127.0.0.1}"
 SERVICE_PORT="${AGENTDOCK_PORT:-8765}"
 SERVICE_LOG_LEVEL="${AGENTDOCK_LOG_LEVEL:-info}"
 AUTH_TOKEN_ARG=""
+AUTH_TOKEN_REPLACE=false
 HOST_EXPLICIT=false
 PORT_EXPLICIT=false
+TUNNEL_MODE="${AGENTDOCK_TUNNEL_MODE:-none}"
+TUNNEL_MODE_EXPLICIT=false
+[[ -z "${AGENTDOCK_TUNNEL_MODE+x}" ]] || TUNNEL_MODE_EXPLICIT=true
+SERVER_URL="${AGENTDOCK_SERVER_URL:-}"
+SERVER_URL_EXPLICIT=false
+[[ -z "${AGENTDOCK_SERVER_URL+x}" ]] || SERVER_URL_EXPLICIT=true
+TUNNEL_TOKEN="${AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN:-}"
+CLOUDFLARED_RELEASE_BASE_URL="${AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download}"
+CLOUDFLARED_SOURCE_BINARY="${AGENTDOCK_CLOUDFLARED_BINARY:-}"
 
 LABEL="com.uvwt.agentdock"
+TUNNEL_LABEL="com.uvwt.agentdock.cloudflared"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/AgentDock"
 AGENTDOCK_ENV="$APP_SUPPORT_DIR/agentdock.env"
 START_SCRIPT="$APP_SUPPORT_DIR/start-agentdock.sh"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_PATH="$LAUNCH_AGENTS_DIR/$LABEL.plist"
+TUNNEL_ENV="$APP_SUPPORT_DIR/cloudflared.env"
+TUNNEL_START_SCRIPT="$APP_SUPPORT_DIR/start-cloudflared.sh"
+TUNNEL_PLIST_PATH="$LAUNCH_AGENTS_DIR/$TUNNEL_LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/AgentDock"
 STDOUT_LOG="$LOG_DIR/agentdock.out.log"
 STDERR_LOG="$LOG_DIR/agentdock.err.log"
+TUNNEL_STDOUT_LOG="$LOG_DIR/cloudflared.out.log"
+TUNNEL_STDERR_LOG="$LOG_DIR/cloudflared.err.log"
 WORK_DIR="$HOME/AgentDock"
 STATE_DIR="$HOME/.agentdock"
 TARGET="$INSTALL_DIR/agentdock"
+CLOUDFLARED_TARGET="$INSTALL_DIR/cloudflared"
 SERVICE_WAS_LOADED=false
 PREVIOUS_SERVICE_PID=""
 PREVIOUS_SERVICE_STOPPED=false
 SERVICE_BACKUP_DIR=""
+TUNNEL_BACKUP_DIR=""
+TUNNEL_SERVICE_WAS_LOADED=false
+TUNNEL_PREVIOUS_SERVICE_STOPPED=false
+PREVIOUS_SERVER_URL=""
+PREVIOUS_SERVER_URL_PRESENT=false
 
 usage() {
   cat <<'USAGE'
@@ -45,6 +67,8 @@ AgentDock macOS 预编译版本安装脚本。
   --host HOST              服务监听地址，默认 127.0.0.1
   --port PORT              服务监听端口，默认 8765
   --auth-token TOKEN       首次创建 agentdock.env 时写入 Token；已有 Token 永不覆盖
+  --tunnel MODE            公网访问：none、quick 或 named，默认 none
+  --server-url URL         Named Tunnel 的 HTTPS 公网 Origin，例如 https://agent.example.com
   --no-start               只生成服务文件和 plist，不加载或启动 LaunchAgent
   -h, --help               显示帮助
 
@@ -52,12 +76,20 @@ AgentDock macOS 预编译版本安装脚本。
   AGENTDOCK_RELEASE_VERSION   Release 版本，默认 latest
   AGENTDOCK_INSTALL_DIR       二进制安装目录，默认 ~/.local/bin
   AGENTDOCK_BACKUP_DIR        旧二进制备份目录，默认 ~/.agentdock/backups/bin
-  AGENTDOCK_RELEASE_BASE_URL  自定义 Release 下载根地址，主要用于镜像或测试
+  AGENTDOCK_RELEASE_BASE_URL              自定义 AgentDock Release 下载根地址
+  AGENTDOCK_TUNNEL_MODE                  none、quick 或 named
+  AGENTDOCK_SERVER_URL                   Named Tunnel 的 HTTPS 公网 Origin
+  AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN      Named Tunnel Token；不写入 agentdock.env
+  AGENTDOCK_CLOUDFLARED_BINARY           使用指定的本地 cloudflared 二进制
+  AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL 自定义 cloudflared Release 下载根地址
 
 服务文件：
   ~/Library/Application Support/AgentDock/agentdock.env
   ~/Library/Application Support/AgentDock/start-agentdock.sh
+  ~/Library/Application Support/AgentDock/cloudflared.env
+  ~/Library/Application Support/AgentDock/start-cloudflared.sh
   ~/Library/LaunchAgents/com.uvwt.agentdock.plist
+  ~/Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist
   ~/Library/Logs/AgentDock/
 USAGE
 }
@@ -73,6 +105,110 @@ require_command() {
 
 validate_port() {
   [[ "$1" == <1-65535> ]] || die "端口必须是 1-65535：$1"
+}
+
+validate_tunnel_mode() {
+  case "$1" in
+    none|quick|named) ;;
+    *) die "Tunnel 模式必须是 none、quick 或 named：$1" ;;
+  esac
+}
+
+normalize_server_url() {
+  local value="${1%/}"
+  [[ "$value" == https://* ]] || die "Named Tunnel 公网地址必须使用 HTTPS：$1"
+  local authority="${value#https://}"
+  [[ -n "$authority" && "$authority" != */* && "$authority" =~ ^[A-Za-z0-9._:-]+$ ]] || \
+    die "--server-url 只能填写 HTTPS Origin，不能包含路径或特殊字符：$1"
+  print -r -- "$value"
+}
+
+generate_auth_token() {
+  require_command openssl
+  openssl rand -hex 32
+}
+
+read_agentdock_env_key() {
+  local key="$1"
+  [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || return 0
+  /bin/zsh -c '
+    source "$1" >/dev/null
+    case "$2" in
+      AGENTDOCK_AUTH_TOKEN) print -r -- "${AGENTDOCK_AUTH_TOKEN:-}" ;;
+      AGENTDOCK_SERVER_URL) print -r -- "${AGENTDOCK_SERVER_URL:-}" ;;
+      *) exit 2 ;;
+    esac
+  ' _ "$AGENTDOCK_ENV" "$key"
+}
+
+read_existing_tunnel_token() {
+  [[ -f "$TUNNEL_ENV" && ! -L "$TUNNEL_ENV" ]] || return 0
+  /bin/zsh -c '
+    unset TUNNEL_TOKEN
+    source "$1" >/dev/null
+    print -r -- "${TUNNEL_TOKEN:-}"
+  ' _ "$TUNNEL_ENV"
+}
+
+capture_previous_server_url() {
+  local pattern="^[[:space:]]*(export[[:space:]]+)?AGENTDOCK_SERVER_URL[[:space:]]*="
+  if [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] && grep -Eq "$pattern" "$AGENTDOCK_ENV"; then
+    PREVIOUS_SERVER_URL="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
+    PREVIOUS_SERVER_URL_PRESENT=true
+  fi
+}
+
+remove_agentdock_env_key() {
+  local key="$1"
+  local pattern="^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*="
+  [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || return 0
+
+  local tmp_file="$AGENTDOCK_ENV.tmp.$$"
+  local line
+  : > "$tmp_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if ! print -r -- "$line" | grep -Eq "$pattern"; then
+      printf '%s\n' "$line" >> "$tmp_file"
+    fi
+  done < "$AGENTDOCK_ENV"
+  chmod 0600 "$tmp_file"
+  mv -f "$tmp_file" "$AGENTDOCK_ENV"
+}
+
+restore_previous_server_url() {
+  if [[ "$PREVIOUS_SERVER_URL_PRESENT" == true ]]; then
+    write_env_key AGENTDOCK_SERVER_URL "$PREVIOUS_SERVER_URL" true
+  else
+    remove_agentdock_env_key AGENTDOCK_SERVER_URL
+  fi
+}
+
+restart_agentdock_after_server_url_restore() {
+  [[ "$NO_START" == false ]] || return 0
+  register_and_start_service
+}
+
+ensure_public_auth_token() {
+  local current_token="$(read_agentdock_env_key AGENTDOCK_AUTH_TOKEN)"
+  if [[ -n "$current_token" ]]; then
+    return
+  fi
+  if [[ -n "$AUTH_TOKEN_ARG" ]]; then
+    AUTH_TOKEN_REPLACE=true
+    return
+  fi
+
+  AUTH_TOKEN_ARG="$(generate_auth_token)"
+  AUTH_TOKEN_REPLACE=true
+  print -- "==> 已为公网 Tunnel 自动生成 AgentDock Bearer Token"
+}
+
+prompt_named_tunnel_token() {
+  [[ -t 0 ]] || die "Named Tunnel 需要设置 AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN"
+  print -n -- "Cloudflare Tunnel Token（输入不回显）: "
+  read -rs TUNNEL_TOKEN
+  print
+  [[ -n "$TUNNEL_TOKEN" ]] || die "Cloudflare Tunnel Token 不能为空"
 }
 
 release_url() {
@@ -200,7 +336,8 @@ ENV
   write_env_key AGENTDOCK_HOST "$SERVICE_HOST" "$HOST_EXPLICIT"
   write_env_key AGENTDOCK_PORT "$SERVICE_PORT" "$PORT_EXPLICIT"
   write_env_key AGENTDOCK_LOG_LEVEL "$SERVICE_LOG_LEVEL" false
-  write_env_key AGENTDOCK_AUTH_TOKEN "$AUTH_TOKEN_ARG" false
+  write_env_key AGENTDOCK_AUTH_TOKEN "$AUTH_TOKEN_ARG" "$AUTH_TOKEN_REPLACE"
+  write_env_key AGENTDOCK_SERVER_URL "$SERVER_URL" "$SERVER_URL_EXPLICIT"
   write_env_key AGENTDOCK_NEXUS_ENDPOINT "${AGENTDOCK_NEXUS_ENDPOINT:-}" false
   write_env_key AGENTDOCK_NEXUS_TOKEN "${AGENTDOCK_NEXUS_TOKEN:-}" false
 
@@ -298,6 +435,343 @@ PLIST
   plutil -lint "$plist_tmp" >/dev/null
   chmod 0600 "$plist_tmp"
   mv -f "$plist_tmp" "$PLIST_PATH"
+}
+
+install_cloudflared() {
+  local source_binary="$CLOUDFLARED_SOURCE_BINARY"
+  local archive asset
+
+  if [[ -z "$source_binary" && -x "$CLOUDFLARED_TARGET" && ! -L "$CLOUDFLARED_TARGET" ]]; then
+    "$CLOUDFLARED_TARGET" --version >/dev/null
+    return
+  fi
+  if [[ -z "$source_binary" ]]; then
+    source_binary="$(command -v cloudflared || true)"
+  fi
+  if [[ -z "$source_binary" ]]; then
+    asset="cloudflared-darwin-${release_arch}.tgz"
+    archive="$tmp_dir/$asset"
+    print -- "==> 下载 Cloudflare cloudflared：$asset"
+    curl -fL --retry 3 --retry-delay 1 "${CLOUDFLARED_RELEASE_BASE_URL%/}/$asset" -o "$archive"
+    mkdir -p "$tmp_dir/cloudflared"
+    tar -xzf "$archive" -C "$tmp_dir/cloudflared"
+    source_binary="$tmp_dir/cloudflared/cloudflared"
+  fi
+
+  [[ -f "$source_binary" && ! -L "$source_binary" && -x "$source_binary" ]] || \
+    die "cloudflared 必须是可执行普通文件：$source_binary"
+  if [[ "$source_binary" != "$CLOUDFLARED_TARGET" ]]; then
+    install -m 0755 "$source_binary" "$CLOUDFLARED_TARGET"
+  fi
+  "$CLOUDFLARED_TARGET" --version >/dev/null
+}
+
+write_tunnel_env() {
+  local mode="$1"
+  local target_url="$2"
+  local mode_quoted target_quoted token_quoted
+  printf -v mode_quoted '%q' "$mode"
+  printf -v target_quoted '%q' "$target_url"
+  printf -v token_quoted '%q' "$TUNNEL_TOKEN"
+
+  local tmp_file="$TUNNEL_ENV.tmp.$$"
+  umask 077
+  cat > "$tmp_file" <<ENV
+# 仅供 cloudflared LaunchAgent 使用；AgentDock 进程不会读取此文件。
+AGENTDOCK_TUNNEL_MODE=$mode_quoted
+AGENTDOCK_TUNNEL_TARGET=$target_quoted
+TUNNEL_TOKEN=$token_quoted
+ENV
+  chmod 0600 "$tmp_file"
+  mv -f "$tmp_file" "$TUNNEL_ENV"
+}
+
+write_tunnel_start_script() {
+  local tmp_file="$TUNNEL_START_SCRIPT.tmp.$$"
+  cat > "$tmp_file" <<'SCRIPT'
+#!/bin/zsh
+set -euo pipefail
+
+USER_HOME="$HOME"
+APP_SUPPORT_DIR="$USER_HOME/Library/Application Support/AgentDock"
+TUNNEL_ENV="$APP_SUPPORT_DIR/cloudflared.env"
+[[ -r "$TUNNEL_ENV" ]] || { print -u2 -- "AgentDock cloudflared.env 不可读：$TUNNEL_ENV"; exit 1; }
+
+unset AGENTDOCK_TUNNEL_MODE AGENTDOCK_TUNNEL_TARGET TUNNEL_TOKEN
+set -a
+source "$TUNNEL_ENV"
+set +a
+
+export HOME="$USER_HOME"
+export PATH="$USER_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+case "${AGENTDOCK_TUNNEL_MODE:-}" in
+  quick)
+    exec "$USER_HOME/.local/bin/cloudflared" tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"
+    ;;
+  named)
+    [[ -n "${TUNNEL_TOKEN:-}" ]] || { print -u2 -- "TUNNEL_TOKEN 未配置"; exit 1; }
+    exec "$USER_HOME/.local/bin/cloudflared" tunnel --no-autoupdate run
+    ;;
+  *)
+    print -u2 -- "不支持的 Tunnel 模式：${AGENTDOCK_TUNNEL_MODE:-空}"
+    exit 1
+    ;;
+esac
+SCRIPT
+  chmod 0700 "$tmp_file"
+  mv -f "$tmp_file" "$TUNNEL_START_SCRIPT"
+}
+
+write_tunnel_launch_agent() {
+  mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
+  touch "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"
+  chmod 0600 "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"
+
+  local plist_tmp="$TUNNEL_PLIST_PATH.tmp.$$"
+  local start_script_xml="$(xml_escape "$TUNNEL_START_SCRIPT")"
+  local work_dir_xml="$(xml_escape "$WORK_DIR")"
+  local stdout_xml="$(xml_escape "$TUNNEL_STDOUT_LOG")"
+  local stderr_xml="$(xml_escape "$TUNNEL_STDERR_LOG")"
+  cat > "$plist_tmp" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$TUNNEL_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$start_script_xml</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$work_dir_xml</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>$stdout_xml</string>
+  <key>StandardErrorPath</key>
+  <string>$stderr_xml</string>
+</dict>
+</plist>
+PLIST
+  plutil -lint "$plist_tmp" >/dev/null
+  chmod 0600 "$plist_tmp"
+  mv -f "$plist_tmp" "$TUNNEL_PLIST_PATH"
+}
+
+snapshot_tunnel_file() {
+  local name="$1"
+  local file_path="$2"
+  if [[ -e "$file_path" || -L "$file_path" ]]; then
+    [[ -f "$file_path" && ! -L "$file_path" ]] || die "Tunnel 文件必须是普通文件：$file_path"
+    cp -p "$file_path" "$TUNNEL_BACKUP_DIR/$name"
+    : > "$TUNNEL_BACKUP_DIR/$name.present"
+  fi
+}
+
+snapshot_tunnel_state() {
+  local domain="gui/$(id -u)"
+  TUNNEL_BACKUP_DIR="$tmp_dir/tunnel-state"
+  mkdir -p "$TUNNEL_BACKUP_DIR"
+  snapshot_tunnel_file cloudflared.env "$TUNNEL_ENV"
+  snapshot_tunnel_file start-cloudflared.sh "$TUNNEL_START_SCRIPT"
+  snapshot_tunnel_file launch-agent.plist "$TUNNEL_PLIST_PATH"
+  snapshot_tunnel_file cloudflared "$CLOUDFLARED_TARGET"
+  if launchctl print "$domain/$TUNNEL_LABEL" >/dev/null 2>&1; then
+    TUNNEL_SERVICE_WAS_LOADED=true
+  fi
+}
+
+restore_tunnel_file() {
+  local name="$1"
+  local file_path="$2"
+  if [[ -f "$TUNNEL_BACKUP_DIR/$name.present" ]]; then
+    mkdir -p "${file_path:h}"
+    local restore_tmp="$file_path.restore.$$"
+    cp -p "$TUNNEL_BACKUP_DIR/$name" "$restore_tmp"
+    mv -f "$restore_tmp" "$file_path"
+  else
+    rm -f "$file_path"
+  fi
+}
+
+restore_tunnel_state() {
+  restore_tunnel_file cloudflared.env "$TUNNEL_ENV"
+  restore_tunnel_file start-cloudflared.sh "$TUNNEL_START_SCRIPT"
+  restore_tunnel_file launch-agent.plist "$TUNNEL_PLIST_PATH"
+  restore_tunnel_file cloudflared "$CLOUDFLARED_TARGET"
+}
+
+tunnel_launchd_pid() {
+  local domain="$1"
+  local output
+  output="$(launchctl print "$domain/$TUNNEL_LABEL" 2>/dev/null)" || return 1
+  print -r -- "$output" | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\).*$/\1/p' | head -n 1
+}
+
+stop_tunnel_if_loaded() {
+  local domain="$1"
+  local bootout_output
+  if ! launchctl print "$domain/$TUNNEL_LABEL" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! bootout_output="$(launchctl bootout "$domain/$TUNNEL_LABEL" 2>&1)"; then
+    print -u2 -- "停止 cloudflared LaunchAgent 失败：${bootout_output:-unknown error}"
+    return 1
+  fi
+  ! launchctl print "$domain/$TUNNEL_LABEL" >/dev/null 2>&1
+}
+
+quick_tunnel_url() {
+  grep -Eho 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG" 2>/dev/null | tail -n 1
+}
+
+wait_for_tunnel() {
+  local domain="$1"
+  local attempts=60
+  local pid=""
+  local stable_checks=0
+
+  while (( attempts-- > 0 )); do
+    pid="$(tunnel_launchd_pid "$domain" || true)"
+    if [[ -n "$pid" && "$pid" != "0" ]]; then
+      local process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+      if [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* ]]; then
+        if [[ "$TUNNEL_MODE" == quick ]]; then
+          local public_url="$(quick_tunnel_url || true)"
+          if [[ -n "$public_url" ]]; then
+            print -r -- "$public_url"
+            return 0
+          fi
+        else
+          stable_checks=$(( stable_checks + 1 ))
+          if (( stable_checks >= 10 )); then
+            print -r -- "$pid"
+            return 0
+          fi
+        fi
+      fi
+    else
+      stable_checks=0
+    fi
+    sleep 0.5
+  done
+
+  print -u2 -- "cloudflared 启动验证失败，请检查 $TUNNEL_STDERR_LOG"
+  return 1
+}
+
+wait_for_tunnel_process() {
+  local domain="$1"
+  local attempts=60
+  while (( attempts-- > 0 )); do
+    local pid="$(tunnel_launchd_pid "$domain" || true)"
+    if [[ -n "$pid" && "$pid" != "0" ]]; then
+      local process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+      if [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* ]]; then
+        return 0
+      fi
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+restart_previous_tunnel() {
+  local domain="gui/$(id -u)"
+  [[ "$TUNNEL_SERVICE_WAS_LOADED" == true ]] || return 0
+  [[ -f "$TUNNEL_PLIST_PATH" && ! -L "$TUNNEL_PLIST_PATH" ]] || return 1
+  [[ -x "$CLOUDFLARED_TARGET" && ! -L "$CLOUDFLARED_TARGET" ]] || return 1
+  launchctl bootstrap "$domain" "$TUNNEL_PLIST_PATH" || return 1
+  launchctl kickstart -k "$domain/$TUNNEL_LABEL" || return 1
+  wait_for_tunnel_process "$domain"
+}
+
+register_and_start_tunnel() {
+  local domain="gui/$(id -u)"
+  stop_tunnel_if_loaded "$domain" || return 1
+  if [[ "$TUNNEL_SERVICE_WAS_LOADED" == true ]]; then
+    TUNNEL_PREVIOUS_SERVICE_STOPPED=true
+  fi
+  : > "$TUNNEL_STDOUT_LOG"
+  : > "$TUNNEL_STDERR_LOG"
+  launchctl bootstrap "$domain" "$TUNNEL_PLIST_PATH" || return 1
+  if ! launchctl kickstart -k "$domain/$TUNNEL_LABEL"; then
+    stop_tunnel_if_loaded "$domain" || true
+    return 1
+  fi
+
+  local tunnel_result
+  if ! tunnel_result="$(wait_for_tunnel "$domain")"; then
+    stop_tunnel_if_loaded "$domain" || true
+    return 1
+  fi
+  if [[ "$TUNNEL_MODE" == quick ]]; then
+    print -- "==> Quick Tunnel 已连接：$tunnel_result/mcp"
+  else
+    print -- "==> Named Tunnel 已启动：$SERVER_URL/mcp"
+  fi
+}
+
+rollback_tunnel_start() {
+  local domain="gui/$(id -u)"
+
+  # 第一次停止旧 Tunnel 失败时，旧进程仍在运行；直接恢复磁盘文件，避免二次中断。
+  if [[ "$TUNNEL_SERVICE_WAS_LOADED" == true && "$TUNNEL_PREVIOUS_SERVICE_STOPPED" == false ]]; then
+    restore_tunnel_state || return 1
+  else
+    stop_tunnel_if_loaded "$domain" || return 1
+    restore_tunnel_state || return 1
+  fi
+
+  restore_previous_server_url || return 1
+  restart_agentdock_after_server_url_restore || return 1
+  if [[ "$TUNNEL_SERVICE_WAS_LOADED" == true && "$TUNNEL_PREVIOUS_SERVICE_STOPPED" == true ]]; then
+    restart_previous_tunnel || return 1
+  fi
+}
+
+remove_tunnel_service() {
+  local domain="gui/$(id -u)"
+  stop_tunnel_if_loaded "$domain" || die "无法停止现有 cloudflared LaunchAgent"
+  rm -f "$TUNNEL_PLIST_PATH" "$TUNNEL_ENV" "$TUNNEL_START_SCRIPT" \
+    "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"
+  print -- "==> 已停用 Cloudflare Tunnel"
+}
+
+configure_tunnel() {
+  local service_address service_host service_port target_url
+  service_address="$(read_service_address "$AGENTDOCK_ENV")" || die "无法读取 AgentDock 最终监听地址"
+  service_host="${service_address%%$'\t'*}"
+  service_port="${service_address#*$'\t'}"
+  target_url="http://$(health_host "$service_host"):$service_port"
+
+  snapshot_tunnel_state
+  if ! (
+    install_cloudflared
+    write_tunnel_env "$TUNNEL_MODE" "$target_url"
+    write_tunnel_start_script
+    write_tunnel_launch_agent
+  ); then
+    restore_tunnel_state || die "生成 Tunnel 服务文件失败，且旧 Tunnel 配置恢复失败"
+    restore_previous_server_url || die "生成 Tunnel 服务文件失败，且旧公网地址恢复失败"
+    restart_agentdock_after_server_url_restore || die "旧公网地址已恢复，但 AgentDock 重启验证失败"
+    die "生成 Tunnel 服务文件失败；已恢复安装前 Tunnel 和公网地址"
+  fi
+
+  if [[ "$NO_START" == true ]]; then
+    print -- "==> 已生成 $TUNNEL_MODE Tunnel 服务文件，按 --no-start 要求未启动"
+  elif ! register_and_start_tunnel; then
+    rollback_tunnel_start || die "新 Tunnel 启动失败，且安装前 Tunnel 恢复失败"
+    die "新 Tunnel 启动失败；已恢复安装前 Tunnel 和公网地址"
+  fi
+  if [[ "$TUNNEL_MODE" == named ]]; then
+    print -- "==> Cloudflare Public Hostname 的 Service 目标：$target_url"
+  fi
 }
 
 launchd_pid() {
@@ -490,6 +964,7 @@ while (( $# > 0 )); do
       (( $# >= 2 )) || die "--install-dir 需要值"
       INSTALL_DIR="$2"
       TARGET="$INSTALL_DIR/agentdock"
+      CLOUDFLARED_TARGET="$INSTALL_DIR/cloudflared"
       shift 2
       ;;
     --register-service)
@@ -513,6 +988,18 @@ while (( $# > 0 )); do
       AUTH_TOKEN_ARG="$2"
       shift 2
       ;;
+    --tunnel)
+      (( $# >= 2 )) || die "--tunnel 需要值"
+      TUNNEL_MODE="$2"
+      TUNNEL_MODE_EXPLICIT=true
+      shift 2
+      ;;
+    --server-url)
+      (( $# >= 2 )) || die "--server-url 需要值"
+      SERVER_URL="$2"
+      SERVER_URL_EXPLICIT=true
+      shift 2
+      ;;
     --no-start)
       NO_START=true
       shift
@@ -529,6 +1016,27 @@ done
 
 [[ "$(uname -s)" == "Darwin" ]] || die "此脚本只支持 macOS"
 validate_port "$SERVICE_PORT"
+validate_tunnel_mode "$TUNNEL_MODE"
+if [[ "$TUNNEL_MODE" != none ]]; then
+  REGISTER_SERVICE=true
+  ensure_public_auth_token
+  if [[ "$TUNNEL_MODE" == named ]]; then
+    if [[ -z "$SERVER_URL" ]]; then
+      SERVER_URL="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
+    fi
+    [[ -n "$SERVER_URL" ]] || die "Named Tunnel 需要 --server-url 或 AGENTDOCK_SERVER_URL"
+    SERVER_URL="$(normalize_server_url "$SERVER_URL")"
+    SERVER_URL_EXPLICIT=true
+    if [[ -z "$TUNNEL_TOKEN" ]]; then
+      TUNNEL_TOKEN="$(read_existing_tunnel_token)"
+    fi
+    [[ -n "$TUNNEL_TOKEN" ]] || prompt_named_tunnel_token
+  else
+    # Quick Tunnel 地址每次启动都会变化，不能保留旧的固定公网 Origin。
+    SERVER_URL=""
+    SERVER_URL_EXPLICIT=true
+  fi
+fi
 [[ "$NO_START" == false || "$REGISTER_SERVICE" == true ]] || die "--no-start 必须与 --register-service 一起使用"
 if [[ "$REGISTER_SERVICE" == true && "$INSTALL_DIR" != "$HOME/.local/bin" ]]; then
   die "注册 LaunchAgent 时二进制必须安装到 $HOME/.local/bin"
@@ -577,6 +1085,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "$REGISTER_SERVICE" == true ]]; then
+  capture_previous_server_url
   snapshot_service_files
 fi
 
@@ -677,6 +1186,14 @@ if ! "$TARGET" skill bootstrap --bundle "$core_skill_bundle"; then
   die "核心 Skill 初始化失败；已恢复安装前状态"
 fi
 
+if [[ "$TUNNEL_MODE_EXPLICIT" == true ]]; then
+  if [[ "$TUNNEL_MODE" == none ]]; then
+    remove_tunnel_service
+  else
+    configure_tunnel
+  fi
+fi
+
 print -- "installed: $TARGET"
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   print -- "PATH 尚未包含 $INSTALL_DIR，可执行："
@@ -699,6 +1216,14 @@ LaunchAgent：
 日志目录：
   $LOG_DIR
 STATUS
+  if [[ "$TUNNEL_MODE_EXPLICIT" == true && "$TUNNEL_MODE" != none ]]; then
+    cat <<STATUS
+Cloudflare Tunnel：
+  模式：$TUNNEL_MODE
+  配置：$TUNNEL_ENV
+  LaunchAgent：$TUNNEL_PLIST_PATH
+STATUS
+  fi
 else
   cat <<STATUS
 

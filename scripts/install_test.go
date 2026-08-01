@@ -116,3 +116,53 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		}
 	}
 }
+
+func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.T) {
+	data, err := os.ReadFile("install-linux.sh")
+	if err != nil {
+		t.Fatalf("read install-linux.sh: %v", err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		"公网访问：none/quick/named",
+		"AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN",
+		"AGENTDOCK_TUNNEL_MODE=$mode",
+		"TUNNEL_TOKEN=$token",
+		"EnvironmentFile=$cloudflared_env_file",
+		"tunnel --no-autoupdate --url $target_url",
+		"tunnel --no-autoupdate run",
+		"AGENTDOCK_SERVER_URL=%s\\n",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("install-linux.sh missing Cloudflare Tunnel integration %q", want)
+		}
+	}
+	if strings.Contains(script, "--token $token") || strings.Contains(script, "--token \\$TUNNEL_TOKEN") {
+		t.Fatal("cloudflared token must be provided through its private environment file, not process arguments")
+	}
+}
+
+func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
+	data, err := os.ReadFile("../docker-compose.cloudflare-tunnel.yml")
+	if err != nil {
+		t.Fatalf("read docker-compose.cloudflare-tunnel.yml: %v", err)
+	}
+	compose := string(data)
+	for _, want := range []string{
+		`profiles: ["cloudflare-quick"]`,
+		`profiles: ["cloudflare-named"]`,
+		`http://agentdock:8765`,
+		`TUNNEL_TOKEN: "${TUNNEL_TOKEN:?set TUNNEL_TOKEN for the named tunnel}"`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("Cloudflare compose overlay missing %q", want)
+		}
+	}
+	baseData, err := os.ReadFile("../docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read docker-compose.yml: %v", err)
+	}
+	if strings.Contains(string(baseData), "TUNNEL_TOKEN") {
+		t.Fatal("base AgentDock service must not receive TUNNEL_TOKEN")
+	}
+}

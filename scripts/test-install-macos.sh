@@ -182,6 +182,94 @@ test "$(count_env_key "$agentdock_env" AGENTDOCK_HOST)" = "1"
 backup_count="$(find "$backup_dir" -type f -name 'agentdock.*' | wc -l | tr -d ' ')"
 test "$backup_count" = "3"
 
+# Named / Quick Tunnel 必须集成进安装器，并保持 Cloudflare Token 与 AgentDock env 隔离。
+fake_cloudflared="$TMP_ROOT/fake-cloudflared"
+cat > "$fake_cloudflared" <<'SCRIPT'
+#!/bin/zsh
+[[ "${1:-}" == "--version" ]] && print -- "cloudflared version test"
+SCRIPT
+chmod 0755 "$fake_cloudflared"
+env -i \
+  HOME="$home_dir" \
+  PATH="$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  AGENTDOCK_RELEASE_BASE_URL="$release_url" \
+  AGENTDOCK_CLOUDFLARED_BINARY="$fake_cloudflared" \
+  AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='named-token-value' \
+  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+    --tunnel named \
+    --server-url https://agent.example.test \
+    --no-start
+
+tunnel_env="$app_support/cloudflared.env"
+tunnel_start="$app_support/start-cloudflared.sh"
+tunnel_plist="$home_dir/Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist"
+test -x "$home_dir/.local/bin/cloudflared"
+test "$(mode_of "$tunnel_env")" = "600"
+test "$(mode_of "$tunnel_start")" = "700"
+assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=named'
+assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
+assert_file_contains "$agentdock_env" 'AGENTDOCK_SERVER_URL=https://agent.example.test'
+assert_file_not_contains "$agentdock_env" 'named-token-value'
+assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate run'
+plutil -lint "$tunnel_plist" >/dev/null
+
+# Named Tunnel 重复安装应复用已有公网 Origin 和私密 Token，不要求再次输入。
+env -i \
+  HOME="$home_dir" \
+  PATH="$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  AGENTDOCK_RELEASE_BASE_URL="$release_url" \
+  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+    --tunnel named \
+    --no-start
+assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
+assert_file_contains "$agentdock_env" 'AGENTDOCK_SERVER_URL=https://agent.example.test'
+assert_file_not_contains "$agentdock_env" 'named-token-value'
+
+env -i \
+  HOME="$home_dir" \
+  PATH="$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  AGENTDOCK_RELEASE_BASE_URL="$release_url" \
+  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+    --tunnel quick \
+    --no-start
+assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=quick'
+assert_file_contains "$tunnel_env" "TUNNEL_TOKEN=''"
+assert_file_contains "$agentdock_env" "AGENTDOCK_SERVER_URL=''"
+assert_file_not_contains "$tunnel_env" 'named-token-value'
+assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"'
+
+# Tunnel 配置失败时必须恢复旧 Tunnel 文件与旧公网地址，不能留下半更新状态。
+old_tunnel_env_sha="$(sha256_of "$tunnel_env")"
+old_tunnel_start_sha="$(sha256_of "$tunnel_start")"
+old_tunnel_plist_sha="$(sha256_of "$tunnel_plist")"
+old_cloudflared_sha="$(sha256_of "$home_dir/.local/bin/cloudflared")"
+invalid_cloudflared="$TMP_ROOT/invalid-cloudflared"
+: > "$invalid_cloudflared"
+if env -i \
+  HOME="$home_dir" \
+  PATH="$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  AGENTDOCK_RELEASE_BASE_URL="$release_url" \
+  AGENTDOCK_CLOUDFLARED_BINARY="$invalid_cloudflared" \
+  AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='must-not-survive' \
+  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+    --tunnel named \
+    --server-url https://broken.example.test \
+    --no-start >/dev/null 2>&1; then
+  print -u2 -- "installer unexpectedly accepted an invalid cloudflared binary"
+  exit 1
+fi
+test "$(sha256_of "$tunnel_env")" = "$old_tunnel_env_sha"
+test "$(sha256_of "$tunnel_start")" = "$old_tunnel_start_sha"
+test "$(sha256_of "$tunnel_plist")" = "$old_tunnel_plist_sha"
+test "$(sha256_of "$home_dir/.local/bin/cloudflared")" = "$old_cloudflared_sha"
+assert_file_contains "$agentdock_env" "AGENTDOCK_SERVER_URL=''"
+assert_file_not_contains "$agentdock_env" 'https://broken.example.test'
+assert_file_not_contains "$tunnel_env" 'must-not-survive'
+
 # 注册服务必须坚持标准二进制目标，不能把 plist 指向一处、二进制装到另一处。
 if run_installer --register-service --no-start --install-dir "$TMP_ROOT/nonstandard" >/dev/null 2>&1; then
   print -u2 -- "installer accepted a non-standard service binary path"

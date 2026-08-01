@@ -138,6 +138,48 @@ docker compose down
 
 See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/docker) for configuration, persistence, and client setup.
 
+### Public access with Cloudflare Tunnel
+
+The macOS and Linux installers include two Cloudflare Tunnel modes:
+
+- `quick`: creates a temporary `trycloudflare.com` URL without a Cloudflare account or domain. The URL changes after restart and is not suitable for OAuth or long-term deployments.
+- `named`: uses a fixed hostname and a Cloudflare Tunnel Token. The token is stored in a separate `cloudflared.env` file and is never passed to the AgentDock process.
+
+Temporary access on macOS:
+
+```bash
+zsh install-macos.sh --tunnel quick
+```
+
+Fixed hostname on macOS:
+
+```bash
+export AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='<tunnel-token>'
+zsh install-macos.sh \
+  --tunnel named \
+  --server-url https://agent.example.com
+```
+
+The Linux installer asks for `none/quick/named` in its normal questionnaire. For a Named Tunnel, create the Public Hostname in Cloudflare first and point its Service to the local AgentDock address shown by the installer.
+
+Docker Quick Tunnel:
+
+```bash
+curl -fL \
+  https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.cloudflare-tunnel.yml \
+  -o docker-compose.cloudflare-tunnel.yml
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.cloudflare-tunnel.yml \
+  --profile cloudflare-quick up -d
+
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-tunnel.yml \
+  logs -f cloudflared-quick
+```
+
+Use the `cloudflare-named` profile for a Named Tunnel and set `TUNNEL_TOKEN` plus `AGENTDOCK_SERVER_URL` in the deployment `.env`. Public access must keep AgentDock bearer-token or OAuth authentication enabled.
+
 ## Connect an AI client
 
 AgentDock exposes tools over MCP Streamable HTTP. The exact client syntax varies, but a typical configuration looks like this:

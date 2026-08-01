@@ -138,6 +138,48 @@ docker compose down
 
 完整配置、数据持久化和客户端接入方式见 [Docker 快速部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
 
+### Cloudflare Tunnel 公网访问
+
+macOS 和 Linux 安装器内置两种 Cloudflare Tunnel 模式：
+
+- `quick`：无需 Cloudflare 账号和域名，自动生成临时 `trycloudflare.com` 地址；重启后地址会变化，不适合 OAuth 或长期部署。
+- `named`：使用固定域名和 Cloudflare Tunnel Token；Token 单独保存在 `cloudflared.env`，不会传给 AgentDock 进程。
+
+macOS 临时体验：
+
+```bash
+zsh install-macos.sh --tunnel quick
+```
+
+macOS 固定域名：
+
+```bash
+export AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='<tunnel-token>'
+zsh install-macos.sh \
+  --tunnel named \
+  --server-url https://agent.example.com
+```
+
+Linux 安装器会在问答流程中直接询问 `none/quick/named`。Named Tunnel 需要先在 Cloudflare 控制台创建 Public Hostname，并把 Service 指向安装器输出的本地 AgentDock 地址。
+
+Docker Quick Tunnel：
+
+```bash
+curl -fL \
+  https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.cloudflare-tunnel.yml \
+  -o docker-compose.cloudflare-tunnel.yml
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.cloudflare-tunnel.yml \
+  --profile cloudflare-quick up -d
+
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-tunnel.yml \
+  logs -f cloudflared-quick
+```
+
+Named Tunnel 使用 `cloudflare-named` profile，并在部署目录的 `.env` 中设置 `TUNNEL_TOKEN` 与 `AGENTDOCK_SERVER_URL`。公网模式下必须保留 AgentDock Bearer Token 或 OAuth 认证。
+
 ## 接入 AI 客户端
 
 AgentDock 通过 MCP Streamable HTTP 提供工具能力。下面是一个通用配置示例，具体字段格式取决于所使用的 AI 客户端：

@@ -12,6 +12,7 @@ services:
       AGENTDOCK_AUTH_TOKEN: "${AGENTDOCK_AUTH_TOKEN:?set AGENTDOCK_AUTH_TOKEN before docker compose up}"
       AGENTDOCK_HOST: "0.0.0.0"
       AGENTDOCK_PORT: "8765"
+      AGENTDOCK_SERVER_URL: "${AGENTDOCK_SERVER_URL:-}"
     healthcheck:
       test: ["CMD", "agentdock-healthcheck"]
       interval: 30s

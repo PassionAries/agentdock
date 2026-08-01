@@ -16,6 +16,11 @@ DEFAULT_LOG_LEVEL="${AGENTDOCK_LOG_LEVEL:-info}"
 DEFAULT_SERVICE_MANAGER="${AGENTDOCK_SERVICE_MANAGER:-auto}"
 DEFAULT_INSTALL_MODE="${AGENTDOCK_INSTALL_MODE:-binary}"
 DEFAULT_RELEASE_VERSION="${AGENTDOCK_RELEASE_VERSION:-latest}"
+DEFAULT_TUNNEL_MODE="${AGENTDOCK_TUNNEL_MODE:-}"
+DEFAULT_SERVER_URL="${AGENTDOCK_SERVER_URL:-}"
+DEFAULT_CLOUDFLARED_BINARY="${AGENTDOCK_CLOUDFLARED_INSTALL_PATH:-/usr/local/bin/cloudflared}"
+CLOUDFLARED_RELEASE_BASE_URL="${AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download}"
+CLOUDFLARED_SOURCE_BINARY="${AGENTDOCK_CLOUDFLARED_BINARY:-}"
 CORE_SKILL_BUNDLE=""
 CORE_SKILL_TEMP_DIR=""
 
@@ -65,7 +70,9 @@ Alpine/极简系统如果没有 curl/bash：
   AGENTDOCK_INSTALL_MODE、AGENTDOCK_RELEASE_VERSION、AGENTDOCK_NONINTERACTIVE
   AGENTDOCK_REPO_URL、AGENTDOCK_BRANCH、AGENTDOCK_SOURCE_DIR、AGENTDOCK_DATA_DIR、AGENTDOCK_ENV_FILE
   AGENTDOCK_SERVICE_NAME、AGENTDOCK_SERVICE_USER、AGENTDOCK_HOST、AGENTDOCK_PORT
-  AGENTDOCK_AUTH_TOKEN、AGENTDOCK_GO_VERSION
+  AGENTDOCK_AUTH_TOKEN、AGENTDOCK_GO_VERSION、AGENTDOCK_SERVER_URL
+  AGENTDOCK_TUNNEL_MODE、AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN
+  AGENTDOCK_CLOUDFLARED_BINARY、AGENTDOCK_CLOUDFLARED_INSTALL_PATH
 
 参数：
   -h, --help    显示帮助，不执行部署
@@ -110,6 +117,21 @@ prompt_secret() {
     return
   fi
   printf '%s（输入不回显，留空自动生成）: ' "$label" >"$TTY_OUT"
+  stty -echo <"$TTY_IN" 2>/dev/null || true
+  IFS= read -r answer <"$TTY_IN" || true
+  stty echo <"$TTY_IN" 2>/dev/null || true
+  printf '\n' >"$TTY_OUT"
+  printf '%s' "$answer"
+}
+
+prompt_required_secret() {
+  local label="$1"
+  local answer=""
+  if noninteractive_enabled; then
+    printf ''
+    return
+  fi
+  printf '%s（输入不回显）: ' "$label" >"$TTY_OUT"
   stty -echo <"$TTY_IN" 2>/dev/null || true
   IFS= read -r answer <"$TTY_IN" || true
   stty echo <"$TTY_IN" 2>/dev/null || true
@@ -223,6 +245,37 @@ validate_port() {
   local value="$1"
   [[ "$value" =~ ^[0-9]+$ ]] || die "端口必须是数字：$value"
   (( value >= 1 && value <= 65535 )) || die "端口范围必须是 1-65535：$value"
+}
+
+validate_tunnel_mode() {
+  case "$1" in
+    none|quick|named) ;;
+    *) die "公网访问模式必须是 none、quick 或 named：$1" ;;
+  esac
+}
+
+normalize_server_url() {
+  local value="${1%/}"
+  [[ "$value" == https://* ]] || die "Named Tunnel 公网地址必须使用 HTTPS：$1"
+  local authority="${value#https://}"
+  [[ -n "$authority" && "$authority" != */* && "$authority" =~ ^[A-Za-z0-9._:-]+$ ]] || \
+    die "公网地址只能填写 HTTPS Origin，不能包含路径或特殊字符：$1"
+  printf '%s' "$value"
+}
+
+validate_host() {
+  [[ "$1" =~ ^[A-Za-z0-9.:-]+$ ]] || die "监听地址包含不支持的字符：$1"
+}
+
+validate_cloudflare_token() {
+  [[ "$1" =~ ^[A-Za-z0-9._=-]+$ ]] || die "Cloudflare Tunnel Token 格式无效"
+}
+
+read_env_assignment() {
+  local file_path="$1"
+  local key="$2"
+  [[ -f "$file_path" ]] || return 0
+  run_root awk -F= -v key="$key" '$1 == key {value=substr($0, index($0, "=") + 1)} END {print value}' "$file_path"
 }
 
 semver_ge() {
@@ -489,6 +542,7 @@ write_env_file() {
   local log_level="$5"
   local nexus_endpoint="$6"
   local nexus_token="$7"
+  local server_url="$8"
 
   local env_dir tmp_file
   env_dir="$(dirname "$env_file")"
@@ -504,6 +558,9 @@ ENV
   fi
   if [[ -n "$nexus_token" ]]; then
     printf 'AGENTDOCK_NEXUS_TOKEN=%s\n' "$nexus_token" >>"$tmp_file"
+  fi
+  if [[ -n "$server_url" ]]; then
+    printf 'AGENTDOCK_SERVER_URL=%s\n' "$server_url" >>"$tmp_file"
   fi
 
   run_root mkdir -p "$env_dir"
@@ -593,6 +650,294 @@ OPENRC
   rm -f "$tmp_file"
 }
 
+install_cloudflared() {
+  local target_binary="$1"
+  local source_binary="$CLOUDFLARED_SOURCE_BINARY"
+  local machine arch download_url tmp_file
+
+  if [[ -z "$source_binary" && -x "$target_binary" && ! -L "$target_binary" ]]; then
+    "$target_binary" --version >/dev/null
+    return
+  fi
+  if [[ -z "$source_binary" ]]; then
+    source_binary="$(command -v cloudflared || true)"
+  fi
+  if [[ -z "$source_binary" ]]; then
+    machine="$(uname -m)"
+    case "$machine" in
+      x86_64|amd64) arch="amd64" ;;
+      aarch64|arm64) arch="arm64" ;;
+      *) die "暂不支持自动安装 cloudflared 的架构：$machine" ;;
+    esac
+    download_url="${CLOUDFLARED_RELEASE_BASE_URL%/}/cloudflared-linux-$arch"
+    tmp_file="$(mktemp)"
+    log "下载 Cloudflare cloudflared：$download_url"
+    curl -fL --retry 3 --retry-delay 1 "$download_url" -o "$tmp_file"
+    chmod 0755 "$tmp_file"
+    source_binary="$tmp_file"
+  fi
+
+  [[ -f "$source_binary" && ! -L "$source_binary" && -x "$source_binary" ]] || \
+    die "cloudflared 必须是可执行普通文件：$source_binary"
+  if [[ "$source_binary" != "$target_binary" ]]; then
+    run_root mkdir -p "$(dirname "$target_binary")"
+    run_root install -m 0755 -o root -g root "$source_binary" "$target_binary"
+  fi
+  run_root "$target_binary" --version >/dev/null
+  [[ -z "${tmp_file:-}" ]] || rm -f "$tmp_file"
+}
+
+write_cloudflared_env() {
+  local env_file="$1"
+  local mode="$2"
+  local target_url="$3"
+  local token="$4"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  cat >"$tmp_file" <<ENV
+# 仅供 cloudflared 服务使用；AgentDock 服务不会读取此文件。
+AGENTDOCK_TUNNEL_MODE=$mode
+AGENTDOCK_TUNNEL_TARGET=$target_url
+TUNNEL_TOKEN=$token
+ENV
+  run_root mkdir -p "$(dirname "$env_file")"
+  run_root install -m 0600 -o root -g root "$tmp_file" "$env_file"
+  rm -f "$tmp_file"
+}
+
+write_cloudflared_systemd_unit() {
+  local tunnel_service_name="$1"
+  local service_user="$2"
+  local service_group="$3"
+  local data_dir="$4"
+  local cloudflared_binary="$5"
+  local cloudflared_env_file="$6"
+  local mode="$7"
+  local target_url="$8"
+  local unit_file="/etc/systemd/system/${tunnel_service_name}.service"
+  local exec_start tmp_file
+
+  case "$mode" in
+    quick) exec_start="$cloudflared_binary tunnel --no-autoupdate --url $target_url" ;;
+    named) exec_start="$cloudflared_binary tunnel --no-autoupdate run" ;;
+    *) die "无法为模式生成 cloudflared systemd 服务：$mode" ;;
+  esac
+  tmp_file="$(mktemp)"
+  cat >"$tmp_file" <<UNIT
+[Unit]
+Description=AgentDock Cloudflare Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$service_user
+Group=$service_group
+WorkingDirectory=$data_dir
+EnvironmentFile=$cloudflared_env_file
+ExecStart=$exec_start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  run_root install -m 0644 -o root -g root "$tmp_file" "$unit_file"
+  rm -f "$tmp_file"
+}
+
+write_cloudflared_openrc_service() {
+  local tunnel_service_name="$1"
+  local service_user="$2"
+  local service_group="$3"
+  local data_dir="$4"
+  local cloudflared_binary="$5"
+  local cloudflared_env_file="$6"
+  local mode="$7"
+  local target_url="$8"
+  local init_file="/etc/init.d/${tunnel_service_name}"
+  local command_args tmp_file
+
+  case "$mode" in
+    quick) command_args="tunnel --no-autoupdate --url $target_url" ;;
+    named) command_args="tunnel --no-autoupdate run" ;;
+    *) die "无法为模式生成 cloudflared OpenRC 服务：$mode" ;;
+  esac
+  tmp_file="$(mktemp)"
+  cat >"$tmp_file" <<OPENRC
+#!/sbin/openrc-run
+name="AgentDock Cloudflare Tunnel"
+description="AgentDock Cloudflare Tunnel"
+command="$cloudflared_binary"
+command_args="$command_args"
+command_user="$service_user:$service_group"
+directory="$data_dir"
+pidfile="/run/${tunnel_service_name}.pid"
+command_background="yes"
+output_log="/var/log/${tunnel_service_name}.log"
+error_log="/var/log/${tunnel_service_name}.err"
+cloudflared_env_file="$cloudflared_env_file"
+
+start_pre() {
+  checkpath -f -m 0644 -o "$service_user:$service_group" "\$output_log"
+  checkpath -f -m 0644 -o "$service_user:$service_group" "\$error_log"
+  if [ -r "\$cloudflared_env_file" ]; then
+    set -a
+    . "\$cloudflared_env_file"
+    set +a
+  else
+    eerror "env file not readable: \$cloudflared_env_file"
+    return 1
+  fi
+}
+
+depend() {
+  need net
+  after firewall
+}
+OPENRC
+  run_root install -m 0755 -o root -g root "$tmp_file" "$init_file"
+  rm -f "$tmp_file"
+}
+
+cloudflared_service_active() {
+  local service_manager="$1"
+  local tunnel_service_name="$2"
+  case "$service_manager" in
+    systemd) run_root systemctl is-active --quiet "$tunnel_service_name" ;;
+    openrc) run_root rc-service "$tunnel_service_name" status >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+cloudflared_quick_url() {
+  local service_manager="$1"
+  local tunnel_service_name="$2"
+  local started_at="$3"
+  local output
+  case "$service_manager" in
+    systemd) output="$(run_root journalctl -u "$tunnel_service_name" --since "$started_at" --no-pager 2>/dev/null || true)" ;;
+    openrc) output="$(run_root tail -n 200 "/var/log/${tunnel_service_name}.log" "/var/log/${tunnel_service_name}.err" 2>/dev/null || true)" ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$output" | grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | tail -n 1
+}
+
+wait_for_cloudflared() {
+  local service_manager="$1"
+  local tunnel_service_name="$2"
+  local mode="$3"
+  local started_at="$4"
+  local attempts=60
+  local stable_checks=0
+
+  while (( attempts-- > 0 )); do
+    if cloudflared_service_active "$service_manager" "$tunnel_service_name"; then
+      if [[ "$mode" == quick ]]; then
+        local public_url="$(cloudflared_quick_url "$service_manager" "$tunnel_service_name" "$started_at" || true)"
+        if [[ -n "$public_url" ]]; then
+          printf '%s' "$public_url"
+          return 0
+        fi
+      else
+        (( stable_checks += 1 ))
+        if (( stable_checks >= 10 )); then
+          printf 'active'
+          return 0
+        fi
+      fi
+    else
+      stable_checks=0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+start_cloudflared_service() {
+  local service_manager="$1"
+  local tunnel_service_name="$2"
+  local mode="$3"
+  local server_url="$4"
+  local started_at="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+  case "$service_manager" in
+    systemd)
+      run_root systemctl daemon-reload
+      run_root systemctl enable --now "$tunnel_service_name"
+      run_root systemctl restart "$tunnel_service_name"
+      ;;
+    openrc)
+      run_root rm -f "/var/log/${tunnel_service_name}.log" "/var/log/${tunnel_service_name}.err"
+      run_root rc-update add "$tunnel_service_name" default
+      run_root rc-service "$tunnel_service_name" restart
+      ;;
+    *) die "Cloudflare Tunnel 需要 systemd 或 OpenRC" ;;
+  esac
+
+  local result
+  if ! result="$(wait_for_cloudflared "$service_manager" "$tunnel_service_name" "$mode" "$started_at")"; then
+    die "AgentDock 已安装，但 Cloudflare Tunnel 启动失败，请检查服务日志"
+  fi
+  if [[ "$mode" == quick ]]; then
+    log "Quick Tunnel 已连接：$result/mcp"
+  else
+    log "Named Tunnel 已启动：$server_url/mcp"
+  fi
+}
+
+remove_cloudflared_service() {
+  local service_manager="$1"
+  local tunnel_service_name="$2"
+  local cloudflared_env_file="$3"
+  case "$service_manager" in
+    systemd)
+      if [[ -f "/etc/systemd/system/${tunnel_service_name}.service" ]]; then
+        run_root systemctl disable --now "$tunnel_service_name" >/dev/null 2>&1 || true
+        run_root rm -f "/etc/systemd/system/${tunnel_service_name}.service"
+        run_root systemctl daemon-reload
+      fi
+      ;;
+    openrc)
+      if [[ -f "/etc/init.d/${tunnel_service_name}" ]]; then
+        run_root rc-service "$tunnel_service_name" stop >/dev/null 2>&1 || true
+        run_root rc-update del "$tunnel_service_name" default >/dev/null 2>&1 || true
+        run_root rm -f "/etc/init.d/${tunnel_service_name}"
+      fi
+      ;;
+  esac
+  run_root rm -f "$cloudflared_env_file"
+}
+
+configure_cloudflared() {
+  local service_manager="$1"
+  local tunnel_service_name="$2"
+  local service_user="$3"
+  local service_group="$4"
+  local data_dir="$5"
+  local cloudflared_binary="$6"
+  local cloudflared_env_file="$7"
+  local mode="$8"
+  local target_url="$9"
+  local token="${10}"
+  local server_url="${11}"
+
+  install_cloudflared "$cloudflared_binary"
+  write_cloudflared_env "$cloudflared_env_file" "$mode" "$target_url" "$token"
+  case "$service_manager" in
+    systemd)
+      write_cloudflared_systemd_unit "$tunnel_service_name" "$service_user" "$service_group" \
+        "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$mode" "$target_url"
+      ;;
+    openrc)
+      write_cloudflared_openrc_service "$tunnel_service_name" "$service_user" "$service_group" \
+        "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$mode" "$target_url"
+      ;;
+    *) die "Cloudflare Tunnel 需要 systemd 或 OpenRC" ;;
+  esac
+  start_cloudflared_service "$service_manager" "$tunnel_service_name" "$mode" "$server_url"
+}
+
 start_service() {
   local service_manager="$1"
   local service_name="$2"
@@ -650,10 +995,41 @@ service_restart_command() {
   esac
 }
 
+cloudflared_status_command() {
+  local service_manager="$1"
+  local service_name="$2"
+  case "$service_manager" in
+    systemd) printf 'sudo systemctl status %s --no-pager' "$service_name" ;;
+    openrc) printf 'sudo rc-service %s status' "$service_name" ;;
+    none) printf '# 未安装 Tunnel 服务' ;;
+  esac
+}
+
+cloudflared_log_command() {
+  local service_manager="$1"
+  local service_name="$2"
+  case "$service_manager" in
+    systemd) printf 'sudo journalctl -u %s -n 100 --no-pager' "$service_name" ;;
+    openrc) printf 'sudo tail -n 100 /var/log/%s.log /var/log/%s.err' "$service_name" "$service_name" ;;
+    none) printf '# 未安装 Tunnel 服务' ;;
+  esac
+}
+
+cloudflared_restart_command() {
+  local service_manager="$1"
+  local service_name="$2"
+  case "$service_manager" in
+    systemd) printf 'sudo systemctl restart %s' "$service_name" ;;
+    openrc) printf 'sudo rc-service %s restart' "$service_name" ;;
+    none) printf '# 未安装 Tunnel 服务' ;;
+  esac
+}
+
 local_health_host() {
   local host="$1"
   case "$host" in
     0.0.0.0|::) printf '127.0.0.1' ;;
+    *:*) printf '[%s]' "$host" ;;
     *) printf '%s' "$host" ;;
   esac
 }
@@ -674,6 +1050,8 @@ main() {
   local service_name service_user service_group service_manager service_manager_prompt host port token log_level
   local install_mode release_version nexus_endpoint nexus_token update_existing run_full_check install_deps
   local go_version public_domain smoke_url health_host build_from_source binary_installed
+  local tunnel_mode tunnel_default tunnel_token server_url existing_server_url existing_tunnel_token
+  local cloudflared_binary cloudflared_env_file tunnel_service_name tunnel_target_url
 
   detected_root="$(repo_root_from_script || true)"
   if [[ -n "$detected_root" ]]; then
@@ -724,8 +1102,57 @@ INTRO
   validate_abs_path '环境变量文件' "$env_file"
   validate_no_space '服务名' "$service_name"
   validate_no_space '运行用户' "$service_user"
-  validate_no_space '监听地址' "$host"
+  validate_host "$host"
   validate_port "$port"
+
+  cloudflared_binary="$DEFAULT_CLOUDFLARED_BINARY"
+  validate_abs_path 'cloudflared 安装路径' "$cloudflared_binary"
+  cloudflared_env_file="$(dirname "$env_file")/cloudflared.env"
+  tunnel_service_name="${service_name}-cloudflared"
+  tunnel_default="$DEFAULT_TUNNEL_MODE"
+  if [[ -z "$tunnel_default" ]]; then
+    tunnel_default="$(read_env_assignment "$cloudflared_env_file" AGENTDOCK_TUNNEL_MODE)"
+  fi
+  tunnel_default="${tunnel_default:-none}"
+  tunnel_mode="$(prompt '公网访问：none/quick/named' "$tunnel_default")"
+  validate_tunnel_mode "$tunnel_mode"
+  if [[ "$tunnel_mode" != none && "$service_manager" == none ]]; then
+    die "Quick/Named Tunnel 需要 systemd 或 OpenRC 服务管理器"
+  fi
+
+  server_url=""
+  tunnel_token=""
+  case "$tunnel_mode" in
+    quick)
+      warn "Quick Tunnel 地址会在 cloudflared 重启后变化，不适合 OAuth 或长期部署。"
+      ;;
+    named)
+      existing_server_url="$DEFAULT_SERVER_URL"
+      if [[ -z "$existing_server_url" ]]; then
+        existing_server_url="$(read_env_assignment "$env_file" AGENTDOCK_SERVER_URL)"
+      fi
+      server_url="$(prompt 'Named Tunnel HTTPS 公网 Origin' "$existing_server_url")"
+      [[ -n "$server_url" ]] || die "Named Tunnel 必须配置 HTTPS 公网 Origin"
+      server_url="$(normalize_server_url "$server_url")"
+
+      tunnel_token="${AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN:-}"
+      if [[ -z "$tunnel_token" ]]; then
+        existing_tunnel_token="$(read_env_assignment "$cloudflared_env_file" TUNNEL_TOKEN)"
+        tunnel_token="$existing_tunnel_token"
+      fi
+      if [[ -z "$tunnel_token" ]]; then
+        tunnel_token="$(prompt_required_secret 'Cloudflare Tunnel Token')"
+      fi
+      [[ -n "$tunnel_token" ]] || die "Named Tunnel 必须提供 Cloudflare Tunnel Token"
+      validate_cloudflare_token "$tunnel_token"
+      ;;
+    none)
+      server_url="$DEFAULT_SERVER_URL"
+      if [[ -z "$server_url" ]]; then
+        server_url="$(read_env_assignment "$env_file" AGENTDOCK_SERVER_URL)"
+      fi
+      ;;
+  esac
 
   if confirm '是否安装/更新系统基础依赖？binary 只装运行依赖，source 才装 Go/gcc' y; then install_deps="yes"; else install_deps="no"; fi
   update_existing="no"
@@ -753,7 +1180,10 @@ INTRO
     fi
   fi
 
-  public_domain="$(prompt '公网域名，可留空；脚本只输出反代提示，不直接改 Caddy/Nginx' '')"
+  public_domain=""
+  if [[ "$tunnel_mode" == none ]]; then
+    public_domain="$(prompt '公网域名，可留空；脚本只输出反代提示，不直接改 Caddy/Nginx' '')"
+  fi
 
   cat >"$TTY_OUT" <<SUMMARY
 
@@ -769,6 +1199,7 @@ INTRO
 - 服务名：$service_name
 - 运行用户：$service_user
 - 本机监听：http://$host:$port
+- 公网访问：$tunnel_mode
 - token：已隐藏，将写入 root-only env 文件
 
 SUMMARY
@@ -846,7 +1277,7 @@ SUMMARY
   service_group="$(id -gn "$service_user")"
   run_root mkdir -p "$data_dir/.agentdock" "$data_dir/AgentDock"
   run_root chown -R "$service_user:$service_group" "$data_dir"
-  write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token"
+  write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" "$server_url"
   case "$service_manager" in
     systemd) write_systemd_unit "$service_name" "$service_user" "$service_group" "$source_dir" "$env_file" ;;
     openrc) write_openrc_service "$service_name" "$service_user" "$service_group" "$source_dir" "$env_file" ;;
@@ -878,6 +1309,15 @@ SUMMARY
   run_as_service_user "$service_user" "$data_dir" \
     "$source_dir/bin/agentdock" skill bootstrap --bundle "$CORE_SKILL_BUNDLE"
 
+  if [[ "$tunnel_mode" == none ]]; then
+    remove_cloudflared_service "$service_manager" "$tunnel_service_name" "$cloudflared_env_file"
+  else
+    tunnel_target_url="http://$health_host:$port"
+    configure_cloudflared "$service_manager" "$tunnel_service_name" "$service_user" "$service_group" \
+      "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$tunnel_mode" \
+      "$tunnel_target_url" "$tunnel_token" "$server_url"
+  fi
+
   cat >"$TTY_OUT" <<DONE
 
 AgentDock Linux 部署完成。
@@ -897,6 +1337,29 @@ Bearer token 已写入：
   sudo awk -F= '/^AGENTDOCK_AUTH_TOKEN=/{print \$2}' $env_file
 
 DONE
+
+  if [[ "$tunnel_mode" != none ]]; then
+    cat >"$TTY_OUT" <<TUNNEL_DONE
+Cloudflare Tunnel：
+  模式：$tunnel_mode
+  状态：$(cloudflared_status_command "$service_manager" "$tunnel_service_name")
+  日志：$(cloudflared_log_command "$service_manager" "$tunnel_service_name")
+  重启：$(cloudflared_restart_command "$service_manager" "$tunnel_service_name")
+  独立配置：$cloudflared_env_file
+TUNNEL_DONE
+    if [[ "$tunnel_mode" == named ]]; then
+      cat >"$TTY_OUT" <<NAMED_DONE
+  公网 MCP URL：$server_url/mcp
+  Cloudflare Public Hostname 的 Service 目标应为：$tunnel_target_url
+
+NAMED_DONE
+    else
+      cat >"$TTY_OUT" <<QUICK_DONE
+  Quick Tunnel URL 可从上述日志命令重新查看；cloudflared 重启后地址会变化。
+
+QUICK_DONE
+    fi
+  fi
 
   if [[ -n "$public_domain" ]]; then
     cat >"$TTY_OUT" <<PROXY
