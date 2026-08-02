@@ -21,9 +21,14 @@ on:
       - 'go.sum'
       - '.github/workflows/windows-installer.yml'
   workflow_dispatch:
+    inputs:
+      test_tag:
+        description: 'Optional temporary prerelease tag, for example v0.5.4-windows-test-20260802-1'
+        required: false
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -137,6 +142,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64) -or
               [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+            if (-not [string]::IsNullOrWhiteSpace('${{ inputs.test_tag }}')) {
+              throw 'Windows signing secrets are required for a test package.'
+            }
             Write-Host 'Windows signing secrets are not configured; skipping Authenticode integration test.'
             exit 0
           }
@@ -145,28 +153,51 @@ jobs:
           .\scripts\sign-windows.ps1 -Path $paths
           .\scripts\sign-windows.ps1 -Path $paths -VerifyOnly
 
-      - name: Compile unsigned Setup
+      - name: Compile Setup
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
             throw "Inno Setup compiler was not found: $iscc"
           }
-          $config = Get-Content -LiteralPath '.\internal\config\config.go' -Raw
-          $match = [regex]::Match($config, 'Version\s*=\s*"([^"]+)"')
-          if (-not $match.Success) { throw 'Could not read config.Version.' }
+          $testTag = '${{ inputs.test_tag }}'
+          if ([string]::IsNullOrWhiteSpace($testTag)) {
+            $config = Get-Content -LiteralPath '.\internal\config\config.go' -Raw
+            $match = [regex]::Match($config, 'Version\s*=\s*"([^"]+)"')
+            if (-not $match.Success) { throw 'Could not read config.Version.' }
+            $version = $match.Groups[1].Value
+          } else {
+            if (-not $testTag.StartsWith('v')) { throw 'The test tag must start with v.' }
+            $version = $testTag.Substring(1)
+          }
+
           $outputDir = Join-Path $env:RUNNER_TEMP 'agentdock-setup'
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-          & $iscc `
-            "/DAppVersion=$($match.Groups[1].Value)" `
-            "/DOutputDir=$outputDir" `
-            '.\packaging\windows\AgentDock.iss'
+          $arguments = @(
+            "/DAppVersion=$version",
+            "/DOutputDir=$outputDir"
+          )
+          if (-not [string]::IsNullOrWhiteSpace($testTag)) {
+            $signScript = Join-Path $PWD 'scripts\sign-windows.ps1'
+            $signCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$signScript`" -Path `$q`$f`$q"
+            $arguments += '/DSignedBuild=1'
+            $arguments += "/Sagentdock-sign=$signCommand"
+          }
+          $arguments += '.\packaging\windows\AgentDock.iss'
+          & $iscc @arguments
           if ($LASTEXITCODE -ne 0) {
             throw "ISCC failed with exit code $LASTEXITCODE."
           }
-          if (-not (Test-Path -LiteralPath (Join-Path $outputDir 'AgentDockSetup.exe') -PathType Leaf)) {
+          $setupPath = Join-Path $outputDir 'AgentDockSetup.exe'
+          if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
             throw 'AgentDockSetup.exe was not produced.'
+          }
+          if (-not [string]::IsNullOrWhiteSpace($testTag)) {
+            .\scripts\sign-windows.ps1 -Path $setupPath -VerifyOnly
           }
 
       - name: Run Setup install and uninstall E2E
@@ -183,3 +214,70 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\scripts\test-windows-current-binary-as-standard-user.ps1 `
             -BinaryPath .\dist\agentdock.exe
+
+
+      - name: Build and publish signed Windows test package
+        if: ${{ inputs.test_tag != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+          TEST_TAG: ${{ inputs.test_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseDir = Join-Path $env:RUNNER_TEMP 'agentdock-windows-test-release'
+          Remove-Item -LiteralPath $releaseDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+
+          function New-WindowsAsset {
+            param(
+              [Parameter(Mandatory = $true)][string] $Architecture,
+              [Parameter(Mandatory = $true)][string] $SourceDirectory
+            )
+            $assetName = "agentdock_windows_$Architecture.zip"
+            $assetPath = Join-Path $releaseDir $assetName
+            Compress-Archive `
+              -Path (Join-Path $SourceDirectory 'agentdock.exe'), (Join-Path $SourceDirectory 'agentdock-tray.exe'), (Join-Path $SourceDirectory 'agentdock.ico'), (Join-Path $SourceDirectory 'share') `
+              -DestinationPath $assetPath `
+              -Force
+            $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText("$assetPath.sha256", "$hash  $assetName`n", [Text.UTF8Encoding]::new($false))
+          }
+
+          python .\scripts\build-core-skill-bundle.py --output .\dist\share\agentdock\core-skills
+          Copy-Item .\packaging\windows\assets\agentdock.ico .\dist\agentdock.ico -Force
+          New-WindowsAsset -Architecture 'amd64' -SourceDirectory (Join-Path $PWD 'dist')
+
+          $arm64Dir = Join-Path $env:RUNNER_TEMP 'agentdock-windows-arm64'
+          New-Item -ItemType Directory -Path $arm64Dir -Force | Out-Null
+          $env:CGO_ENABLED = '0'
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'arm64'
+          go build -trimpath -o (Join-Path $arm64Dir 'agentdock.exe') .\cmd\agentdock
+          go build -trimpath -ldflags '-H=windowsgui' -o (Join-Path $arm64Dir 'agentdock-tray.exe') .\cmd\agentdock-tray
+          .\scripts\sign-windows.ps1 -Path @(
+            (Join-Path $arm64Dir 'agentdock.exe'),
+            (Join-Path $arm64Dir 'agentdock-tray.exe')
+          )
+          python .\scripts\build-core-skill-bundle.py --output (Join-Path $arm64Dir 'share\agentdock\core-skills')
+          Copy-Item .\packaging\windows\assets\agentdock.ico (Join-Path $arm64Dir 'agentdock.ico') -Force
+          New-WindowsAsset -Architecture 'arm64' -SourceDirectory $arm64Dir
+
+          $setupPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup.exe'
+          Copy-Item -LiteralPath $setupPath -Destination (Join-Path $releaseDir 'AgentDockSetup.exe') -Force
+          $setupHash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(
+            (Join-Path $releaseDir 'AgentDockSetup.exe.sha256'),
+            "$setupHash  AgentDockSetup.exe`n",
+            [Text.UTF8Encoding]::new($false)
+          )
+
+          gh release delete $env:TEST_TAG --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes 2>$null
+          gh release create $env:TEST_TAG `
+            (Get-ChildItem -LiteralPath $releaseDir -File | ForEach-Object FullName) `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --prerelease `
+            --title "AgentDock Windows test $env:TEST_TAG" `
+            --notes "Temporary Windows test build from commit $env:GITHUB_SHA. Uses the existing AgentDock self-signed Authenticode certificate."
