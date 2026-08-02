@@ -18,7 +18,7 @@ enum TunnelMode: String, CaseIterable {
         case .local:
             return "只监听本机地址，不开放公网访问。"
         case .quick:
-            return "自动生成 trycloudflare.com 临时地址，适合快速体验。"
+            return "自动生成 trycloudflare.com 临时地址；电脑或 Tunnel 重启后会自动刷新，也可以手动重新生成。"
         case .named:
             return "使用固定 HTTPS 地址，适合长期运行。"
         }

@@ -58,15 +58,16 @@ const (
 	lrLoadFromFile = 0x0010
 	lrDefaultSize  = 0x0040
 
-	menuStatus     = 1001
-	menuCopyLocal  = 1002
-	menuCopyPublic = 1003
-	menuStart      = 1004
-	menuRestart    = 1005
-	menuUpdate     = 1006
-	menuOpenFolder = 1007
-	menuOpenDocs   = 1008
-	menuExit       = 1009
+	menuStatus          = 1001
+	menuCopyLocal       = 1002
+	menuCopyPublic      = 1003
+	menuStart           = 1004
+	menuRestart         = 1005
+	menuUpdate          = 1006
+	menuOpenFolder      = 1007
+	menuOpenDocs        = 1008
+	menuExit            = 1009
+	menuRefreshQuickURL = 1010
 )
 
 var (
@@ -390,6 +391,14 @@ func (app *trayApp) showMenu() {
 	appendMenu(menu, mfSeparator, 0, "")
 	appendMenu(menu, menuFlags(state.Manifest.LocalMCPURL != ""), menuCopyLocal, "复制本地 MCP 地址")
 	appendMenu(menu, menuFlags(state.Manifest.PublicURL != ""), menuCopyPublic, "复制公网 MCP 地址")
+	if state.Manifest.TunnelMode == "quick" {
+		appendMenu(
+			menu,
+			menuFlags(state.Manifest.CloudflaredLauncher != ""),
+			menuRefreshQuickURL,
+			"重新生成临时公网地址",
+		)
+	}
 	appendMenu(menu, mfSeparator, 0, "")
 	appendMenu(menu, menuFlags(!state.Healthy && state.Manifest.AgentDockLauncher != ""), menuStart, "启动 AgentDock")
 	appendMenu(menu, menuFlags(state.Manifest.AgentDockLauncher != ""), menuRestart, "重启 AgentDock")
@@ -436,6 +445,12 @@ func (app *trayApp) handleMenu(command uint16) {
 			return
 		}
 		app.notify("AgentDock", "公网 MCP 地址已复制。", false)
+	case menuRefreshQuickURL:
+		if err := regenerateQuickTunnel(state.Manifest); err != nil {
+			app.notify("AgentDock", "重新生成临时地址失败："+err.Error(), true)
+			return
+		}
+		app.notify("AgentDock", "正在生成新的临时公网地址，完成后托盘会自动更新。", false)
 	case menuStart:
 		if err := startAgentDock(state.Manifest); err != nil {
 			app.notify("AgentDock", "启动失败："+err.Error(), true)
@@ -546,6 +561,45 @@ func setClipboardText(value string) error {
 		return fmt.Errorf("set clipboard: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func regenerateQuickTunnel(manifest windowsruntime.Manifest) error {
+	if manifest.TunnelMode != "quick" {
+		return errors.New("当前未使用临时公网地址")
+	}
+	if strings.TrimSpace(manifest.AgentDockBinary) == "" || strings.TrimSpace(manifest.CloudflaredLauncher) == "" {
+		return errors.New("Quick Tunnel 运行信息不完整")
+	}
+	cloudflaredBinary := filepath.Join(filepath.Dir(manifest.AgentDockBinary), "cloudflared.exe")
+	if _, err := os.Stat(cloudflaredBinary); err != nil {
+		return fmt.Errorf("cloudflared 不可用: %w", err)
+	}
+	if _, err := os.Stat(manifest.CloudflaredLauncher); err != nil {
+		return fmt.Errorf("Quick Tunnel 启动器不可用: %w", err)
+	}
+
+	// 先停止当前 cloudflared。旧 launcher 会随子进程退出，随后启动同一个
+	// launcher；它负责生成新 URL、原子回写配置并按当前权限模式重启核心。
+	target := quotePowerShellLiteral(cloudflaredBinary)
+	script := fmt.Sprintf(
+		`$target=[IO.Path]::GetFullPath('%s'); $deadline=[DateTime]::UtcNow.AddSeconds(15); do { Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 250; $remaining=@(Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase) }); if ($remaining.Count -eq 0) { exit 0 } } while ([DateTime]::UtcNow -lt $deadline); throw 'cloudflared did not stop within 15 seconds.'`,
+		target,
+	)
+	command := exec.Command(
+		"powershell.exe",
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", script,
+	)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("停止旧 Quick Tunnel: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	time.Sleep(750 * time.Millisecond)
+	return startPowerShellScript(manifest.CloudflaredLauncher)
 }
 
 func startPowerShellScript(path string) error {

@@ -14,6 +14,8 @@ on:
       - 'scripts/test-install-windows-download.ps1'
       - 'scripts/test-install-windows-e2e.ps1'
       - 'scripts/test-windows-setup-e2e.ps1'
+      - 'scripts/test-windows-quick-tunnel-lifecycle.ps1'
+      - 'scripts/testdata/fake-cloudflared/**'
       - 'scripts/run-windows-installer-e2e-as-standard-user.ps1'
       - 'scripts/test-windows-current-binary-as-standard-user.ps1'
       - 'cmd/**'
@@ -186,6 +188,22 @@ jobs:
           "AMD64_ARCHIVE=$archivePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "AMD64_CHECKSUM=$checksumPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "AMD64_CLOUDFLARED=$cloudflaredPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      - name: Test Quick Tunnel restart lifecycle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fakeCloudflared = Join-Path $env:RUNNER_TEMP 'fake-cloudflared.exe'
+          $env:CGO_ENABLED = '0'
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'amd64'
+          go build -trimpath -o $fakeCloudflared .\scripts\testdata\fake-cloudflared
+          & .\scripts\test-windows-quick-tunnel-lifecycle.ps1 `
+            -InstallerPath .\scripts\install.ps1 `
+            -UninstallerPath .\scripts\uninstall-windows.ps1 `
+            -AgentDockArchive $env:AMD64_ARCHIVE `
+            -AgentDockChecksumFile $env:AMD64_CHECKSUM `
+            -FakeCloudflaredBinary $fakeCloudflared
 
       - name: Compile offline AMD64 Setup
         shell: pwsh

@@ -849,6 +849,30 @@ function Wait-QuickTunnelUrl {
     throw "cloudflared started, but no temporary trycloudflare.com URL appeared in: $($LogPaths -join ', ')"
 }
 
+function Wait-QuickTunnelReady {
+    param(
+        [string] $Path,
+        [string] $ExpectedUrl
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(35)
+    do {
+        Start-Sleep -Milliseconds 500
+        try {
+            if ((Test-Path -LiteralPath $Path -PathType Leaf) -and
+                [string]::Equals(
+                    [IO.File]::ReadAllText($Path).Trim(),
+                    $ExpectedUrl,
+                    [StringComparison]::OrdinalIgnoreCase
+                )) {
+                return
+            }
+        } catch {
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Quick Tunnel generated $ExpectedUrl, but AgentDock did not finish adopting it."
+}
+
 function Backup-FileState {
     param(
         [string] $Path,
@@ -943,6 +967,7 @@ $serverUrlPath = Join-Path $runtimeDir 'server-url.txt'
 $tunnelModePath = Join-Path $runtimeDir 'cloudflared-mode.txt'
 $tunnelTokenPath = Join-Path $runtimeDir 'cloudflared-token.dpapi'
 $runtimeManifestPath = Join-Path $runtimeDir 'runtime.json'
+$quickTunnelUrlPath = Join-Path $runtimeDir 'quick-tunnel-url.txt'
 $cloudflaredStdoutLogPath = Join-Path $runtimeDir 'cloudflared.out.log'
 $cloudflaredStderrLogPath = Join-Path $runtimeDir 'cloudflared.err.log'
 $runtimeBackupDir = Join-Path $tempRoot 'runtime-backup'
@@ -997,7 +1022,8 @@ $managedRuntimeFiles = @(
     @{ Path = $serverUrlPath; Name = 'server-url.txt' },
     @{ Path = $tunnelModePath; Name = 'cloudflared-mode.txt' },
     @{ Path = $tunnelTokenPath; Name = 'cloudflared-token.dpapi' },
-    @{ Path = $runtimeManifestPath; Name = 'runtime.json' }
+    @{ Path = $runtimeManifestPath; Name = 'runtime.json' },
+    @{ Path = $quickTunnelUrlPath; Name = 'quick-tunnel-url.txt' }
 )
 
 try {
@@ -1259,11 +1285,18 @@ if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
             $escapedTunnelTokenPath = $tunnelTokenPath.Replace("'", "''")
             $escapedCloudflaredStdoutLogPath = $cloudflaredStdoutLogPath.Replace("'", "''")
             $escapedCloudflaredStderrLogPath = $cloudflaredStderrLogPath.Replace("'", "''")
+            $escapedServerUrlPath = $serverUrlPath.Replace("'", "''")
+            $escapedQuickTunnelUrlPath = $quickTunnelUrlPath.Replace("'", "''")
+            $escapedRuntimeManifestPath = $runtimeManifestPath.Replace("'", "''")
+            $escapedAgentDockLauncherPath = $launcherPath.Replace("'", "''")
+            $escapedAgentDockBinaryPath = $destinationBinary.Replace("'", "''")
             $tunnelTarget = "http://127.0.0.1:$Port"
             $escapedTunnelTarget = $tunnelTarget.Replace("'", "''")
             $cloudflaredLauncher = @"
 `$ErrorActionPreference = 'Stop'
+`$utf8NoBom = New-Object System.Text.UTF8Encoding(`$false)
 Add-Type -AssemblyName System.Security
+
 function Read-ProtectedValue {
     param([string] `$Path, [string] `$Entropy)
     `$protectedBytes = [Convert]::FromBase64String([IO.File]::ReadAllText(`$Path).Trim())
@@ -1274,6 +1307,121 @@ function Read-ProtectedValue {
     )
     return [Text.Encoding]::UTF8.GetString(`$plainBytes)
 }
+
+function Write-TextAtomically {
+    param([string] `$Path, [string] `$Value)
+    `$temporaryPath = "`$Path.tmp.`$PID"
+    [IO.File]::WriteAllText(`$temporaryPath, `$Value, `$utf8NoBom)
+    Move-Item -LiteralPath `$temporaryPath -Destination `$Path -Force
+}
+
+function Get-QuickTunnelUrl {
+    param([Diagnostics.Process] `$Process, [string[]] `$LogPaths)
+    `$deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 500
+        foreach (`$logPath in `$LogPaths) {
+            try {
+                if (Test-Path -LiteralPath `$logPath -PathType Leaf) {
+                    `$match = [Regex]::Match(
+                        (Get-Content -LiteralPath `$logPath -Raw -ErrorAction Stop),
+                        'https://[A-Za-z0-9-]+\.trycloudflare\.com'
+                    )
+                    if (`$match.Success) {
+                        return `$match.Value
+                    }
+                }
+            } catch {
+            }
+        }
+        if (`$Process.HasExited) {
+            throw "cloudflared exited before generating a temporary URL: `$(`$Process.ExitCode)"
+        }
+    } while ([DateTime]::UtcNow -lt `$deadline)
+    throw 'cloudflared did not generate a temporary trycloudflare.com URL within 30 seconds.'
+}
+
+function Stop-AgentDockByPath {
+    param([string] `$BinaryPath)
+    `$normalizedPath = [IO.Path]::GetFullPath(`$BinaryPath)
+    Get-CimInstance Win32_Process -Filter "Name = 'agentdock.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            `$_.ExecutablePath -and
+            [string]::Equals(
+                [IO.Path]::GetFullPath(`$_.ExecutablePath),
+                `$normalizedPath,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        } |
+        ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+function Wait-AgentDockHealth {
+    `$deadline = [DateTime]::UtcNow.AddSeconds(25)
+    do {
+        Start-Sleep -Milliseconds 500
+        try {
+            `$response = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:$Port/healthz' -TimeoutSec 2
+            if (`$response.StatusCode -eq 200) {
+                return
+            }
+        } catch {
+        }
+    } while ([DateTime]::UtcNow -lt `$deadline)
+    throw 'AgentDock did not become healthy after adopting the new Quick Tunnel URL.'
+}
+
+function Restart-AgentDockForQuickTunnel {
+    `$privilegeMode = '$effectivePrivilegeMode'
+    `$taskName = 'AgentDock'
+    if (Test-Path -LiteralPath '$escapedRuntimeManifestPath' -PathType Leaf) {
+        try {
+            `$manifest = Get-Content -LiteralPath '$escapedRuntimeManifestPath' -Raw | ConvertFrom-Json
+            if (-not [string]::IsNullOrWhiteSpace(`$manifest.privilege_mode)) {
+                `$privilegeMode = `$manifest.privilege_mode
+            }
+            if (-not [string]::IsNullOrWhiteSpace(`$manifest.agentdock_task_name)) {
+                `$taskName = `$manifest.agentdock_task_name
+            }
+        } catch {
+        }
+    }
+    if (`$privilegeMode -eq 'elevated') {
+        Stop-ScheduledTask -TaskName `$taskName -TaskPath '\' -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+        Start-ScheduledTask -TaskName `$taskName -TaskPath '\' -ErrorAction Stop
+    } else {
+        Stop-AgentDockByPath -BinaryPath '$escapedAgentDockBinaryPath'
+        Start-Sleep -Milliseconds 500
+        `$arguments = @(
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-WindowStyle', 'Hidden',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', '$escapedAgentDockLauncherPath'
+        )
+        Start-Process -FilePath 'powershell.exe' -ArgumentList `$arguments -WindowStyle Hidden | Out-Null
+    }
+    Wait-AgentDockHealth
+}
+
+function Update-RuntimePublicUrl {
+    param([string] `$PublicUrl)
+    if (-not (Test-Path -LiteralPath '$escapedRuntimeManifestPath' -PathType Leaf)) {
+        return
+    }
+    `$manifest = Get-Content -LiteralPath '$escapedRuntimeManifestPath' -Raw | ConvertFrom-Json
+    if (`$manifest.PSObject.Properties.Name -contains 'public_url') {
+        `$manifest.public_url = `$PublicUrl
+    } else {
+        `$manifest | Add-Member -NotePropertyName public_url -NotePropertyValue `$PublicUrl
+    }
+    `$temporaryPath = '$escapedRuntimeManifestPath' + '.tmp.' + `$PID
+    [IO.File]::WriteAllText(`$temporaryPath, (`$manifest | ConvertTo-Json -Depth 4), `$utf8NoBom)
+    Move-Item -LiteralPath `$temporaryPath -Destination '$escapedRuntimeManifestPath' -Force
+}
+
 `$mode = [IO.File]::ReadAllText('$escapedTunnelModePath').Trim()
 `$arguments = @('tunnel', '--no-autoupdate')
 if (`$mode -eq 'quick') {
@@ -1286,6 +1434,12 @@ if (`$mode -eq 'named') {
 if (@('quick', 'named') -notcontains `$mode) {
     throw "Unsupported cloudflared mode: `$mode"
 }
+
+[IO.File]::WriteAllText('$escapedCloudflaredStdoutLogPath', '', `$utf8NoBom)
+[IO.File]::WriteAllText('$escapedCloudflaredStderrLogPath', '', `$utf8NoBom)
+if (`$mode -eq 'quick') {
+    Remove-Item -LiteralPath '$escapedQuickTunnelUrlPath' -Force -ErrorAction SilentlyContinue
+}
 `$startParameters = @{
     FilePath = '$escapedCloudflaredPath'
     ArgumentList = `$arguments
@@ -1293,9 +1447,26 @@ if (@('quick', 'named') -notcontains `$mode) {
     RedirectStandardOutput = '$escapedCloudflaredStdoutLogPath'
     RedirectStandardError = '$escapedCloudflaredStderrLogPath'
     PassThru = `$true
-    Wait = `$true
 }
 `$process = Start-Process @startParameters
+if (`$mode -eq 'quick') {
+    try {
+        `$publicUrl = Get-QuickTunnelUrl -Process `$process -LogPaths @(
+            '$escapedCloudflaredStdoutLogPath',
+            '$escapedCloudflaredStderrLogPath'
+        )
+        Write-TextAtomically -Path '$escapedServerUrlPath' -Value `$publicUrl
+        Restart-AgentDockForQuickTunnel
+        Update-RuntimePublicUrl -PublicUrl `$publicUrl
+        Write-TextAtomically -Path '$escapedQuickTunnelUrlPath' -Value `$publicUrl
+    } catch {
+        if (-not `$process.HasExited) {
+            Stop-Process -Id `$process.Id -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+}
+`$process.WaitForExit()
 exit `$process.ExitCode
 "@
             [IO.File]::WriteAllText($cloudflaredLauncherPath, $cloudflaredLauncher, $Utf8NoBom)
@@ -1309,16 +1480,7 @@ exit `$process.ExitCode
 
             if ($resolvedTunnelMode -eq 'quick') {
                 $publicUrl = Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)
-                Write-TextFile -Path $serverUrlPath -Value $publicUrl
-                if ($effectivePrivilegeMode -eq 'elevated') {
-                    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
-                    Start-Sleep -Milliseconds 500
-                    Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
-                } else {
-                    [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
-                    Start-AgentDockLauncher -LauncherPath $launcherPath
-                }
-                Wait-AgentDockHealth -HealthPort $Port
+                Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl
             } else {
                 $publicUrl = $ServerUrl
                 Wait-CloudflaredRunning -BinaryPath $cloudflaredBinary
@@ -1329,7 +1491,7 @@ exit `$process.ExitCode
             [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
             Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
             $tunnelStartupRegistrationChanged = $true
-            foreach ($path in @($cloudflaredLauncherPath, $tunnelModePath, $tunnelTokenPath, $serverUrlPath, $oauthPasswordPath, $oauthTokenSecretPath)) {
+            foreach ($path in @($cloudflaredLauncherPath, $tunnelModePath, $tunnelTokenPath, $serverUrlPath, $quickTunnelUrlPath, $oauthPasswordPath, $oauthTokenSecretPath)) {
                 Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
             }
         }

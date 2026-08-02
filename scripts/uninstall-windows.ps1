@@ -172,6 +172,7 @@ foreach ($name in @(
     'cloudflared-token.dpapi',
     'cloudflared.out.log',
     'cloudflared.err.log',
+    'quick-tunnel-url.txt',
     'runtime.json'
 )) {
     Remove-Item -LiteralPath (Join-Path $runtimeDir $name) -Force -ErrorAction SilentlyContinue

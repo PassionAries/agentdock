@@ -171,6 +171,12 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Start-AgentDockLauncher -LauncherPath $launcherPath",
 		"Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath",
 		"Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)",
+		"Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl",
+		"quick-tunnel-url.txt",
+		"Restart-AgentDockForQuickTunnel",
+		"Update-RuntimePublicUrl -PublicUrl `$publicUrl",
+		"Write-TextAtomically -Path '$escapedServerUrlPath' -Value `$publicUrl",
+		"Write-TextAtomically -Path '$escapedQuickTunnelUrlPath' -Value `$publicUrl",
 		"RedirectStandardOutput = '$escapedCloudflaredStdoutLogPath'",
 		"RedirectStandardError = '$escapedCloudflaredStderrLogPath'",
 		"RuntimeInformation]::OSArchitecture",
@@ -255,6 +261,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'cloudflared-token.dpapi'",
 		"'cloudflared.out.log'",
 		"'cloudflared.err.log'",
+		"'quick-tunnel-url.txt'",
 		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray'",
 		"Remove-AgentDockScheduledTask",
 		"-TaskAdminAction remove",
@@ -262,6 +269,34 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("uninstall-windows.ps1 missing %q", want)
+		}
+	}
+}
+
+func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
+	checks := map[string][]string{
+		filepath.Join("..", "desktop", "windows", "tray", "app_windows.go"): {
+			"menuRefreshQuickURL",
+			"重新生成临时公网地址",
+			"regenerateQuickTunnel",
+			"manifest.CloudflaredLauncher",
+		},
+		filepath.Join("..", "desktop", "macos", "AgentDockApp", "Sources", "SetupWindowController.swift"): {
+			"refreshingQuickTunnel",
+			"重新生成临时地址",
+			"正在生成新的临时公网地址",
+		},
+	}
+	for path, required := range checks {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		content := string(data)
+		for _, want := range required {
+			if !strings.Contains(content, want) {
+				t.Fatalf("%s missing Quick Tunnel refresh behavior %q", path, want)
+			}
 		}
 	}
 }

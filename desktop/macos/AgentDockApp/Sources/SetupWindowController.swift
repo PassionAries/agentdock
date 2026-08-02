@@ -360,8 +360,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        let refreshingQuickTunnel = currentStatus.installed && initialMode == .quick && selectedMode == .quick
         setBusy(true)
-        showStatus("正在下载、校验并应用 AgentDock 配置…", isError: false)
+        showStatus(
+            refreshingQuickTunnel ? "正在生成新的临时公网地址…" : "正在下载、校验并应用 AgentDock 配置…",
+            isError: false
+        )
         Task {
             do {
                 let result = try await installer.run(request: request)
@@ -373,7 +377,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 authVisible = false
                 oauthVisible = false
                 refreshCredentialFields()
-                showStatus("AgentDock \(result.version) 已配置并正常运行。", isError: false)
+                showStatus(
+                    refreshingQuickTunnel
+                        ? "新的临时公网地址已生成并生效。"
+                        : "AgentDock \(result.version) 已配置并正常运行。",
+                    isError: false
+                )
                 setBusy(false)
                 initialMode = selectedMode
                 initialServerURL = selectedMode == .named ? (try? request.validatedServerURL()) ?? "" : ""
@@ -471,13 +480,21 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func refreshChangeState() {
         guard currentStatus.installed else {
+            applyButton.title = "安装并启动"
             applyButton.isEnabled = !isBusy
             return
         }
+
+        let refreshingQuickTunnel = initialMode == .quick && selectedMode == .quick
+        applyButton.title = refreshingQuickTunnel ? "重新生成临时地址" : "应用更改"
+
         let serverChanged = selectedMode == .named
             && serverURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 != initialServerURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let changed = selectedMode != initialMode || serverChanged || !tunnelTokenField.stringValue.isEmpty
+        let changed = refreshingQuickTunnel
+            || selectedMode != initialMode
+            || serverChanged
+            || !tunnelTokenField.stringValue.isEmpty
         applyButton.isEnabled = changed && !isBusy
     }
 

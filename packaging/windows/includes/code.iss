@@ -549,6 +549,8 @@ begin
     GetLocalizedMessage('LocalMCP') + ' ' + LocalMCPURL;
   if PublicMCPURL <> '' then
     Summary := Summary + #13#10 + GetLocalizedMessage('PublicMCP') + ' ' + PublicMCPURL;
+  if SelectedTunnelMode() = 'quick' then
+    Summary := Summary + #13#10#13#10 + GetLocalizedMessage('QuickLifecycleNote');
   if BearerToken <> '' then
     Summary := Summary + #13#10 + GetLocalizedMessage('BearerToken') + ' ' + BearerToken;
   if OAuthPassword <> '' then
