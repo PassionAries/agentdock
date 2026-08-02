@@ -104,6 +104,22 @@ grep -q '/home/agentdock/.agentdock' "$work_dir/compose.yml"
 grep -q '/home/agentdock/AgentDock' "$work_dir/compose.yml"
 grep -q 'agentdock-healthcheck' "$work_dir/compose.yml"
 
+AGENTDOCK_AUTH_TOKEN=compose-config-token \
+AGENTDOCK_SERVER_URL=https://agent.example.test \
+TUNNEL_TOKEN=compose-tunnel-token \
+AGENTDOCK_IMAGE="$runtime_image" \
+  docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.cloudflare-tunnel.yml \
+    --profile cloudflare-quick \
+    --profile cloudflare-named \
+    config >"$work_dir/cloudflare-compose.yml"
+grep -q 'cloudflared-quick' "$work_dir/cloudflare-compose.yml"
+grep -q 'cloudflared-named' "$work_dir/cloudflare-compose.yml"
+grep -q 'http://agentdock:8765' "$work_dir/cloudflare-compose.yml"
+grep -q 'compose-tunnel-token' "$work_dir/cloudflare-compose.yml"
+grep -q 'https://agent.example.test' "$work_dir/cloudflare-compose.yml"
+
 assert_image_size "$runtime_image" "$max_runtime_bytes" runtime
 assert_image_size "$dev_image" "$max_dev_bytes" dev
 assert_image_size "$browser_image" "$max_browser_bytes" browser

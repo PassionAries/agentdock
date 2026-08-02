@@ -33,6 +33,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Validate unified installer entry
+        run: |
+          sh -n scripts/install.sh scripts/test-install-entry.sh
+          bash -n scripts/install-linux-platform.sh
+          ./scripts/test-install-entry.sh
+
       - name: Build and package
         env:
           CGO_ENABLED: '0'
@@ -79,7 +85,7 @@ jobs:
       - name: Validate macOS scripts
         run: |
           for path in \
-            scripts/install-macos.sh \
+            scripts/install-macos-platform.sh \
             scripts/uninstall-macos.sh \
             scripts/sign-macos.sh \
             scripts/deploy-macos-source.sh \
@@ -141,11 +147,11 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-windows-downloaded.ps1'
-          $installerUrl = 'https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install-windows.ps1'
+          $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-downloaded.ps1'
+          $installerUrl = 'https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install.ps1'
           & .\scripts\test-install-windows-download.ps1 `
             -Url $installerUrl `
-            -ExpectedInstallerPath .\scripts\install-windows.ps1 `
+            -ExpectedInstallerPath .\scripts\install.ps1 `
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
@@ -249,12 +255,14 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          cp scripts/install-linux.sh dist/install-linux.sh
-          cp scripts/install-linux-bootstrap.sh dist/install-linux-bootstrap.sh
-          cp scripts/install-macos.sh dist/install-macos.sh
+          cp scripts/install.sh dist/install.sh
+          cp scripts/install-linux-platform.sh dist/install-linux-platform.sh
+          cp scripts/install-macos-platform.sh dist/install-macos-platform.sh
           cp scripts/uninstall-macos.sh dist/uninstall-macos.sh
-          cp scripts/install-windows.ps1 dist/install-windows.ps1
+          cp scripts/install.ps1 dist/install.ps1
           cp scripts/uninstall-windows.ps1 dist/uninstall-windows.ps1
+          cp docker-compose.cloudflare-tunnel.yml dist/docker-compose.cloudflare-tunnel.yml
+          cp docker-compose.cloudflare-tunnel.env.example dist/docker-compose.cloudflare-tunnel.env.example
           python3 - <<'PY'
           import os
           import re
@@ -272,6 +280,14 @@ jobs:
           if actual_version != expected_version:
               raise SystemExit(f"release tag {tag} does not match config.Version {actual_version}")
 
+          installer_entry = Path("dist/install.sh")
+          installer_text = installer_entry.read_text()
+          default_base = "https://github.com/uvwt/agentdock/releases/latest/download"
+          release_base = f"https://github.com/{repository}/releases/download/{tag}"
+          if default_base not in installer_text:
+              raise SystemExit("install.sh default release base was not found")
+          installer_entry.write_text(installer_text.replace(default_base, release_base, 1))
+
           runtime = Path("docker-compose.yml").read_text()
           browser = Path("docker-compose.browser.yml").read_text()
           runtime = runtime.replace("ghcr.io/uvwt/agentdock:latest", f"ghcr.io/{repository}:{tag}")
@@ -288,11 +304,11 @@ jobs:
           (
             cd dist
             for file in \
-              install-linux.sh \
-              install-linux-bootstrap.sh \
-              install-macos.sh \
+              install.sh \
+              install-linux-platform.sh \
+              install-macos-platform.sh \
               uninstall-macos.sh \
-              install-windows.ps1 \
+              install.ps1 \
               uninstall-windows.ps1 \
               skill-desktop.zip; do
               shasum -a 256 "$file" > "$file.sha256"
@@ -313,6 +329,7 @@ jobs:
             dist/*.ps1
             dist/*.ps1.sha256
             dist/*.yml
+            dist/*.example
           generate_release_notes: true
 
   publish-container:
@@ -392,7 +409,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 
   verify-linux-release:
-    name: Verify published Linux installer
+    name: Verify published unified installer on Linux
     needs: publish
     runs-on: ubuntu-latest
     steps:
@@ -402,16 +419,23 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          installer="$RUNNER_TEMP/install-linux.sh"
+          release_base="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG"
+          installer="$RUNNER_TEMP/install.sh"
+          installer_tmp="$RUNNER_TEMP/installer"
           install_dir="$RUNNER_TEMP/agentdock-install"
           data_dir="$RUNNER_TEMP/agentdock-data"
           env_file="$RUNNER_TEMP/agentdock.env"
-          curl -fL "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/install-linux.sh" -o "$installer"
-          curl -fL "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/install-linux.sh.sha256" -o "$installer.sha256"
+
+          mkdir -p "$installer_tmp"
+          curl -fL "$release_base/install.sh" -o "$installer"
+          curl -fL "$release_base/install.sh.sha256" -o "$installer.sha256"
           (
             cd "$RUNNER_TEMP"
-            sha256sum -c install-linux.sh.sha256
+            sha256sum -c install.sh.sha256
           )
+
+          TMPDIR="$installer_tmp" \
+          AGENTDOCK_INSTALLER_BASE_URL="$release_base" \
           AGENTDOCK_NONINTERACTIVE=true \
           AGENTDOCK_INSTALL_MODE=binary \
           AGENTDOCK_RELEASE_VERSION="$RELEASE_TAG" \
@@ -421,7 +445,8 @@ jobs:
           AGENTDOCK_SERVICE_MANAGER=none \
           AGENTDOCK_SERVICE_USER="$(id -un)" \
           AGENTDOCK_AUTH_TOKEN=test-token \
-            bash "$installer"
+            sh "$installer"
+
           "$install_dir/bin/agentdock" --help >/dev/null 2>&1
           test -f "$data_dir/.agentdock/skill-store/bundled-skills.json"
           for skill in skill-authoring skill-installation skill-vetter-runtime; do
@@ -432,7 +457,7 @@ jobs:
           done
 
   verify-macos-release:
-    name: Verify published macOS installer
+    name: Verify published unified installer on macOS
     needs: publish
     runs-on: macos-latest
     steps:
@@ -441,15 +466,22 @@ jobs:
         run: |
           set -euo pipefail
           tag='${{ github.event.inputs.tag || github.ref_name }}'
-          installer="$RUNNER_TEMP/install-macos.sh"
+          release_base="https://github.com/${{ github.repository }}/releases/download/$tag"
+          installer="$RUNNER_TEMP/install.sh"
           uninstaller="$RUNNER_TEMP/uninstall-macos.sh"
-          curl -fL "https://github.com/${{ github.repository }}/releases/download/$tag/install-macos.sh" -o "$installer"
-          curl -fL "https://github.com/${{ github.repository }}/releases/download/$tag/uninstall-macos.sh" -o "$uninstaller"
-          zsh -n "$installer"
+          curl -fL "$release_base/install.sh" -o "$installer"
+          curl -fL "$release_base/install.sh.sha256" -o "$installer.sha256"
+          curl -fL "$release_base/uninstall-macos.sh" -o "$uninstaller"
+          (
+            cd "$RUNNER_TEMP"
+            shasum -a 256 -c install.sh.sha256
+          )
+          sh -n "$installer"
           zsh -n "$uninstaller"
           HOME="$RUNNER_TEMP/home" \
+          AGENTDOCK_INSTALLER_BASE_URL="$release_base" \
           AGENTDOCK_INSTALL_DIR="$RUNNER_TEMP/bin" \
-            zsh "$installer" --version "$tag"
+            sh "$installer" --version "$tag"
           "$RUNNER_TEMP/bin/agentdock" --help >/dev/null 2>&1
           test -f "$RUNNER_TEMP/home/.agentdock/skill-store/bundled-skills.json"
           for skill in skill-authoring skill-installation skill-vetter-runtime; do
@@ -471,11 +503,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = '${{ github.event.inputs.tag || github.ref_name }}'
-          $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-windows-release.ps1'
-          $installerUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/install-windows.ps1"
+          $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-release.ps1'
+          $installerUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/install.ps1"
           & .\scripts\test-install-windows-download.ps1 `
             -Url $installerUrl `
-            -ExpectedInstallerPath .\scripts\install-windows.ps1 `
+            -ExpectedInstallerPath .\scripts\install.ps1 `
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append

@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/install-windows.ps1'
+      - 'scripts/install.ps1'
       - 'scripts/test-install-windows.ps1'
       - 'scripts/test-install-windows-download.ps1'
       - 'scripts/test-install-windows-e2e.ps1'
@@ -45,11 +45,11 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-windows-downloaded.ps1'
-          $installerUrl = 'https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install-windows.ps1'
+          $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-downloaded.ps1'
+          $installerUrl = 'https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install.ps1'
           & .\scripts\test-install-windows-download.ps1 `
             -Url $installerUrl `
-            -ExpectedInstallerPath .\scripts\install-windows.ps1 `
+            -ExpectedInstallerPath .\scripts\install.ps1 `
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 

@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $PSScriptRoot 'install-windows.ps1'
+    $InstallerPath = Join-Path $PSScriptRoot 'install.ps1'
 }
 $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
 
@@ -31,11 +31,11 @@ try {
 
     # New-LocalUser 默认只创建普通本地账户；子进程还会再次验证自身不是管理员。
     New-Item -ItemType Directory -Path $testScriptDir -Force | Out-Null
-    Copy-Item -LiteralPath $resolvedInstaller -Destination (Join-Path $testScriptDir 'install-windows.ps1') -Force
+    Copy-Item -LiteralPath $resolvedInstaller -Destination (Join-Path $testScriptDir 'install.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'test-install-windows-e2e.ps1') -Destination $testScriptDir -Force
 
     $testScript = Join-Path $testScriptDir 'test-install-windows-e2e.ps1'
-    $installerScript = Join-Path $testScriptDir 'install-windows.ps1'
+    $installerScript = Join-Path $testScriptDir 'install.ps1'
     $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$testScript`" -InstallerPath `"$installerScript`" -Version $Version"
     if ($ReleaseBaseUrl) {
         $arguments += " -ReleaseBaseUrl `"$ReleaseBaseUrl`""

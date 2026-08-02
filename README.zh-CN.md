@@ -138,6 +138,53 @@ docker compose down
 
 完整配置、数据持久化和客户端接入方式见 [Docker 快速部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
 
+### Cloudflare Tunnel 公网访问
+
+macOS、Linux 和 Windows 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装时只询问是否有已接入 Cloudflare 的域名：
+
+- **有域名**：使用固定地址，适合长期运行；安装器会询问 HTTPS 公网地址和 Tunnel Token。
+- **没有域名**：自动生成临时 `trycloudflare.com` 地址，适合快速体验；Tunnel 重启后地址可能变化。
+
+两种方式都会自动生成或复用 **Bearer Token** 与 **OAuth** 配置。安装完成框会显示公网地址、MCP 地址、Bearer Token 和 OAuth 登录密码；OAuth 签名密钥与 Tunnel Token 只保存在受限配置文件中，不会显示或传给无关进程。
+
+Linux 与 macOS 使用同一个入口；macOS 需要 `--register-service` 才会注册后台服务：
+
+```bash
+curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh -o /tmp/agentdock-install.sh
+sh /tmp/agentdock-install.sh                 # Linux
+sh /tmp/agentdock-install.sh --register-service  # macOS
+```
+
+Windows 使用独立的 PowerShell 入口和登录启动模式：
+
+```powershell
+$script = Join-Path $env:TEMP 'install-agentdock.ps1'
+Invoke-WebRequest https://github.com/uvwt/agentdock/releases/latest/download/install.ps1 -OutFile $script
+powershell -ExecutionPolicy Bypass -File $script -RegisterStartup
+```
+
+已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
+
+临时地址变化后，重新运行同一个安装脚本即可生成并回写新地址。安装器会保留原 Bearer Token、OAuth 登录密码和签名密钥；用户只需在客户端替换 MCP URL，并重新完成 OAuth 授权。
+
+Docker Quick Tunnel：
+
+```bash
+curl -fL \
+  https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.cloudflare-tunnel.yml \
+  -o docker-compose.cloudflare-tunnel.yml
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.cloudflare-tunnel.yml \
+  --profile cloudflare-quick up -d
+
+docker compose -f docker-compose.yml -f docker-compose.cloudflare-tunnel.yml \
+  logs -f cloudflared-quick
+```
+
+Named Tunnel 使用 `cloudflare-named` profile，并在部署目录的 `.env` 中设置 `TUNNEL_TOKEN` 与 `AGENTDOCK_SERVER_URL`。公网模式下必须保留 AgentDock Bearer Token 或 OAuth 认证。
+
 ## 接入 AI 客户端
 
 AgentDock 通过 MCP Streamable HTTP 提供工具能力。下面是一个通用配置示例，具体字段格式取决于所使用的 AI 客户端：

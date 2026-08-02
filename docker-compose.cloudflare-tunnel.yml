@@ -1,0 +1,20 @@
+services:
+  cloudflared-quick:
+    profiles: ["cloudflare-quick"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--url", "http://agentdock:8765"]
+    depends_on:
+      agentdock:
+        condition: service_healthy
+
+  cloudflared-named:
+    profiles: ["cloudflare-named"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:?set TUNNEL_TOKEN for the named tunnel}"
+    depends_on:
+      agentdock:
+        condition: service_healthy
