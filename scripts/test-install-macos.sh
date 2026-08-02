@@ -305,7 +305,7 @@ test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)" = "$named_o
 assert_file_not_contains "$tunnel_env" 'named-token-value'
 assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"'
 assert_file_contains "$tunnel_start" 'write_quick_public_auth "$public_url"'
-assert_file_contains "$tunnel_start" 'launchctl kickstart -k "$domain/$AGENTDOCK_LABEL"'
+assert_file_contains "$tunnel_start" '"$LAUNCHCTL_BIN" kickstart -k "$domain/$AGENTDOCK_LABEL"'
 assert_file_contains "$tunnel_start" 'QUICK_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"'
 assert_file_contains "$tunnel_start" 'QUICK_LOG="$LOG_DIR/cloudflared-quick-current.log"'
 
@@ -375,9 +375,24 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
 PY
 quick_health_pid=$!
+quick_health_ready=false
+for _ in {1..50}; do
+  if /usr/bin/curl -fsS --max-time 1 "http://127.0.0.1:$quick_runtime_port/healthz" >/dev/null 2>&1; then
+    quick_health_ready=true
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$quick_health_ready" != true ]]; then
+  kill "$quick_health_pid" >/dev/null 2>&1 || true
+  wait "$quick_health_pid" 2>/dev/null || true
+  print -u2 -- "Quick Tunnel fake health server did not become ready"
+  exit 1
+fi
 if ! env -i \
   HOME="$quick_runtime_home" \
   PATH="$quick_runtime_bin:$TEST_PATH" \
+  AGENTDOCK_LAUNCHCTL_BIN="$quick_runtime_bin/launchctl" \
   zsh "$quick_runtime_support/start-cloudflared.sh"; then
   kill "$quick_health_pid" >/dev/null 2>&1 || true
   wait "$quick_health_pid" 2>/dev/null || true

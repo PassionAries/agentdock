@@ -718,8 +718,10 @@ TUNNEL_ENV="$APP_SUPPORT_DIR/cloudflared.env"
 QUICK_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"
 QUICK_LOG="$LOG_DIR/cloudflared-quick-current.log"
 AGENTDOCK_LABEL="com.uvwt.agentdock"
+LAUNCHCTL_BIN="${AGENTDOCK_LAUNCHCTL_BIN:-/bin/launchctl}"
 [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || { print -u2 -- "AgentDock agentdock.env 不可用：$AGENTDOCK_ENV"; exit 1; }
 [[ -f "$TUNNEL_ENV" && ! -L "$TUNNEL_ENV" ]] || { print -u2 -- "AgentDock cloudflared.env 不可用：$TUNNEL_ENV"; exit 1; }
+[[ -f "$LAUNCHCTL_BIN" && ! -L "$LAUNCHCTL_BIN" && -x "$LAUNCHCTL_BIN" ]] || { print -u2 -- "launchctl 不可用：$LAUNCHCTL_BIN"; exit 1; }
 
 unset AGENTDOCK_TUNNEL_MODE AGENTDOCK_TUNNEL_TARGET TUNNEL_TOKEN
 set -a
@@ -785,7 +787,7 @@ sync_quick_url() {
   local domain="gui/$(id -u)"
   local attempts=20
   while (( attempts-- > 0 )); do
-    if launchctl kickstart -k "$domain/$AGENTDOCK_LABEL" >/dev/null 2>&1 && wait_for_agentdock; then
+    if "$LAUNCHCTL_BIN" kickstart -k "$domain/$AGENTDOCK_LABEL" >/dev/null 2>&1 && wait_for_agentdock; then
       local tmp_file="$QUICK_URL_FILE.tmp.$$"
       print -r -- "$public_url" > "$tmp_file"
       chmod 0600 "$tmp_file"
