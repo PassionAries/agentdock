@@ -386,7 +386,7 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"-TunnelTokenFile ",
 		"-DeleteTunnelTokenFile",
 		"-InstallChannel setup",
-		"#if SignedBuild == 1",
+		"#ifdef SignedBuild",
 		"SignedUninstaller=yes",
 		"DeinitializeSetup",
 		"function InitializeUninstall(): Boolean",

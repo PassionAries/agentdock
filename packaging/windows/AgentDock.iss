@@ -6,10 +6,6 @@
 #define OutputDir "..\..\dist"
 #endif
 
-#ifndef SignedBuild
-#define SignedBuild 0
-#endif
-
 [Setup]
 AppId={{D6788C7A-4104-48D4-B5C3-F4858B5606EA}
 AppName=AgentDock
@@ -32,7 +28,7 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
-#if SignedBuild == 1
+#ifdef SignedBuild
 SignTool=agentdock-sign
 SignedUninstaller=yes
 #endif

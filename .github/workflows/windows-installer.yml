@@ -144,7 +144,6 @@ jobs:
           & $iscc `
             "/DAppVersion=$($match.Groups[1].Value)" `
             "/DOutputDir=$outputDir" `
-            '/DSignedBuild=0' `
             '.\packaging\windows\AgentDock.iss'
           if ($LASTEXITCODE -ne 0) {
             throw "ISCC failed with exit code $LASTEXITCODE."
