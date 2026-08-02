@@ -196,6 +196,15 @@ try {
     }
 
     Write-Host 'AgentDock Setup install, health check, and uninstall passed.'
+} catch {
+    foreach ($log in @($setupLogPath, $uninstallLogPath)) {
+        if (Test-Path -LiteralPath $log -PathType Leaf) {
+            Write-Host "----- failure log: $log -----"
+            Get-Content -LiteralPath $log | Write-Host
+            Write-Host "----- end failure log -----"
+        }
+    }
+    throw
 } finally {
     $env:AGENTDOCK_RELEASE_BASE_URL = $oldReleaseBaseUrl
     foreach ($process in @($setupProcess, $uninstallProcess)) {

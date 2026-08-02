@@ -390,6 +390,8 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"SignedUninstaller=yes",
 		"DeinitializeSetup",
 		"function InitializeUninstall(): Boolean",
+		"procedure CurUninstallStepChanged",
+		"GetUninstallParameters('')",
 		"PurgeStateQuestion",
 		"Bearer Token：",
 	} {

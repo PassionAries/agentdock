@@ -71,6 +71,8 @@ english.PublicMCP=Public MCP URL:
 english.BearerToken=Bearer Token:
 english.OAuthPassword=OAuth login password:
 english.PurgeStateQuestion=Also delete tasks, Skills, configuration, and the default working directory? Choose No to keep user data.
+english.UninstallScriptMissing=The AgentDock uninstall script is missing.
+english.UninstallScriptFailed=The AgentDock cleanup script failed with exit code:
 english.ZHDocsShortcut=AgentDock 使用文档
 english.ZHUninstallShortcut=卸载 AgentDock
 english.ZHStartupPageCaption=启动方式
@@ -104,6 +106,8 @@ english.ZHPublicMCP=公网 MCP 地址：
 english.ZHBearerToken=Bearer Token：
 english.ZHOAuthPassword=OAuth 登录密码：
 english.ZHPurgeStateQuestion=是否同时删除任务、Skill、配置和默认工作目录？选择“否”将保留用户数据。
+english.ZHUninstallScriptMissing=AgentDock 卸载脚本不存在。
+english.ZHUninstallScriptFailed=AgentDock 清理脚本执行失败，退出码：
 
 [Files]
 Source: "..\..\scripts\install.ps1"; Flags: dontcopy
@@ -115,9 +119,6 @@ Source: "assets\agentdock.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
 Name: "{group}\AgentDock"; Filename: "{app}\bin\agentdock-tray.exe"; WorkingDir: "{app}"
 Name: "{group}\{code:GetLocalizedMessage|DocsShortcut}"; Filename: "https://uvwt.github.io/agentdock-docs/"
 Name: "{group}\{code:GetLocalizedMessage|UninstallShortcut}"; Filename: "{uninstallexe}"
-
-[UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "{code:GetUninstallParameters}"; Flags: runhidden waituntilterminated; RunOnceId: "AgentDockUninstall"
 
 [Code]
 var
@@ -466,6 +467,35 @@ begin
     ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}\bin'));
   if PurgeState then
     Result := Result + ' -PurgeState';
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  PowerShellPath: String;
+  ScriptPath: String;
+  ExitCode: Integer;
+begin
+  if CurUninstallStep <> usUninstall then
+    Exit;
+
+  ScriptPath := ExpandConstant('{app}\installer\uninstall-windows.ps1');
+  if not FileExists(ScriptPath) then
+    RaiseException(GetLocalizedMessage('UninstallScriptMissing'));
+
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  if not Exec(
+    PowerShellPath,
+    GetUninstallParameters(''),
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ExitCode
+  ) then
+    RaiseException(GetLocalizedMessage('UninstallScriptFailed') + ' start');
+  if ExitCode <> 0 then
+    RaiseException(
+      GetLocalizedMessage('UninstallScriptFailed') + ' ' + IntToStr(ExitCode)
+    );
 end;
 
 procedure DeinitializeSetup();
