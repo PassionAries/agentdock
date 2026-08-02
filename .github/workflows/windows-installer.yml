@@ -128,6 +128,44 @@ jobs:
           go build -trimpath -o dist\agentdock.exe .\cmd\agentdock
           go build -trimpath -ldflags '-H=windowsgui' -o dist\agentdock-tray.exe .\cmd\agentdock-tray
 
+      - name: Test configured Authenticode certificate
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+            Write-Host 'Windows signing secrets are not configured; skipping Authenticode integration test.'
+            exit 0
+          }
+
+          $paths = @('.\dist\agentdock.exe', '.\dist\agentdock-tray.exe')
+          .\scripts\sign-windows.ps1 -Path $paths
+          .\scripts\sign-windows.ps1 -Path $paths -VerifyOnly
+
+          $signer = (Get-AuthenticodeSignature -LiteralPath $paths[0]).SignerCertificate
+          foreach ($storeName in @('Root', 'TrustedPublisher')) {
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+              $storeName,
+              [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+            )
+            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+            try {
+              $matches = $store.Certificates.Find(
+                [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+                $signer.Thumbprint,
+                $false
+              )
+              if ($matches.Count -ne 0) {
+                throw "Temporary Authenticode trust remained in CurrentUser\$storeName."
+              }
+            } finally {
+              $store.Close()
+            }
+          }
+
       - name: Compile unsigned Setup
         shell: pwsh
         run: |

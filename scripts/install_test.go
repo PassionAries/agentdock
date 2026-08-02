@@ -412,6 +412,47 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 	}
 }
 
+func TestWindowsSigningTemporarilyTrustsSelfSignedCertificate(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("sign-windows.ps1"))
+	if err != nil {
+		t.Fatalf("read sign-windows.ps1: %v", err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		"SignerCertificate",
+		"$signer.Subject -eq $signer.Issuer",
+		"@('Root', 'TrustedPublisher')",
+		"StoreLocation]::CurrentUser",
+		"Remove-TemporaryTrust",
+		"signtool verify failed",
+		"$signature.Status -ne 'Valid'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("sign-windows.ps1 missing self-signed verification requirement %q", want)
+		}
+	}
+}
+
+func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "windows-installer.yml"))
+	if err != nil {
+		t.Fatalf("read Windows installer workflow: %v", err)
+	}
+	workflow := string(data)
+	for _, want := range []string{
+		"Test configured Authenticode certificate",
+		"WINDOWS_SIGNING_CERT_BASE64",
+		"WINDOWS_SIGNING_CERT_PASSWORD",
+		"sign-windows.ps1 -Path $paths",
+		"sign-windows.ps1 -Path $paths -VerifyOnly",
+		"Temporary Authenticode trust remained",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("windows-installer.yml missing Authenticode integration check %q", want)
+		}
+	}
+}
+
 func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
 	if err != nil {
