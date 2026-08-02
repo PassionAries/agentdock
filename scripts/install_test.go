@@ -226,6 +226,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 	script := string(data)
 	for _, want := range []string{
 		"Stop-ProcessByPath -ProcessName 'agentdock-tray'",
+		"[switch] $KeepInstallDir",
 		"Remove-DirectoryWithRetry -Path $InstallDir",
 		"Stop-ProcessByPath -ProcessName 'cloudflared'",
 		"Remove-ItemProperty -LiteralPath $runKey -Name $TrayStartupValueName",
@@ -395,6 +396,8 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"usAppMutexCheck",
 		"managed cleanup completed successfully",
 		"GetUninstallParameters('')",
+		"[UninstallDelete]",
+		"-KeepInstallDir",
 		"PurgeStateQuestion",
 		"Bearer Token：",
 	} {

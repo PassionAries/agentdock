@@ -115,6 +115,9 @@ Source: "..\..\scripts\install.ps1"; DestDir: "{app}\installer"; Flags: ignoreve
 Source: "..\..\scripts\uninstall-windows.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "assets\agentdock.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\bin"
+
 [Icons]
 Name: "{group}\AgentDock"; Filename: "{app}\bin\agentdock-tray.exe"; WorkingDir: "{app}"
 Name: "{group}\{code:GetLocalizedMessage|DocsShortcut}"; Filename: "https://uvwt.github.io/agentdock-docs/"
@@ -466,7 +469,8 @@ function GetUninstallParameters(Param: String): String;
 begin
   Result := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
     QuoteArgument(ExpandConstant('{app}\installer\uninstall-windows.ps1')) +
-    ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}\bin'));
+    ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}\bin')) +
+    ' -KeepInstallDir';
   if PurgeState then
     Result := Result + ' -PurgeState';
 end;

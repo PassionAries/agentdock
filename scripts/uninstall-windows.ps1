@@ -2,6 +2,7 @@
 param(
     [string] $InstallDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AgentDock\bin'),
     [switch] $PurgeState,
+    [switch] $KeepInstallDir,
     [string] $StartupValueName = 'AgentDock',
     [string] $CloudflaredStartupValueName = 'AgentDockCloudflared',
     [string] $TrayStartupValueName = 'AgentDockTray'
@@ -103,7 +104,9 @@ if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'Age
     }
 }
 
-Remove-DirectoryWithRetry -Path $InstallDir
+if (-not $KeepInstallDir) {
+    Remove-DirectoryWithRetry -Path $InstallDir
+}
 foreach ($name in @(
     'start-agentdock.ps1',
     'start-cloudflared.ps1',
