@@ -8,60 +8,45 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Add-TemporaryTrust {
-    param(
-        [Parameter(Mandatory = $true)]
-        [System.Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
-        [Parameter(Mandatory = $true)]
-        [string] $StoreName
-    )
-
-    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-        $StoreName,
-        [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-    )
-    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-    try {
-        $existing = $store.Certificates.Find(
-            [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-            $Certificate.Thumbprint,
-            $false
-        )
-        if ($existing.Count -gt 0) {
-            return $false
-        }
-        $store.Add($Certificate)
-        return $true
-    } finally {
-        $store.Close()
+function Get-ExpectedSigningCertificate {
+    if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64)) {
+        return $null
     }
+    if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+        throw 'WINDOWS_SIGNING_CERT_PASSWORD is required when WINDOWS_SIGNING_CERT_BASE64 is configured.'
+    }
+
+    $bytes = [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64)
+    return [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+        $bytes,
+        $env:WINDOWS_SIGNING_CERT_PASSWORD,
+        [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+    )
 }
 
-function Remove-TemporaryTrust {
+function Test-IsExpectedSelfSignedTrustFailure {
     param(
         [Parameter(Mandatory = $true)]
-        [string] $Thumbprint,
+        $Signature,
         [Parameter(Mandatory = $true)]
-        [string] $StoreName
+        [string] $SignToolOutput
     )
 
-    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-        $StoreName,
-        [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-    )
-    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-    try {
-        $matches = $store.Certificates.Find(
-            [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-            $Thumbprint,
-            $false
-        )
-        foreach ($certificate in $matches) {
-            $store.Remove($certificate)
-        }
-    } finally {
-        $store.Close()
+    if (-not $Signature.SignerCertificate) {
+        return $false
     }
+    if ($Signature.SignerCertificate.Subject -ne $Signature.SignerCertificate.Issuer) {
+        return $false
+    }
+    if (@('UnknownError', 'NotTrusted') -notcontains [string] $Signature.Status) {
+        return $false
+    }
+
+    $trustPattern = '(?is)certificate chain processed.*terminated in a root.*not trusted|certificate chain.*not trusted|untrustedroot'
+    return (
+        ([string] $Signature.StatusMessage -match $trustPattern) -and
+        ($SignToolOutput -match $trustPattern)
+    )
 }
 
 $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
@@ -74,15 +59,12 @@ if (-not $signTool) {
 $resolvedPaths = @($Path | ForEach-Object {
     (Resolve-Path -LiteralPath $_ -ErrorAction Stop).Path
 })
-$temporaryTrust = [System.Collections.Generic.List[object]]::new()
+$expectedCertificate = Get-ExpectedSigningCertificate
 
 try {
     if (-not $VerifyOnly) {
-        if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64)) {
+        if (-not $expectedCertificate) {
             throw 'WINDOWS_SIGNING_CERT_BASE64 is required.'
-        }
-        if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
-            throw 'WINDOWS_SIGNING_CERT_PASSWORD is required.'
         }
 
         $pfx = Join-Path $env:RUNNER_TEMP ("agentdock-signing-" + [Guid]::NewGuid().ToString('N') + '.pfx')
@@ -110,32 +92,40 @@ try {
         if (-not $initialSignature.SignerCertificate) {
             throw "Authenticode signer certificate is missing for $item."
         }
-
-        $signer = $initialSignature.SignerCertificate
-        if ($signer.Subject -eq $signer.Issuer) {
-            Write-Host "Temporarily trusting self-signed Authenticode publisher $($signer.Subject)."
-            foreach ($storeName in @('TrustedPeople', 'TrustedPublisher')) {
-                if (Add-TemporaryTrust -Certificate $signer -StoreName $storeName) {
-                    $temporaryTrust.Add([pscustomobject]@{
-                        StoreName = $storeName
-                        Thumbprint = $signer.Thumbprint
-                    })
-                }
-            }
+        if ($expectedCertificate -and
+            $initialSignature.SignerCertificate.Thumbprint -ne $expectedCertificate.Thumbprint) {
+            throw "Authenticode signer certificate does not match the configured certificate for $item."
         }
 
         Write-Host "Verifying Authenticode signature: $item"
-        & $signTool.FullName verify /pa /all /v $item
-        if ($LASTEXITCODE -ne 0) {
-            throw "signtool verify failed for $item with exit code $LASTEXITCODE."
-        }
+        $verifyOutput = @(& $signTool.FullName verify /pa /all /v $item 2>&1)
+        $verifyExitCode = $LASTEXITCODE
+        $verifyText = $verifyOutput | Out-String
+        $verifyOutput | ForEach-Object { Write-Host $_ }
+
         $signature = Get-AuthenticodeSignature -LiteralPath $item
-        if ($signature.Status -ne 'Valid') {
-            throw "Authenticode signature is not valid for ${item}: $($signature.Status)"
+        if ($expectedCertificate -and
+            $signature.SignerCertificate.Thumbprint -ne $expectedCertificate.Thumbprint) {
+            throw "Verified Authenticode signer certificate does not match the configured certificate for $item."
         }
+
+        if ($verifyExitCode -eq 0 -and $signature.Status -eq 'Valid') {
+            continue
+        }
+
+        if ($expectedCertificate -and
+            (Test-IsExpectedSelfSignedTrustFailure -Signature $signature -SignToolOutput $verifyText)) {
+            Write-Warning "Accepted self-signed AgentDock certificate for ${item}: signer identity and file signature are valid, but Windows does not trust the certificate chain."
+            continue
+        }
+
+        if ($verifyExitCode -ne 0) {
+            throw "signtool verify failed for $item with exit code $verifyExitCode."
+        }
+        throw "Authenticode signature is not valid for ${item}: $($signature.Status)"
     }
 } finally {
-    foreach ($entry in @($temporaryTrust)) {
-        Remove-TemporaryTrust -Thumbprint $entry.Thumbprint -StoreName $entry.StoreName
+    if ($expectedCertificate) {
+        $expectedCertificate.Dispose()
     }
 }

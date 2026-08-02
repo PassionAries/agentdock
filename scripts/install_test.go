@@ -412,23 +412,28 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 	}
 }
 
-func TestWindowsSigningTemporarilyTrustsSelfSignedCertificate(t *testing.T) {
+func TestWindowsSigningPinsConfiguredSelfSignedCertificate(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("sign-windows.ps1"))
 	if err != nil {
 		t.Fatalf("read sign-windows.ps1: %v", err)
 	}
 	script := string(data)
 	for _, want := range []string{
-		"SignerCertificate",
-		"$signer.Subject -eq $signer.Issuer",
-		"@('TrustedPeople', 'TrustedPublisher')",
-		"StoreLocation]::CurrentUser",
-		"Remove-TemporaryTrust",
+		"SignerCertificate.Thumbprint -ne $expectedCertificate.Thumbprint",
+		"Test-IsExpectedSelfSignedTrustFailure",
+		"@('UnknownError', 'NotTrusted')",
+		"certificate chain processed",
+		"$signature.Status -eq 'Valid'",
 		"signtool verify failed",
-		"$signature.Status -ne 'Valid'",
+		"X509KeyStorageFlags]::EphemeralKeySet",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("sign-windows.ps1 missing self-signed verification requirement %q", want)
+		}
+	}
+	for _, forbidden := range []string{"StoreLocation]::CurrentUser", "TrustedPublisher", "TrustedPeople"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("sign-windows.ps1 must not modify Windows trust stores: %q", forbidden)
 		}
 	}
 }
@@ -445,7 +450,6 @@ func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T
 		"WINDOWS_SIGNING_CERT_PASSWORD",
 		"sign-windows.ps1 -Path $paths",
 		"sign-windows.ps1 -Path $paths -VerifyOnly",
-		"Temporary Authenticode trust remained",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("windows-installer.yml missing Authenticode integration check %q", want)

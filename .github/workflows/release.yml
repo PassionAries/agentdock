@@ -574,6 +574,9 @@ jobs:
 
       - name: Verify published Setup signature
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
           .\scripts\sign-windows.ps1 -Path $env:PUBLISHED_SETUP -VerifyOnly
 

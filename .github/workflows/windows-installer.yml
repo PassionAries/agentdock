@@ -145,27 +145,6 @@ jobs:
           .\scripts\sign-windows.ps1 -Path $paths
           .\scripts\sign-windows.ps1 -Path $paths -VerifyOnly
 
-          $signer = (Get-AuthenticodeSignature -LiteralPath $paths[0]).SignerCertificate
-          foreach ($storeName in @('TrustedPeople', 'TrustedPublisher')) {
-            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-              $storeName,
-              [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-            )
-            $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-            try {
-              $matches = $store.Certificates.Find(
-                [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-                $signer.Thumbprint,
-                $false
-              )
-              if ($matches.Count -ne 0) {
-                throw "Temporary Authenticode trust remained in CurrentUser\$storeName."
-              }
-            } finally {
-              $store.Close()
-            }
-          }
-
       - name: Compile unsigned Setup
         shell: pwsh
         run: |
