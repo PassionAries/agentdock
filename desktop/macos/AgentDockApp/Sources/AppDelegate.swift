@@ -9,7 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var currentStatus = ServiceStatus.missing
     private var timer: Timer?
-    private lazy var setupWindow = SetupWindowController { [weak self] in
+    private lazy var setupWindow = SetupWindowController(
+        service: service,
+        menuLoginAgent: menuLoginAgent
+    ) { [weak self] in
         self?.refreshStatus()
     }
 
@@ -29,8 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func registerLoginItemIfNeeded() {
+        if ProcessInfo.processInfo.environment["AGENTDOCK_SKIP_LOGIN_ITEM_CONFIGURATION"] == "1" {
+            return
+        }
         do {
-            try menuLoginAgent.register()
+            try menuLoginAgent.configureOnLaunch()
         } catch {
             // 登录项失败不影响核心 LaunchAgent；用户仍可手动打开菜单栏 App。
             NSLog("AgentDock 菜单栏登录项注册失败：%@", error.localizedDescription)
@@ -53,6 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.rebuildMenu()
                 if showWindow {
                     self.setupWindow.present(status: status)
+                } else if self.setupWindow.window?.isVisible == true {
+                    self.setupWindow.refreshServiceStatus(status)
                 }
             }
         }
@@ -80,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusMenuItem)
         menu.addItem(.separator())
 
-        menu.addItem(item("安装或配置…", #selector(showSetup)))
+        menu.addItem(item(currentStatus.installed ? "打开 AgentDock" : "安装 AgentDock…", #selector(showSetup)))
         if currentStatus.installed {
             let local = item("复制本地 MCP 地址", #selector(copyLocalMCP))
             local.isEnabled = currentStatus.configuration?.localMCPURL != nil

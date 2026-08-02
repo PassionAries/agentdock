@@ -142,7 +142,9 @@ See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-sta
 
 Regular macOS users can download `AgentDock-macos-universal.zip` from GitHub Releases, extract it, and drag `AgentDock.app` into Applications. This free build uses an ad-hoc signature and is not notarized by Apple, so the first launch requires right-clicking the app and choosing **Open**. No terminal or administrator privileges are needed after that.
 
-The first-launch interface offers local-only, temporary public access, and a fixed Cloudflare hostname. The hostname and Tunnel Token are entered in graphical fields. The token reaches the installer through a current-user-only temporary file and never appears in process arguments. After setup, the menu bar app provides status, MCP URL copy actions, start, stop, restart, update, and log access.
+The first-launch interface offers local-only, temporary public access, and a fixed Cloudflare hostname. The hostname and Tunnel Token are entered in graphical fields. The token reaches the installer through a current-user-only temporary file and never appears in process arguments.
+
+After setup, the main control panel shows service health, version, local and public MCP URLs, plus masked Bearer and OAuth credentials with dedicated reveal and copy actions. It also provides start, stop, restart, update, and log access. Advanced settings manage the service port, log level, optional Nexus endpoint and token, browser automation, and separate login-startup switches for the AgentDock service and menu bar app. Enabling browser automation installs and verifies the required browser runner automatically; disabling it keeps the installed support files for later reuse.
 
 ### Public access with Cloudflare Tunnel
 

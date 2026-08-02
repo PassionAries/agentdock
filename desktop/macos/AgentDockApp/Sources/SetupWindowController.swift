@@ -1,44 +1,79 @@
 import AppKit
 import Foundation
 
-final class SetupWindowController: NSWindowController {
+@MainActor
+final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let installer = InstallerRunner()
-    private let onInstalled: () -> Void
+    private let service: ServiceController
+    private let menuLoginAgent: MenuLoginAgentController
+    private let onChanged: () -> Void
 
-    private let titleLabel = NSTextField(labelWithString: "安装 AgentDock")
-    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
-    private let localButton = NSButton(radioButtonWithTitle: TunnelMode.local.title, target: nil, action: nil)
-    private let quickButton = NSButton(radioButtonWithTitle: TunnelMode.quick.title, target: nil, action: nil)
-    private let namedButton = NSButton(radioButtonWithTitle: TunnelMode.named.title, target: nil, action: nil)
-    private let modeDescription = NSTextField(labelWithString: TunnelMode.local.detail)
-    private let serverURLField = NSTextField(string: "")
-    private let tokenField = NSSecureTextField(string: "")
+    private let titleLabel = NSTextField(labelWithString: "AgentDock")
+    private let subtitleLabel = NSTextField(labelWithString: "本机 MCP 服务与公网连接管理")
+    private let stateLabel = NSTextField(labelWithString: "未安装")
+
+    private let serviceSection = NSStackView()
+    private let localAddress = NSTextField(labelWithString: "未安装")
+    private let publicAddress = NSTextField(labelWithString: "未启用")
+    private let authToken = NSTextField(labelWithString: "未生成")
+    private let oauthPassword = NSTextField(labelWithString: "未生成")
+    private let authReveal = NSButton(title: "显示", target: nil, action: nil)
+    private let oauthReveal = NSButton(title: "显示", target: nil, action: nil)
+    private let startStopButton = NSButton(title: "启动服务", target: nil, action: nil)
+    private let restartButton = NSButton(title: "重新启动", target: nil, action: nil)
+    private let updateButton = NSButton(title: "检查更新", target: nil, action: nil)
+
+    private let publicMode = NSSegmentedControl(
+        labels: ["仅本机", "临时地址", "固定域名"],
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
+    private let modeDescription = NSTextField(wrappingLabelWithString: "")
     private let namedFields = NSStackView()
-    private let installButton = NSButton(title: "安装并启动", target: nil, action: nil)
+    private let serverURLField = NSTextField(string: "")
+    private let tunnelTokenField = NSSecureTextField(string: "")
+
     private let progress = NSProgressIndicator()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
-    private let resultStack = NSStackView()
-    private let localResult = NSTextField(labelWithString: "")
-    private let publicResult = NSTextField(labelWithString: "")
-    private let tokenResult = NSTextField(labelWithString: "")
-    private let oauthResult = NSTextField(labelWithString: "")
-    private let revealSecretsButton = NSButton(title: "显示凭据", target: nil, action: nil)
+    private let applyButton = NSButton(title: "安装并启动", target: nil, action: nil)
+    private let advancedButton = NSButton(title: "高级设置…", target: nil, action: nil)
+    private let logsButton = NSButton(title: "打开日志", target: nil, action: nil)
+
+    private var currentStatus = ServiceStatus.missing
+    private var initialMode: TunnelMode = .local
+    private var initialServerURL = ""
     private var authTokenValue = ""
     private var oauthPasswordValue = ""
-    private var secretsVisible = false
+    private var authVisible = false
+    private var oauthVisible = false
+    private var isBusy = false
 
-    init(onInstalled: @escaping () -> Void) {
-        self.onInstalled = onInstalled
+    private lazy var advancedSettings = AdvancedSettingsWindowController(
+        service: service,
+        menuLoginAgent: menuLoginAgent,
+        onChanged: onChanged
+    )
+
+    init(
+        service: ServiceController,
+        menuLoginAgent: MenuLoginAgentController,
+        onChanged: @escaping () -> Void
+    ) {
+        self.service = service
+        self.menuLoginAgent = menuLoginAgent
+        self.onChanged = onChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 590),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "AgentDock"
-        window.center()
         window.isReleasedWhenClosed = false
+        window.center()
         super.init(window: window)
+        window.delegate = self
         configureUI()
     }
 
@@ -47,10 +82,63 @@ final class SetupWindowController: NSWindowController {
     }
 
     func present(status: ServiceStatus) {
-        resetForPresentation(status: status)
+        update(status: status)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func update(status: ServiceStatus) {
+        currentStatus = status
+        authVisible = false
+        oauthVisible = false
+        statusLabel.isHidden = true
+        setBusy(false)
+
+        if status.installed {
+            titleLabel.stringValue = "AgentDock"
+            subtitleLabel.stringValue = "本机 MCP 服务与公网连接管理"
+            applyButton.title = "应用更改"
+            advancedButton.isEnabled = true
+            logsButton.isEnabled = true
+            serviceSection.isHidden = false
+            updateServiceSection(status)
+            selectCurrentMode(configuration: status.configuration)
+        } else {
+            titleLabel.stringValue = "安装 AgentDock"
+            subtitleLabel.stringValue = "无需终端或管理员权限，安装后自动作为用户服务运行"
+            stateLabel.stringValue = "● 未安装"
+            stateLabel.textColor = .secondaryLabelColor
+            applyButton.title = "安装并启动"
+            applyButton.isEnabled = true
+            advancedButton.isEnabled = false
+            logsButton.isEnabled = false
+            serviceSection.isHidden = true
+            authTokenValue = ""
+            oauthPasswordValue = ""
+            select(mode: .local)
+        }
+        refreshCredentialFields()
+        refreshChangeState()
+        updateWindowHeight()
+    }
+
+    func refreshServiceStatus(_ status: ServiceStatus) {
+        let installationChanged = currentStatus.installed != status.installed
+        currentStatus = status
+        if installationChanged {
+            update(status: status)
+            return
+        }
+        guard status.installed else { return }
+        updateServiceSection(status)
+        refreshCredentialFields()
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        authVisible = false
+        oauthVisible = false
+        refreshCredentialFields()
     }
 
     private func configureUI() {
@@ -58,188 +146,211 @@ final class SetupWindowController: NSWindowController {
 
         titleLabel.font = .systemFont(ofSize: 25, weight: .semibold)
         subtitleLabel.textColor = .secondaryLabelColor
+        stateLabel.alignment = .right
+        stateLabel.font = .systemFont(ofSize: 13, weight: .medium)
 
-        for button in [localButton, quickButton, namedButton] {
-            button.target = self
-            button.action = #selector(modeChanged(_:))
-            button.setButtonType(.radio)
+        let headerText = NSStackView(views: [titleLabel, subtitleLabel])
+        headerText.orientation = .vertical
+        headerText.alignment = .leading
+        headerText.spacing = 3
+        let header = NSStackView(views: [headerText, NSView(), stateLabel])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.widthAnchor.constraint(equalToConstant: 564).isActive = true
+
+        for field in [localAddress, publicAddress, authToken, oauthPassword] {
+            field.lineBreakMode = .byTruncatingMiddle
+            field.isSelectable = true
+            field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         }
-        localButton.state = .on
 
-        let modeStack = NSStackView(views: [localButton, quickButton, namedButton])
-        modeStack.orientation = .vertical
-        modeStack.alignment = .leading
-        modeStack.spacing = 10
+        authReveal.bezelStyle = .inline
+        authReveal.target = self
+        authReveal.action = #selector(toggleAuthToken)
+        oauthReveal.bezelStyle = .inline
+        oauthReveal.target = self
+        oauthReveal.action = #selector(toggleOAuthPassword)
 
+        serviceSection.orientation = .vertical
+        serviceSection.alignment = .leading
+        serviceSection.spacing = 8
+        serviceSection.addArrangedSubview(sectionTitle("连接信息"))
+        serviceSection.addArrangedSubview(valueRow(title: "本地 MCP", field: localAddress, actions: [copyButton(#selector(copyLocalAddress))]))
+        serviceSection.addArrangedSubview(valueRow(title: "公网 MCP", field: publicAddress, actions: [copyButton(#selector(copyPublicAddress))]))
+        serviceSection.addArrangedSubview(valueRow(title: "Bearer Token", field: authToken, actions: [authReveal, copyButton(#selector(copyAuthToken))]))
+        serviceSection.addArrangedSubview(valueRow(title: "OAuth 密码", field: oauthPassword, actions: [oauthReveal, copyButton(#selector(copyOAuthPassword))]))
+
+        startStopButton.target = self
+        startStopButton.action = #selector(startStopPressed)
+        restartButton.target = self
+        restartButton.action = #selector(restartPressed)
+        updateButton.target = self
+        updateButton.action = #selector(updatePressed)
+        let serviceActions = NSStackView(views: [startStopButton, restartButton, updateButton])
+        serviceActions.orientation = .horizontal
+        serviceActions.spacing = 8
+        serviceSection.addArrangedSubview(serviceActions)
+
+        publicMode.target = self
+        publicMode.action = #selector(modeChanged)
+        publicMode.segmentStyle = .rounded
+        publicMode.widthAnchor.constraint(equalToConstant: 360).isActive = true
         modeDescription.textColor = .secondaryLabelColor
-        modeDescription.lineBreakMode = .byWordWrapping
+        modeDescription.font = .systemFont(ofSize: 12)
+        modeDescription.widthAnchor.constraint(equalToConstant: 564).isActive = true
 
-        let serverLabel = NSTextField(labelWithString: "公网地址")
-        serverLabel.font = .systemFont(ofSize: 13, weight: .medium)
         serverURLField.placeholderString = "https://mini.example.com"
-        let tokenLabel = NSTextField(labelWithString: "Cloudflare Tunnel Token")
-        tokenLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        tokenField.placeholderString = "粘贴 Tunnel Token"
+        tunnelTokenField.placeholderString = "粘贴 Cloudflare Tunnel Token"
+        serverURLField.widthAnchor.constraint(equalToConstant: 430).isActive = true
+        tunnelTokenField.widthAnchor.constraint(equalToConstant: 430).isActive = true
+        serverURLField.target = self
+        serverURLField.action = #selector(configurationEdited)
+        tunnelTokenField.target = self
+        tunnelTokenField.action = #selector(configurationEdited)
 
         namedFields.orientation = .vertical
         namedFields.alignment = .leading
-        namedFields.spacing = 6
-        namedFields.addArrangedSubview(serverLabel)
-        namedFields.addArrangedSubview(serverURLField)
-        namedFields.addArrangedSubview(tokenLabel)
-        namedFields.addArrangedSubview(tokenField)
-        namedFields.isHidden = true
-        serverURLField.widthAnchor.constraint(equalToConstant: 500).isActive = true
-        tokenField.widthAnchor.constraint(equalToConstant: 500).isActive = true
-
-        installButton.bezelStyle = .rounded
-        installButton.keyEquivalent = "\r"
-        installButton.target = self
-        installButton.action = #selector(installPressed)
+        namedFields.spacing = 7
+        namedFields.addArrangedSubview(formRow(title: "公网地址", control: serverURLField))
+        namedFields.addArrangedSubview(formRow(title: "Tunnel Token", control: tunnelTokenField))
 
         progress.style = .spinning
         progress.controlSize = .small
         progress.isDisplayedWhenStopped = false
-
         statusLabel.textColor = .secondaryLabelColor
+        statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.isHidden = true
 
-        resultStack.orientation = .vertical
-        resultStack.alignment = .leading
-        resultStack.spacing = 8
-        resultStack.isHidden = true
-        resultStack.addArrangedSubview(resultRow(title: "本地 MCP", valueField: localResult, action: #selector(copyLocalResult)))
-        resultStack.addArrangedSubview(resultRow(title: "公网 MCP", valueField: publicResult, action: #selector(copyPublicResult)))
-        resultStack.addArrangedSubview(resultRow(title: "Bearer Token", valueField: tokenResult, action: #selector(copyTokenResult)))
-        resultStack.addArrangedSubview(resultRow(title: "OAuth 登录密码", valueField: oauthResult, action: #selector(copyOAuthResult)))
-        revealSecretsButton.bezelStyle = .inline
-        revealSecretsButton.target = self
-        revealSecretsButton.action = #selector(toggleSecrets)
-        resultStack.addArrangedSubview(revealSecretsButton)
+        logsButton.bezelStyle = .inline
+        logsButton.target = self
+        logsButton.action = #selector(openLogsPressed)
+        advancedButton.bezelStyle = .inline
+        advancedButton.target = self
+        advancedButton.action = #selector(openAdvancedPressed)
+        applyButton.bezelStyle = .rounded
+        applyButton.keyEquivalent = "\r"
+        applyButton.target = self
+        applyButton.action = #selector(applyPressed)
 
-        let actionRow = NSStackView(views: [progress, installButton])
-        actionRow.orientation = .horizontal
-        actionRow.alignment = .centerY
-        actionRow.spacing = 10
+        let footer = NSStackView(views: [logsButton, advancedButton, progress, statusLabel, NSView(), applyButton])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.spacing = 10
+        footer.widthAnchor.constraint(equalToConstant: 564).isActive = true
 
         let root = NSStackView(views: [
-            titleLabel,
-            subtitleLabel,
+            header,
             separator(),
-            NSTextField(labelWithString: "连接方式"),
-            modeStack,
+            serviceSection,
+            separator(),
+            sectionTitle("公网访问"),
+            publicMode,
             modeDescription,
             namedFields,
             separator(),
-            actionRow,
-            statusLabel,
-            resultStack,
+            footer,
         ])
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 14
+        root.spacing = 12
         root.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(root)
 
         NSLayoutConstraint.activate([
             root.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 28),
             root.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -28),
-            root.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28),
-            root.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -28),
-            subtitleLabel.widthAnchor.constraint(equalTo: root.widthAnchor),
-            modeDescription.widthAnchor.constraint(equalTo: root.widthAnchor),
-            statusLabel.widthAnchor.constraint(equalTo: root.widthAnchor),
+            root.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            root.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -22),
         ])
     }
 
-    private func separator() -> NSBox {
-        let box = NSBox()
-        box.boxType = .separator
-        box.widthAnchor.constraint(equalToConstant: 500).isActive = true
-        return box
-    }
-
-    private func resultRow(title: String, valueField: NSTextField, action: Selector) -> NSView {
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 12, weight: .medium)
-        label.textColor = .secondaryLabelColor
-        valueField.lineBreakMode = .byTruncatingMiddle
-        valueField.isSelectable = true
-        valueField.widthAnchor.constraint(equalToConstant: 350).isActive = true
-        let copyButton = NSButton(title: "复制", target: self, action: action)
-        copyButton.bezelStyle = .inline
-        let row = NSStackView(views: [label, valueField, copyButton])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        label.widthAnchor.constraint(equalToConstant: 92).isActive = true
-        return row
-    }
-
-    private func resetForPresentation(status: ServiceStatus) {
-        statusLabel.isHidden = true
-        resultStack.isHidden = true
-        installButton.isEnabled = true
-        authTokenValue = ""
-        oauthPasswordValue = ""
-        secretsVisible = false
-        revealSecretsButton.title = "显示凭据"
-
-        if status.installed {
-            titleLabel.stringValue = "AgentDock"
-            if status.healthy {
-                subtitleLabel.stringValue = "AgentDock 正在运行，版本 \(status.version ?? "未知")。可以在这里修改连接方式并重新应用配置。"
-            } else if status.loaded {
-                subtitleLabel.stringValue = "AgentDock 已安装，但当前服务状态异常。可以重新应用配置或从菜单栏重启服务。"
-            } else {
-                subtitleLabel.stringValue = "AgentDock 已安装但已停止。可以重新应用配置，或从菜单栏启动服务。"
-            }
-            installButton.title = "应用配置并重启"
-            selectCurrentMode(configuration: status.configuration)
+    private func updateServiceSection(_ status: ServiceStatus) {
+        if status.healthy {
+            stateLabel.stringValue = "● 运行正常 · \(status.version ?? "未知版本")"
+            stateLabel.textColor = .systemGreen
+        } else if status.loaded {
+            stateLabel.stringValue = "● 服务异常"
+            stateLabel.textColor = .systemRed
         } else {
-            titleLabel.stringValue = "安装 AgentDock"
-            subtitleLabel.stringValue = "选择连接方式后，AgentDock 会自动安装后台服务并在登录后持续运行。无需打开终端，也不需要管理员权限。"
-            installButton.title = "安装并启动"
-            select(mode: .local)
+            stateLabel.stringValue = "● 已停止"
+            stateLabel.textColor = .secondaryLabelColor
+        }
+
+        let configuration = status.configuration
+        localAddress.stringValue = configuration?.localMCPURL?.absoluteString ?? "配置不可用"
+        publicAddress.stringValue = configuration?.publicMCPURL?.absoluteString ?? "未启用"
+        authTokenValue = configuration?.authToken ?? ""
+        oauthPasswordValue = configuration?.oauthPassword ?? ""
+        startStopButton.title = status.loaded ? "停止服务" : "启动服务"
+        if !isBusy {
+            startStopButton.isEnabled = status.installed
+            restartButton.isEnabled = status.installed
+            updateButton.isEnabled = status.installed
         }
     }
 
-    private func selectCurrentMode(configuration: RuntimeConfiguration?) {
+    private func selectCurrentMode(configuration: ServiceConfiguration?) {
         guard let publicURL = configuration?.publicURL, !publicURL.isEmpty else {
+            initialMode = .local
+            initialServerURL = ""
             select(mode: .local)
             return
         }
         if publicURL.contains(".trycloudflare.com") {
+            initialMode = .quick
+            initialServerURL = ""
             select(mode: .quick)
         } else {
+            initialMode = .named
+            initialServerURL = publicURL
             serverURLField.stringValue = publicURL
             select(mode: .named)
         }
+        tunnelTokenField.stringValue = ""
     }
 
     private func select(mode: TunnelMode) {
-        localButton.state = mode == .local ? .on : .off
-        quickButton.state = mode == .quick ? .on : .off
-        namedButton.state = mode == .named ? .on : .off
+        publicMode.selectedSegment = segment(for: mode)
         modeDescription.stringValue = mode.detail
         namedFields.isHidden = mode != .named
-    }
-
-    @objc private func modeChanged(_ sender: NSButton) {
-        for button in [localButton, quickButton, namedButton] where button !== sender {
-            button.state = .off
+        if mode == .named, currentStatus.installed, initialMode == .named {
+            tunnelTokenField.placeholderString = "留空表示保留现有 Tunnel Token"
+        } else {
+            tunnelTokenField.placeholderString = "粘贴 Cloudflare Tunnel Token"
         }
-        sender.state = .on
-        let mode = selectedMode
-        modeDescription.stringValue = mode.detail
-        namedFields.isHidden = mode != .named
+        updateWindowHeight()
     }
 
-    @objc private func installPressed() {
+    private func segment(for mode: TunnelMode) -> Int {
+        switch mode {
+        case .local: return 0
+        case .quick: return 1
+        case .named: return 2
+        }
+    }
+
+    private var selectedMode: TunnelMode {
+        switch publicMode.selectedSegment {
+        case 1: return .quick
+        case 2: return .named
+        default: return .local
+        }
+    }
+
+    @objc private func modeChanged() {
+        select(mode: selectedMode)
+        refreshChangeState()
+    }
+
+    @objc private func configurationEdited() { refreshChangeState() }
+
+    @objc private func applyPressed() {
+        let reuseToken = currentStatus.installed && initialMode == .named && selectedMode == .named
         let request = InstallRequest(
             mode: selectedMode,
             serverURL: serverURLField.stringValue,
-            tunnelToken: tokenField.stringValue
+            tunnelToken: tunnelTokenField.stringValue,
+            reuseExistingTunnelToken: reuseToken
         )
         do {
             _ = try request.validatedServerURL()
@@ -249,89 +360,199 @@ final class SetupWindowController: NSWindowController {
             return
         }
 
-        setInstalling(true)
+        setBusy(true)
+        showStatus("正在下载、校验并应用 AgentDock 配置…", isError: false)
         Task {
             do {
                 let result = try await installer.run(request: request)
-                await MainActor.run {
-                    self.showResult(result)
-                    self.onInstalled()
-                }
+                authTokenValue = result.authToken
+                oauthPasswordValue = result.oauthPassword
+                localAddress.stringValue = result.localMCPURL
+                publicAddress.stringValue = result.publicMCPURL.isEmpty ? "未启用" : result.publicMCPURL
+                tunnelTokenField.stringValue = ""
+                authVisible = false
+                oauthVisible = false
+                refreshCredentialFields()
+                showStatus("AgentDock \(result.version) 已配置并正常运行。", isError: false)
+                setBusy(false)
+                initialMode = selectedMode
+                initialServerURL = selectedMode == .named ? (try? request.validatedServerURL()) ?? "" : ""
+                refreshChangeState()
+                onChanged()
             } catch {
-                await MainActor.run {
-                    self.setInstalling(false)
-                    self.showStatus(error.localizedDescription, isError: true)
-                }
+                setBusy(false)
+                showStatus(error.localizedDescription, isError: true)
             }
         }
     }
 
-    private var selectedMode: TunnelMode {
-        if namedButton.state == .on { return .named }
-        if quickButton.state == .on { return .quick }
-        return .local
-    }
-
-    private func setInstalling(_ installing: Bool) {
-        installButton.isEnabled = !installing
-        localButton.isEnabled = !installing
-        quickButton.isEnabled = !installing
-        namedButton.isEnabled = !installing
-        serverURLField.isEnabled = !installing
-        tokenField.isEnabled = !installing
-        if installing {
-            progress.startAnimation(nil)
-            showStatus("正在下载、校验并启动 AgentDock…", isError: false)
-        } else {
-            progress.stopAnimation(nil)
+    @objc private func startStopPressed() {
+        performServiceAction(currentStatus.loaded ? "停止" : "启动") {
+            if self.currentStatus.loaded { try await self.service.stop() }
+            else { try await self.service.start() }
         }
     }
 
-    private func showResult(_ result: InstallResult) {
-        setInstalling(false)
-        installButton.title = "重新配置"
-        localResult.stringValue = result.localMCPURL
-        publicResult.stringValue = result.publicMCPURL.isEmpty ? "未启用" : result.publicMCPURL
-        authTokenValue = result.authToken
-        oauthPasswordValue = result.oauthPassword
-        secretsVisible = false
-        revealSecretsButton.title = "显示凭据"
-        refreshSecretFields()
-        tokenField.stringValue = ""
-        resultStack.isHidden = false
-        showStatus("AgentDock \(result.version) 已安装并正常运行。", isError: false)
+    @objc private func restartPressed() {
+        performServiceAction("重启") { try await self.service.restart() }
+    }
+
+    @objc private func updatePressed() {
+        setBusy(true)
+        showStatus("正在检查并安装更新…", isError: false)
+        Task {
+            do {
+                let output = try await service.update()
+                setBusy(false)
+                showStatus(output.isEmpty ? "更新已完成。" : output, isError: false)
+                onChanged()
+            } catch {
+                setBusy(false)
+                showStatus(error.localizedDescription, isError: true)
+            }
+        }
+    }
+
+    private func performServiceAction(_ action: String, operation: @escaping () async throws -> Void) {
+        setBusy(true)
+        showStatus("正在\(action) AgentDock…", isError: false)
+        Task {
+            do {
+                try await operation()
+                setBusy(false)
+                showStatus("AgentDock \(action)完成。", isError: false)
+                onChanged()
+            } catch {
+                setBusy(false)
+                showStatus(error.localizedDescription, isError: true)
+            }
+        }
+    }
+
+    @objc private func openAdvancedPressed() { advancedSettings.present(status: currentStatus) }
+    @objc private func openLogsPressed() { service.openLogs() }
+    @objc private func copyLocalAddress(_ sender: NSButton) { copy(localAddress.stringValue, button: sender) }
+    @objc private func copyPublicAddress(_ sender: NSButton) { copy(publicAddress.stringValue == "未启用" ? "" : publicAddress.stringValue, button: sender) }
+    @objc private func copyAuthToken(_ sender: NSButton) { copy(authTokenValue, button: sender) }
+    @objc private func copyOAuthPassword(_ sender: NSButton) { copy(oauthPasswordValue, button: sender) }
+
+    @objc private func toggleAuthToken() {
+        authVisible.toggle()
+        refreshCredentialFields()
+    }
+
+    @objc private func toggleOAuthPassword() {
+        oauthVisible.toggle()
+        refreshCredentialFields()
+    }
+
+    private func refreshCredentialFields() {
+        authToken.stringValue = displayedSecret(authTokenValue, visible: authVisible, empty: "未生成")
+        oauthPassword.stringValue = displayedSecret(oauthPasswordValue, visible: oauthVisible, empty: "未启用")
+        authReveal.title = authVisible ? "隐藏" : "显示"
+        oauthReveal.title = oauthVisible ? "隐藏" : "显示"
+    }
+
+    private func displayedSecret(_ value: String, visible: Bool, empty: String) -> String {
+        guard !value.isEmpty else { return empty }
+        return visible ? value : String(repeating: "•", count: min(max(value.count, 12), 24))
+    }
+
+    private func copy(_ value: String, button: NSButton) {
+        guard !value.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        let original = button.title
+        button.title = "已复制"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            button.title = original
+        }
+    }
+
+    private func refreshChangeState() {
+        guard currentStatus.installed else {
+            applyButton.isEnabled = !isBusy
+            return
+        }
+        let serverChanged = selectedMode == .named
+            && serverURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                != initialServerURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let changed = selectedMode != initialMode || serverChanged || !tunnelTokenField.stringValue.isEmpty
+        applyButton.isEnabled = changed && !isBusy
+    }
+
+    private func setBusy(_ busy: Bool) {
+        isBusy = busy
+        for control in [publicMode, serverURLField, tunnelTokenField, startStopButton, restartButton, updateButton, advancedButton] {
+            control.isEnabled = !busy && (control !== advancedButton || currentStatus.installed)
+        }
+        logsButton.isEnabled = !busy && currentStatus.installed
+        if busy {
+            applyButton.isEnabled = false
+            progress.startAnimation(nil)
+        } else {
+            progress.stopAnimation(nil)
+            refreshChangeState()
+        }
     }
 
     private func showStatus(_ message: String, isError: Bool) {
         statusLabel.stringValue = message
         statusLabel.textColor = isError ? .systemRed : .secondaryLabelColor
-        statusLabel.isHidden = false
+        statusLabel.isHidden = message.isEmpty
     }
 
-    @objc private func copyLocalResult() { copy(localResult.stringValue) }
-    @objc private func copyPublicResult() { copy(publicResult.stringValue == "未启用" ? "" : publicResult.stringValue) }
-    @objc private func copyTokenResult() { copy(authTokenValue) }
-    @objc private func copyOAuthResult() { copy(oauthPasswordValue) }
-
-    @objc private func toggleSecrets() {
-        secretsVisible.toggle()
-        revealSecretsButton.title = secretsVisible ? "隐藏凭据" : "显示凭据"
-        refreshSecretFields()
+    private func updateWindowHeight() {
+        let installedHeight: CGFloat = selectedMode == .named ? 650 : 555
+        let installHeight: CGFloat = selectedMode == .named ? 455 : 360
+        let target = currentStatus.installed ? installedHeight : installHeight
+        guard let window else { return }
+        var frame = window.frame
+        let delta = target - frame.height
+        frame.origin.y -= delta
+        frame.size.height = target
+        window.setFrame(frame, display: true, animate: window.isVisible)
     }
 
-    private func refreshSecretFields() {
-        tokenResult.stringValue = displayedSecret(authTokenValue)
-        oauthResult.stringValue = oauthPasswordValue.isEmpty ? "未启用" : displayedSecret(oauthPasswordValue)
+    private func sectionTitle(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        return label
     }
 
-    private func displayedSecret(_ value: String) -> String {
-        guard !value.isEmpty else { return "未生成" }
-        return secretsVisible ? value : String(repeating: "•", count: min(max(value.count, 8), 24))
+    private func separator() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.widthAnchor.constraint(equalToConstant: 564).isActive = true
+        return box
     }
 
-    private func copy(_ value: String) {
-        guard !value.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
+    private func formRow(title: String, control: NSView) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.textColor = .secondaryLabelColor
+        label.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        return row
+    }
+
+    private func valueRow(title: String, field: NSTextField, actions: [NSButton]) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.textColor = .secondaryLabelColor
+        label.widthAnchor.constraint(equalToConstant: 94).isActive = true
+        field.widthAnchor.constraint(equalToConstant: actions.count > 1 ? 310 : 370).isActive = true
+        let row = NSStackView(views: [label, field] + actions)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        return row
+    }
+
+    private func copyButton(_ action: Selector) -> NSButton {
+        let button = NSButton(title: "复制", target: self, action: action)
+        button.bezelStyle = .inline
+        return button
     }
 }

@@ -142,7 +142,9 @@ docker compose down
 
 普通 macOS 用户可以从 GitHub Release 下载 `AgentDock-macos-universal.zip`，解压后将 `AgentDock.app` 拖入“应用程序”。当前免费版本使用 ad-hoc 签名、未经过 Apple 公证，因此首次启动需要右键应用并选择“打开”；之后不需要终端或管理员权限。
 
-首次启动的图形界面可以直接选择仅本机、临时公网或固定 Cloudflare 域名。固定域名和 Tunnel Token 都在图形表单中填写，Token 通过仅当前用户可读的临时文件交给安装器，不会进入进程命令行。安装完成后，菜单栏可以查看状态、复制 MCP 地址、启动、停止、重启、更新和打开日志。
+首次启动的图形界面可以直接选择仅本机、临时公网或固定 Cloudflare 域名。固定域名和 Tunnel Token 都在图形表单中填写，Token 通过仅当前用户可读的临时文件交给安装器，不会进入进程命令行。
+
+安装完成后，主控制面板会显示服务状态、版本、本地与公网 MCP 地址，以及默认遮罩的 Bearer Token 和 OAuth 登录密码；两项凭据都支持独立显示和复制。窗口内还可以启动、停止、重启、更新和打开日志。高级设置支持服务端口、日志级别、可选的 Nexus Endpoint 与 Token、浏览器工具，以及 AgentDock 服务和菜单栏应用两个独立的登录自启开关。首次勾选浏览器工具时会自动安装并验证 Browser Runner；取消勾选只停用功能，保留运行文件供下次复用。
 
 ### Cloudflare Tunnel 公网访问
 
