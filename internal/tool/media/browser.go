@@ -40,7 +40,11 @@ func (s *Service) BrowserCall(ctx context.Context, operation string, args map[st
 	timeout := browserRunnerTimeout(args)
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, "node", runner.Abs)
+	nodePath := strings.TrimSpace(s.cfg.BrowserNodePath)
+	if nodePath == "" {
+		nodePath = "node"
+	}
+	cmd := exec.CommandContext(cmdCtx, nodePath, runner.Abs)
 	cmd.Dir = filepath.Dir(runner.Abs)
 	env := map[string]string{
 		"BROWSER_RUNNER_PAYLOAD": string(data),
