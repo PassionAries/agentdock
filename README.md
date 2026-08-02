@@ -140,7 +140,7 @@ See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-sta
 
 ### Graphical macOS installation
 
-Regular macOS users can download `AgentDock-macos-universal.zip` from GitHub Releases, extract it, and drag `AgentDock.app` into Applications. This free build uses an ad-hoc signature and is not notarized by Apple, so the first launch requires right-clicking the app and choosing **Open**. No terminal or administrator privileges are needed after that.
+Regular macOS users can download `AgentDock-macos-universal.dmg` from GitHub Releases, open it, and drag `AgentDock.app` onto the Applications shortcut. This free build uses an ad-hoc signature and is not notarized by Apple, so the first launch requires right-clicking the app in Applications and choosing **Open**. No terminal or administrator privileges are needed after that.
 
 The first-launch interface offers local-only, temporary public access, and a fixed Cloudflare hostname. The hostname and Tunnel Token are entered in graphical fields. The token reaches the installer through a current-user-only temporary file and never appears in process arguments.
 

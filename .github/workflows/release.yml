@@ -146,10 +146,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agentdock-macos-app
+          name: agentdock-macos-dmg
           path: |
-            dist/macos-app/AgentDock-macos-universal.zip
-            dist/macos-app/AgentDock-macos-universal.zip.sha256
+            dist/macos-app/AgentDock-macos-universal.dmg
+            dist/macos-app/AgentDock-macos-universal.dmg.sha256
           if-no-files-found: error
 
   build-windows:
@@ -339,6 +339,15 @@ jobs:
             done
           )
 
+      - name: Validate macOS release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/AgentDock-macos-universal.dmg
+          test -f dist/AgentDock-macos-universal.dmg.sha256
+          test ! -e dist/AgentDock-macos-universal.zip
+          test ! -e dist/AgentDock-macos-universal.zip.sha256
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -346,6 +355,8 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+            dist/*.dmg
+            dist/*.dmg.sha256
             dist/*.zip
             dist/*.zip.sha256
             dist/*.sh
@@ -493,6 +504,38 @@ jobs:
           release_base="https://github.com/${{ github.repository }}/releases/download/$tag"
           installer="$RUNNER_TEMP/install.sh"
           uninstaller="$RUNNER_TEMP/uninstall-macos.sh"
+          dmg="$RUNNER_TEMP/AgentDock-macos-universal.dmg"
+          mount_dir="$RUNNER_TEMP/agentdock-dmg"
+          dmg_mounted=false
+          cleanup() {
+            if [[ "$dmg_mounted" == true ]]; then
+              hdiutil detach "$mount_dir" -force >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          curl -fL "$release_base/AgentDock-macos-universal.dmg" -o "$dmg"
+          curl -fL "$release_base/AgentDock-macos-universal.dmg.sha256" -o "$dmg.sha256"
+          (
+            cd "$RUNNER_TEMP"
+            shasum -a 256 -c AgentDock-macos-universal.dmg.sha256
+          )
+          hdiutil verify "$dmg" >/dev/null
+          mkdir -p "$mount_dir"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg" >/dev/null
+          dmg_mounted=true
+          mounted_entries="$(find "$mount_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)"
+          test "$mounted_entries" = $'AgentDock.app\nApplications'
+          test -L "$mount_dir/Applications"
+          test "$(readlink "$mount_dir/Applications")" = "/Applications"
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/AgentDock.app"
+          app_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock")"
+          helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDockLoginHelper")"
+          [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
+          [[ "$helper_arches" == *arm64* && "$helper_arches" == *x86_64* ]]
+          hdiutil detach "$mount_dir" >/dev/null
+          dmg_mounted=false
+
           curl -fL "$release_base/install.sh" -o "$installer"
           curl -fL "$release_base/install.sh.sha256" -o "$installer.sha256"
           curl -fL "$release_base/uninstall-macos.sh" -o "$uninstaller"

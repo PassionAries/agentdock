@@ -34,7 +34,7 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-for command_name in codesign ditto file lipo npm plutil shasum swiftc xcrun; do
+for command_name in codesign ditto file hdiutil lipo npm plutil shasum swiftc xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
@@ -68,7 +68,12 @@ if find "$BROWSER_RUNNER_BUNDLE" -type l -print -quit | grep -q .; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-rm -rf "$OUTPUT_DIR/AgentDock.app" "$OUTPUT_DIR/AgentDock-macos-universal.zip" "$OUTPUT_DIR/AgentDock-macos-universal.zip.sha256"
+rm -rf \
+  "$OUTPUT_DIR/AgentDock.app" \
+  "$OUTPUT_DIR/AgentDock-macos-universal.dmg" \
+  "$OUTPUT_DIR/AgentDock-macos-universal.dmg.sha256" \
+  "$OUTPUT_DIR/AgentDock-macos-universal.zip" \
+  "$OUTPUT_DIR/AgentDock-macos-universal.zip.sha256"
 
 IFS=',' read -rA architectures <<< "$ARCH_LIST"
 (( ${#architectures[@]} > 0 )) || die "没有可构建的架构"
@@ -171,13 +176,25 @@ print -- "==> ad-hoc 签名 AgentDock.app"
 codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
-ZIP_PATH="$OUTPUT_DIR/AgentDock-macos-universal.zip"
-ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_PATH"
+DMG_STAGE_DIR="$TMP_DIR/dmg-root"
+DMG_PATH="$OUTPUT_DIR/AgentDock-macos-universal.dmg"
+mkdir -p "$DMG_STAGE_DIR"
+ditto "$APP_DIR" "$DMG_STAGE_DIR/AgentDock.app"
+ln -s /Applications "$DMG_STAGE_DIR/Applications"
+
+print -- "==> 创建 AgentDock DMG"
+hdiutil create \
+  -volname "AgentDock" \
+  -srcfolder "$DMG_STAGE_DIR" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH" >/dev/null
+hdiutil verify "$DMG_PATH" >/dev/null
 (
   cd "$OUTPUT_DIR"
-  shasum -a 256 "${ZIP_PATH:t}" > "${ZIP_PATH:t}.sha256"
+  shasum -a 256 "${DMG_PATH:t}" > "${DMG_PATH:t}.sha256"
 )
 
 print -- "built: $APP_DIR"
-print -- "archive: $ZIP_PATH"
+print -- "dmg: $DMG_PATH"
 file "$MACOS_DIR/AgentDock"
