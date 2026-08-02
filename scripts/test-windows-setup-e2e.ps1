@@ -156,8 +156,9 @@ try {
         -LogPath $setupLogPath
     Write-Host 'AgentDock Setup installation exited successfully.'
     $initialLog = Get-Content -LiteralPath $setupLogPath -Raw
-    if ($initialLog -notmatch 'Using language: chinesesimplified') {
-        throw 'Setup did not use the Simplified Chinese language.'
+    if (($initialLog -notmatch [regex]::Escape('AgentDock 使用文档.url')) -or
+        ($initialLog -notmatch [regex]::Escape('卸载 AgentDock.lnk'))) {
+        throw 'Setup did not use the Simplified Chinese messages.'
     }
     if ($initialLog -notmatch 'existing installation detected: source=powershell') {
         throw 'Setup did not recognize the legacy PowerShell installation.'
