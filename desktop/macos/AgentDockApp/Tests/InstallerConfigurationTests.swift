@@ -3,17 +3,29 @@ import Foundation
 @main
 struct InstallerConfigurationTests {
     static func main() throws {
+        let offlinePayload = OfflinePayloadPaths(
+            agentDockArchive: "/payload/agentdock_darwin_arm64.tar.gz",
+            agentDockChecksum: "/payload/agentdock_darwin_arm64.tar.gz.sha256",
+            cloudflaredBinary: "/payload/cloudflared_darwin_arm64",
+            cloudflaredChecksum: "/payload/cloudflared_darwin_arm64.sha256"
+        )
         let local = InstallRequest(mode: .local, serverURL: "", tunnelToken: "")
         let localArguments = try local.installerArguments(
             scriptPath: "/Applications/AgentDock.app/Contents/Resources/install-macos-platform.sh",
-            version: "0.5.4",
+            version: "0.6.0",
             resultPath: "/tmp/result.json",
-            tokenPath: nil
+            tokenPath: nil,
+            offlinePayload: offlinePayload
         )
         precondition(localArguments.contains("--tunnel"))
         precondition(localArguments.contains("none"))
         precondition(!localArguments.contains("--server-url"))
         precondition(!localArguments.contains("--tunnel-token-file"))
+        precondition(localArguments.contains("--offline"))
+        precondition(localArguments.contains(offlinePayload.agentDockArchive))
+        precondition(localArguments.contains(offlinePayload.agentDockChecksum))
+        precondition(localArguments.contains(offlinePayload.cloudflaredBinary))
+        precondition(localArguments.contains(offlinePayload.cloudflaredChecksum))
 
         let named = InstallRequest(
             mode: .named,
@@ -24,9 +36,10 @@ struct InstallerConfigurationTests {
         precondition(normalizedURL == "https://mini.example.com")
         let namedArguments = try named.installerArguments(
             scriptPath: "/installer.sh",
-            version: "v0.5.4",
+            version: "v0.6.0",
             resultPath: "/tmp/result.json",
-            tokenPath: "/tmp/token-file"
+            tokenPath: "/tmp/token-file",
+            offlinePayload: offlinePayload
         )
         precondition(namedArguments.contains("https://mini.example.com"))
         precondition(namedArguments.contains("/tmp/token-file"))
@@ -42,9 +55,10 @@ struct InstallerConfigurationTests {
         precondition(reusedToken == nil)
         let reuseArguments = try reuseNamed.installerArguments(
             scriptPath: "/installer.sh",
-            version: "v0.5.4",
+            version: "v0.6.0",
             resultPath: "/tmp/result.json",
-            tokenPath: nil
+            tokenPath: nil,
+            offlinePayload: offlinePayload
         )
         precondition(reuseArguments.contains("https://mini.example.com"))
         precondition(!reuseArguments.contains("--tunnel-token-file"))

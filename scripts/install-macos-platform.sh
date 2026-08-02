@@ -28,8 +28,13 @@ TUNNEL_TOKEN="${AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN:-}"
 TUNNEL_TOKEN_FILE=""
 NON_INTERACTIVE=false
 RESULT_FILE=""
+OFFLINE_INSTALL=false
+AGENTDOCK_ARCHIVE=""
+AGENTDOCK_CHECKSUM_FILE=""
 CLOUDFLARED_RELEASE_BASE_URL="${AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download}"
 CLOUDFLARED_SOURCE_BINARY="${AGENTDOCK_CLOUDFLARED_BINARY:-}"
+CLOUDFLARED_SOURCE_EXPLICIT=false
+CLOUDFLARED_CHECKSUM_FILE=""
 
 LABEL="com.uvwt.agentdock"
 TUNNEL_LABEL="com.uvwt.agentdock.cloudflared"
@@ -85,6 +90,14 @@ AgentDock macOS 预编译版本安装脚本。
   --tunnel-token-file PATH 从仅当前用户可读的文件读取 Named Tunnel Token，读取后删除
   --non-interactive        禁止终端询问；缺少必需参数时直接失败
   --result-file PATH       将安装结果以 JSON 写入指定文件，供图形界面读取
+  --offline                强制仅使用本地载荷，禁止回退到公网下载
+  --agentdock-archive PATH 使用本地 AgentDock Release 压缩包
+  --agentdock-checksum-file PATH
+                          使用本地 AgentDock SHA-256 校验文件
+  --cloudflared-binary PATH
+                          使用本地 cloudflared 二进制
+  --cloudflared-checksum-file PATH
+                          使用本地 cloudflared SHA-256 校验文件
   --no-start               只生成服务文件和 plist，不加载或启动 LaunchAgent
   -h, --help               显示帮助
 
@@ -119,6 +132,21 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
+}
+
+verify_payload_checksum() {
+  local payload_path="$1"
+  local checksum_path="$2"
+  local payload_name="$3"
+  local expected_hash actual_hash
+
+  [[ -f "$payload_path" && ! -L "$payload_path" ]] || die "$payload_name 必须是普通文件：$payload_path"
+  [[ -f "$checksum_path" && ! -L "$checksum_path" ]] || die "$payload_name 校验文件必须是普通文件：$checksum_path"
+
+  expected_hash="$(sed -n '1{s/[[:space:]].*$//;p;}' "$checksum_path")"
+  [[ "$expected_hash" =~ '^[[:xdigit:]]{64}$' ]] || die "$payload_name 校验文件格式无效：$checksum_path"
+  actual_hash="$(shasum -a 256 "$payload_path" | sed 's/[[:space:]].*$//')"
+  [[ "${actual_hash:l}" == "${expected_hash:l}" ]] || die "$payload_name SHA-256 校验失败"
 }
 
 cleanup_sensitive_input() {
@@ -633,6 +661,12 @@ install_cloudflared() {
   fi
 
   if [[ -n "$source_binary" ]]; then
+    if [[ -n "$CLOUDFLARED_CHECKSUM_FILE" ]]; then
+      # 离线载荷在执行 --version 之前先校验，避免损坏或被替换的二进制先获得执行机会。
+      verify_payload_checksum "$source_binary" "$CLOUDFLARED_CHECKSUM_FILE" "cloudflared 离线载荷"
+    elif [[ "$OFFLINE_INSTALL" == true ]]; then
+      die "离线安装必须提供 --cloudflared-checksum-file"
+    fi
     resolved_binary="$(resolve_cloudflared_binary "$source_binary")" || \
       die "AGENTDOCK_CLOUDFLARED_BINARY 指向的 cloudflared 无效：$source_binary"
     source_binary="$resolved_binary"
@@ -656,6 +690,7 @@ install_cloudflared() {
   fi
 
   if [[ -z "$source_binary" ]]; then
+    [[ "$OFFLINE_INSTALL" == false ]] || die "离线安装包缺少可用的 cloudflared 载荷"
     asset="cloudflared-darwin-${release_arch}.tgz"
     archive="$tmp_dir/$asset"
     print -- "==> 下载 Cloudflare cloudflared：$asset"
@@ -1374,6 +1409,35 @@ while (( $# > 0 )); do
       RESULT_FILE="$2"
       shift 2
       ;;
+    --offline)
+      OFFLINE_INSTALL=true
+      shift
+      ;;
+    --agentdock-archive)
+      (( $# >= 2 )) || die "--agentdock-archive 需要值"
+      [[ -z "$AGENTDOCK_ARCHIVE" ]] || die "--agentdock-archive 只能指定一次"
+      AGENTDOCK_ARCHIVE="$2"
+      shift 2
+      ;;
+    --agentdock-checksum-file)
+      (( $# >= 2 )) || die "--agentdock-checksum-file 需要值"
+      [[ -z "$AGENTDOCK_CHECKSUM_FILE" ]] || die "--agentdock-checksum-file 只能指定一次"
+      AGENTDOCK_CHECKSUM_FILE="$2"
+      shift 2
+      ;;
+    --cloudflared-binary)
+      (( $# >= 2 )) || die "--cloudflared-binary 需要值"
+      [[ "$CLOUDFLARED_SOURCE_EXPLICIT" == false ]] || die "--cloudflared-binary 只能指定一次"
+      CLOUDFLARED_SOURCE_BINARY="$2"
+      CLOUDFLARED_SOURCE_EXPLICIT=true
+      shift 2
+      ;;
+    --cloudflared-checksum-file)
+      (( $# >= 2 )) || die "--cloudflared-checksum-file 需要值"
+      [[ -z "$CLOUDFLARED_CHECKSUM_FILE" ]] || die "--cloudflared-checksum-file 只能指定一次"
+      CLOUDFLARED_CHECKSUM_FILE="$2"
+      shift 2
+      ;;
     --no-start)
       NO_START=true
       shift
@@ -1389,6 +1453,17 @@ while (( $# > 0 )); do
 done
 
 [[ "$(uname -s)" == "Darwin" ]] || die "此脚本只支持 macOS"
+if [[ -n "$AGENTDOCK_ARCHIVE" || -n "$AGENTDOCK_CHECKSUM_FILE" ]]; then
+  [[ -n "$AGENTDOCK_ARCHIVE" && -n "$AGENTDOCK_CHECKSUM_FILE" ]] || \
+    die "--agentdock-archive 与 --agentdock-checksum-file 必须同时提供"
+fi
+if [[ -n "$CLOUDFLARED_CHECKSUM_FILE" && -z "$CLOUDFLARED_SOURCE_BINARY" ]]; then
+  die "--cloudflared-checksum-file 必须与 --cloudflared-binary 同时提供"
+fi
+if [[ "$OFFLINE_INSTALL" == true ]]; then
+  [[ -n "$AGENTDOCK_ARCHIVE" && -n "$AGENTDOCK_CHECKSUM_FILE" ]] || \
+    die "离线安装包缺少 AgentDock 核心载荷"
+fi
 trap 'cleanup_sensitive_input' EXIT
 if [[ -n "$TUNNEL_TOKEN_FILE" ]]; then
   [[ -z "$TUNNEL_TOKEN" ]] || die "不能同时使用环境变量和 --tunnel-token-file 提供 Tunnel Token"
@@ -1411,6 +1486,10 @@ if [[ "$REGISTER_SERVICE" == true && "$TUNNEL_MODE_EXPLICIT" == false ]]; then
 fi
 validate_port "$SERVICE_PORT"
 validate_tunnel_mode "$TUNNEL_MODE"
+if [[ "$OFFLINE_INSTALL" == true && "$TUNNEL_MODE" != none ]]; then
+  [[ -n "$CLOUDFLARED_SOURCE_BINARY" && -n "$CLOUDFLARED_CHECKSUM_FILE" ]] || \
+    die "离线公网安装缺少 cloudflared 载荷或校验文件"
+fi
 if [[ "$TUNNEL_MODE" != none ]]; then
   REGISTER_SERVICE=true
   PUBLIC_AUTH_CONFIGURE=true
@@ -1500,15 +1579,22 @@ if [[ "$REGISTER_SERVICE" == true ]]; then
   snapshot_service_files
 fi
 
-print -- "==> 下载 $asset"
-curl -fL --retry 3 --retry-delay 1 "$base_url/$asset" -o "$tmp_dir/$asset"
-curl -fL --retry 3 --retry-delay 1 "$base_url/$asset.sha256" -o "$tmp_dir/$asset.sha256"
+if [[ -n "$AGENTDOCK_ARCHIVE" ]]; then
+  print -- "==> 使用内置 AgentDock 离线载荷：$asset"
+  verify_payload_checksum "$AGENTDOCK_ARCHIVE" "$AGENTDOCK_CHECKSUM_FILE" "AgentDock 离线载荷"
+  cp -p "$AGENTDOCK_ARCHIVE" "$tmp_dir/$asset"
+else
+  [[ "$OFFLINE_INSTALL" == false ]] || die "离线安装禁止回退到公网下载"
+  print -- "==> 下载 $asset"
+  curl -fL --retry 3 --retry-delay 1 "$base_url/$asset" -o "$tmp_dir/$asset"
+  curl -fL --retry 3 --retry-delay 1 "$base_url/$asset.sha256" -o "$tmp_dir/$asset.sha256"
 
-print -- "==> 校验 SHA-256"
-(
-  cd "$tmp_dir"
-  shasum -a 256 -c "$asset.sha256"
-)
+  print -- "==> 校验 SHA-256"
+  (
+    cd "$tmp_dir"
+    shasum -a 256 -c "$asset.sha256"
+  )
+fi
 
 mkdir -p "$tmp_dir/extract"
 tar -xzf "$tmp_dir/$asset" -C "$tmp_dir/extract"

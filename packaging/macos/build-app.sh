@@ -9,6 +9,7 @@ BROWSER_INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-browser-runner-macos.sh"
 BROWSER_RUNNER_SOURCE="$ROOT_DIR/tools/browser-runner"
 OUTPUT_DIR="${AGENTDOCK_MACOS_APP_OUTPUT_DIR:-$ROOT_DIR/dist/macos-app}"
 ARCH_LIST="${AGENTDOCK_MACOS_ARCHES:-$(uname -m)}"
+OFFLINE_PAYLOAD_DIR="${AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR:-}"
 MIN_VERSION="${AGENTDOCK_MACOS_MIN_VERSION:-13.0}"
 BUNDLE_ID="com.uvwt.agentdock"
 
@@ -20,6 +21,8 @@ usage() {
 环境变量：
   AGENTDOCK_MACOS_ARCHES        逗号分隔架构，默认当前架构；Release 使用 arm64,x86_64
   AGENTDOCK_MACOS_APP_OUTPUT_DIR 输出目录，默认 dist/macos-app
+  AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR
+                               双架构离线载荷目录，构建 DMG 时必须提供
   AGENTDOCK_MACOS_MIN_VERSION   最低 macOS 版本，默认 13.0
 USAGE
 }
@@ -43,6 +46,8 @@ done
 [[ -f "$BROWSER_INSTALLER_SCRIPT" && ! -L "$BROWSER_INSTALLER_SCRIPT" ]] || die "缺少浏览器支持安装脚本：$BROWSER_INSTALLER_SCRIPT"
 [[ -d "$BROWSER_RUNNER_SOURCE" && ! -L "$BROWSER_RUNNER_SOURCE" ]] || die "缺少 browser-runner 源码：$BROWSER_RUNNER_SOURCE"
 [[ -f "$BROWSER_RUNNER_SOURCE/package-lock.json" && ! -L "$BROWSER_RUNNER_SOURCE/package-lock.json" ]] || die "缺少 browser-runner package-lock.json"
+[[ -n "$OFFLINE_PAYLOAD_DIR" ]] || die "构建 macOS DMG 必须设置 AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR"
+[[ -d "$OFFLINE_PAYLOAD_DIR" && ! -L "$OFFLINE_PAYLOAD_DIR" ]] || die "离线载荷目录无效：$OFFLINE_PAYLOAD_DIR"
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
@@ -79,12 +84,15 @@ IFS=',' read -rA architectures <<< "$ARCH_LIST"
 (( ${#architectures[@]} > 0 )) || die "没有可构建的架构"
 compiled_binaries=()
 login_helper_binaries=()
+release_architectures=()
 for architecture in "${architectures[@]}"; do
   architecture="${architecture//[[:space:]]/}"
   case "$architecture" in
-    arm64|x86_64) ;;
+    arm64) release_architecture="arm64" ;;
+    x86_64) release_architecture="amd64" ;;
     *) die "不支持的 App 架构：$architecture" ;;
   esac
+  release_architectures+=("$release_architecture")
   binary="$TMP_DIR/AgentDock-$architecture"
   print -- "==> 编译 AgentDock.app：$architecture"
   xcrun swiftc \
@@ -135,6 +143,51 @@ ditto "$BROWSER_RUNNER_BUNDLE" "$RESOURCES_DIR/browser-runner"
 chmod 0755 "$RESOURCES_DIR/install-macos-platform.sh" "$RESOURCES_DIR/install-browser-runner-macos.sh"
 find "$RESOURCES_DIR/browser-runner" -type d -exec chmod 0755 {} +
 find "$RESOURCES_DIR/browser-runner" -type f -exec chmod 0644 {} +
+
+# 图形安装器必须在断网环境中完成核心和 Tunnel 安装。构建阶段只接受已经
+# 生成并带 SHA-256 的载荷，避免 App 在运行时静默回退到网络下载。
+OFFLINE_RESOURCES_DIR="$RESOURCES_DIR/offline-payload"
+mkdir -p "$OFFLINE_RESOURCES_DIR"
+for release_architecture in "${release_architectures[@]}"; do
+  agentdock_archive="agentdock_darwin_${release_architecture}.tar.gz"
+  agentdock_checksum="$agentdock_archive.sha256"
+  cloudflared_binary="cloudflared_darwin_${release_architecture}"
+  cloudflared_checksum="$cloudflared_binary.sha256"
+
+  for payload_name in "$agentdock_archive" "$agentdock_checksum" "$cloudflared_binary" "$cloudflared_checksum"; do
+    payload_path="$OFFLINE_PAYLOAD_DIR/$payload_name"
+    [[ -f "$payload_path" && ! -L "$payload_path" ]] || die "缺少离线载荷：$payload_path"
+  done
+
+  (
+    cd "$OFFLINE_PAYLOAD_DIR"
+    shasum -a 256 -c "$agentdock_checksum"
+    shasum -a 256 -c "$cloudflared_checksum"
+  )
+
+  payload_check_dir="$TMP_DIR/payload-check-$release_architecture"
+  mkdir -p "$payload_check_dir"
+  tar -xzf "$OFFLINE_PAYLOAD_DIR/$agentdock_archive" -C "$payload_check_dir"
+  [[ -f "$payload_check_dir/bin/agentdock" && ! -L "$payload_check_dir/bin/agentdock" ]] || die "$agentdock_archive 缺少 bin/agentdock"
+  [[ -f "$payload_check_dir/share/agentdock/core-skills/manifest.json" && ! -L "$payload_check_dir/share/agentdock/core-skills/manifest.json" ]] || \
+    die "$agentdock_archive 缺少核心 Skill Bundle"
+
+  case "$release_architecture" in
+    arm64) expected_file_architecture="arm64" ;;
+    amd64) expected_file_architecture="x86_64" ;;
+  esac
+  file "$payload_check_dir/bin/agentdock" | grep -q "$expected_file_architecture" || \
+    die "$agentdock_archive 架构不匹配，期望 $expected_file_architecture"
+  file "$OFFLINE_PAYLOAD_DIR/$cloudflared_binary" | grep -q "$expected_file_architecture" || \
+    die "$cloudflared_binary 架构不匹配，期望 $expected_file_architecture"
+
+  cp -p "$OFFLINE_PAYLOAD_DIR/$agentdock_archive" "$OFFLINE_RESOURCES_DIR/$agentdock_archive"
+  cp -p "$OFFLINE_PAYLOAD_DIR/$agentdock_checksum" "$OFFLINE_RESOURCES_DIR/$agentdock_checksum"
+  cp -p "$OFFLINE_PAYLOAD_DIR/$cloudflared_binary" "$OFFLINE_RESOURCES_DIR/$cloudflared_binary"
+  cp -p "$OFFLINE_PAYLOAD_DIR/$cloudflared_checksum" "$OFFLINE_RESOURCES_DIR/$cloudflared_checksum"
+  chmod 0644 "$OFFLINE_RESOURCES_DIR/$agentdock_archive" "$OFFLINE_RESOURCES_DIR/$agentdock_checksum" "$OFFLINE_RESOURCES_DIR/$cloudflared_checksum"
+  chmod 0755 "$OFFLINE_RESOURCES_DIR/$cloudflared_binary"
+done
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

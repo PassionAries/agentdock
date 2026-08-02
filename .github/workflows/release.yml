@@ -121,11 +121,59 @@ jobs:
           if-no-files-found: error
 
   build-macos-app:
-    name: Build macOS menu app
+    name: Build macOS offline DMG
+    needs: build-macos
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download AgentDock macOS payloads
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agentdock-macos-*
+          path: payload
+          merge-multiple: true
+
+      - name: Prepare cloudflared macOS payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          for architecture in amd64 arm64; do
+            archive="$RUNNER_TEMP/cloudflared-darwin-$architecture.tgz"
+            extract_dir="$RUNNER_TEMP/cloudflared-$architecture"
+            curl -fL --retry 5 --retry-delay 2 \
+              "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-$architecture.tgz" \
+              -o "$archive"
+            mkdir -p "$extract_dir"
+            tar -xzf "$archive" -C "$extract_dir"
+            test -f "$extract_dir/cloudflared"
+            test ! -L "$extract_dir/cloudflared"
+
+            output="payload/cloudflared_darwin_$architecture"
+            install -m 0755 "$extract_dir/cloudflared" "$output"
+            case "$architecture" in
+              arm64) file "$output" | grep -q 'arm64' ;;
+              amd64) file "$output" | grep -q 'x86_64' ;;
+            esac
+            codesign --verify --deep --strict --verbose=2 "$output"
+            shasum -a 256 "$output" > "$output.sha256"
+          done
+
+          (
+            cd payload
+            shasum -a 256 -c agentdock_darwin_amd64.tar.gz.sha256
+            shasum -a 256 -c agentdock_darwin_arm64.tar.gz.sha256
+            shasum -a 256 -c cloudflared_darwin_amd64.sha256
+            shasum -a 256 -c cloudflared_darwin_arm64.sha256
+          )
 
       - name: Validate menu app
         run: |
@@ -141,6 +189,7 @@ jobs:
         env:
           AGENTDOCK_MACOS_ARCHES: arm64,x86_64
           AGENTDOCK_MACOS_APP_OUTPUT_DIR: dist/macos-app
+          AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR: ${{ github.workspace }}/payload
         run: packaging/macos/build-app.sh
 
       - name: Upload artifact
@@ -603,6 +652,40 @@ jobs:
           helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDockLoginHelper")"
           [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
           [[ "$helper_arches" == *arm64* && "$helper_arches" == *x86_64* ]]
+
+          payload_dir="$mount_dir/AgentDock.app/Contents/Resources/offline-payload"
+          for architecture in amd64 arm64; do
+            test -f "$payload_dir/agentdock_darwin_$architecture.tar.gz"
+            test -f "$payload_dir/agentdock_darwin_$architecture.tar.gz.sha256"
+            test -x "$payload_dir/cloudflared_darwin_$architecture"
+            test -f "$payload_dir/cloudflared_darwin_$architecture.sha256"
+          done
+          (
+            cd "$payload_dir"
+            shasum -a 256 -c agentdock_darwin_amd64.tar.gz.sha256
+            shasum -a 256 -c agentdock_darwin_arm64.tar.gz.sha256
+            shasum -a 256 -c cloudflared_darwin_amd64.sha256
+            shasum -a 256 -c cloudflared_darwin_arm64.sha256
+          )
+
+          case "$(uname -m)" in
+            arm64) release_arch=arm64 ;;
+            x86_64) release_arch=amd64 ;;
+            *) print -u2 -- "unsupported verification architecture: $(uname -m)"; exit 1 ;;
+          esac
+          offline_home="$RUNNER_TEMP/offline-home"
+          HOME="$offline_home" \
+            zsh "$mount_dir/AgentDock.app/Contents/Resources/install-macos-platform.sh" \
+              --offline \
+              --agentdock-archive "$payload_dir/agentdock_darwin_$release_arch.tar.gz" \
+              --agentdock-checksum-file "$payload_dir/agentdock_darwin_$release_arch.tar.gz.sha256" \
+              --cloudflared-binary "$payload_dir/cloudflared_darwin_$release_arch" \
+              --cloudflared-checksum-file "$payload_dir/cloudflared_darwin_$release_arch.sha256" \
+              --register-service \
+              --tunnel quick \
+              --no-start
+          "$offline_home/.local/bin/agentdock" --help >/dev/null 2>&1
+          "$offline_home/.local/bin/cloudflared" --version >/dev/null
           hdiutil detach "$mount_dir" >/dev/null
           dmg_mounted=false
 

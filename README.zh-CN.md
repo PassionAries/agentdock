@@ -146,7 +146,7 @@ docker compose down
 
 ### macOS 图形安装
 
-普通 macOS 用户可以从 GitHub Release 下载 `AgentDock-macos-universal.dmg`，打开后把 `AgentDock.app` 拖到“应用程序”快捷入口。当前免费版本使用 ad-hoc 签名、未经过 Apple 公证，因此首次启动需要在“应用程序”中右键 AgentDock 并选择“打开”；之后不需要终端或管理员权限。
+普通 macOS 用户可以从 GitHub Release 下载 `AgentDock-macos-universal.dmg`，打开后把 `AgentDock.app` 拖到“应用程序”快捷入口。DMG 已内置 Apple Silicon 与 Intel 两种架构的 AgentDock 核心、核心 Skill 和 Cloudflare `cloudflared`，安装、升级和修复组件时不再联网下载；实际创建 Quick Tunnel 或认证 Named Tunnel 时仍需要网络。当前免费版本使用 ad-hoc 签名、未经过 Apple 公证，因此首次启动需要在“应用程序”中右键 AgentDock 并选择“打开”；之后不需要终端或管理员权限。
 
 首次启动的图形界面可以直接选择仅本机、临时公网或固定 Cloudflare 域名。固定域名和 Tunnel Token 都在图形表单中填写，Token 通过仅当前用户可读的临时文件交给安装器，不会进入进程命令行。
 

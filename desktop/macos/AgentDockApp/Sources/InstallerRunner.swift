@@ -51,6 +51,7 @@ final class InstallerRunner {
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
         let resultURL = temporaryDirectory.appendingPathComponent("result.json")
+        let offlinePayload = try requiredOfflinePayload()
         var tokenURL: URL?
         if request.mode == .named, let token = try request.validatedTunnelToken() {
             let url = temporaryDirectory.appendingPathComponent("tunnel-token")
@@ -64,7 +65,8 @@ final class InstallerRunner {
             scriptPath: scriptPath,
             version: version,
             resultPath: resultURL.path,
-            tokenPath: tokenURL?.path
+            tokenPath: tokenURL?.path,
+            offlinePayload: offlinePayload
         )
         let execution = try runProcess(executable: "/bin/zsh", arguments: arguments)
         if execution.status != 0 {
@@ -79,6 +81,47 @@ final class InstallerRunner {
             throw ValidationError("安装结果格式不受支持。")
         }
         return result
+    }
+
+    private static func requiredOfflinePayload() throws -> OfflinePayloadPaths {
+#if arch(arm64)
+        let architecture = "arm64"
+#elseif arch(x86_64)
+        let architecture = "amd64"
+#else
+        throw ValidationError("当前 Mac 架构不受离线安装包支持。")
+#endif
+
+        guard let resources = Bundle.main.resourceURL else {
+            throw ValidationError("应用包缺少资源目录。")
+        }
+        let payloadDirectory = resources.appendingPathComponent("offline-payload", isDirectory: true)
+        let archive = payloadDirectory.appendingPathComponent("agentdock_darwin_\(architecture).tar.gz")
+        let archiveChecksum = payloadDirectory.appendingPathComponent("agentdock_darwin_\(architecture).tar.gz.sha256")
+        let cloudflared = payloadDirectory.appendingPathComponent("cloudflared_darwin_\(architecture)")
+        let cloudflaredChecksum = payloadDirectory.appendingPathComponent("cloudflared_darwin_\(architecture).sha256")
+
+        for (url, label) in [
+            (archive, "AgentDock 核心载荷"),
+            (archiveChecksum, "AgentDock 核心校验文件"),
+            (cloudflared, "cloudflared 载荷"),
+            (cloudflaredChecksum, "cloudflared 校验文件"),
+        ] {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw ValidationError("应用包缺少有效的\(label)：\(url.lastPathComponent)")
+            }
+        }
+        guard FileManager.default.isExecutableFile(atPath: cloudflared.path) else {
+            throw ValidationError("应用包中的 cloudflared 载荷不可执行。")
+        }
+
+        return OfflinePayloadPaths(
+            agentDockArchive: archive.path,
+            agentDockChecksum: archiveChecksum.path,
+            cloudflaredBinary: cloudflared.path,
+            cloudflaredChecksum: cloudflaredChecksum.path
+        )
     }
 
     private static func extractInstallerError(from output: String) -> String {

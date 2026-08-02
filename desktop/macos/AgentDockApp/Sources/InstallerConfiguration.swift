@@ -25,6 +25,13 @@ enum TunnelMode: String, CaseIterable {
     }
 }
 
+struct OfflinePayloadPaths {
+    let agentDockArchive: String
+    let agentDockChecksum: String
+    let cloudflaredBinary: String
+    let cloudflaredChecksum: String
+}
+
 struct InstallRequest {
     let mode: TunnelMode
     let serverURL: String
@@ -95,7 +102,8 @@ struct InstallRequest {
         scriptPath: String,
         version: String,
         resultPath: String,
-        tokenPath: String?
+        tokenPath: String?,
+        offlinePayload: OfflinePayloadPaths
     ) throws -> [String] {
         var arguments = [
             scriptPath,
@@ -104,6 +112,11 @@ struct InstallRequest {
             "--non-interactive",
             "--tunnel", mode.rawValue,
             "--result-file", resultPath,
+            "--offline",
+            "--agentdock-archive", offlinePayload.agentDockArchive,
+            "--agentdock-checksum-file", offlinePayload.agentDockChecksum,
+            "--cloudflared-binary", offlinePayload.cloudflaredBinary,
+            "--cloudflared-checksum-file", offlinePayload.cloudflaredChecksum,
         ]
         if mode == .named {
             arguments += ["--server-url", try validatedServerURL() ?? ""]

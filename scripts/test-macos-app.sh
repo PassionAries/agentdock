@@ -28,8 +28,53 @@ mkdir -p "$TMP_ROOT/output"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip.sha256"
 
+case "$(uname -m)" in
+  arm64|aarch64) release_arch="arm64" ;;
+  x86_64|amd64) release_arch="amd64" ;;
+  *) print -u2 -- "unsupported test architecture: $(uname -m)"; exit 1 ;;
+esac
+
+# 构建当前架构的真实核心载荷和最小 cloudflared 替身，验证 DMG 构建只接受
+# 带校验文件的 Mach-O 离线资源，不依赖测试期间访问公网。
+payload_dir="$TMP_ROOT/offline-payload"
+payload_build="$TMP_ROOT/offline-build"
+mkdir -p "$payload_dir" "$payload_build/bin" "$payload_build/share/agentdock"
+(
+  cd "$ROOT_DIR"
+  CGO_ENABLED=0 GOOS=darwin GOARCH="$release_arch" \
+    go build -trimpath -o "$payload_build/bin/agentdock" ./cmd/agentdock
+)
+python3 "$ROOT_DIR/scripts/build-core-skill-bundle.py" \
+  --output "$payload_build/share/agentdock/core-skills"
+agentdock_archive="agentdock_darwin_${release_arch}.tar.gz"
+tar -C "$payload_build" -czf "$payload_dir/$agentdock_archive" \
+  bin/agentdock share/agentdock/core-skills
+(
+  cd "$payload_dir"
+  shasum -a 256 "$agentdock_archive" > "$agentdock_archive.sha256"
+)
+
+cat > "$TMP_ROOT/cloudflared.go" <<'GO'
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("cloudflared version test")
+}
+GO
+cloudflared_binary="cloudflared_darwin_${release_arch}"
+CGO_ENABLED=0 GOOS=darwin GOARCH="$release_arch" \
+  go build -trimpath -o "$payload_dir/$cloudflared_binary" "$TMP_ROOT/cloudflared.go"
+chmod 0755 "$payload_dir/$cloudflared_binary"
+(
+  cd "$payload_dir"
+  shasum -a 256 "$cloudflared_binary" > "$cloudflared_binary.sha256"
+)
+
 AGENTDOCK_MACOS_ARCHES="$(uname -m)" \
 AGENTDOCK_MACOS_APP_OUTPUT_DIR="$TMP_ROOT/output" \
+AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR="$payload_dir" \
   "$ROOT_DIR/packaging/macos/build-app.sh"
 
 APP="$TMP_ROOT/output/AgentDock.app"
@@ -41,6 +86,15 @@ test -x "$APP/Contents/Resources/install-macos-platform.sh"
 test -x "$APP/Contents/Resources/install-browser-runner-macos.sh"
 test -f "$APP/Contents/Resources/browser-runner/browser-runner.js"
 test -f "$APP/Contents/Resources/browser-runner/node_modules/playwright-core/package.json"
+test -f "$APP/Contents/Resources/offline-payload/$agentdock_archive"
+test -f "$APP/Contents/Resources/offline-payload/$agentdock_archive.sha256"
+test -x "$APP/Contents/Resources/offline-payload/$cloudflared_binary"
+test -f "$APP/Contents/Resources/offline-payload/$cloudflared_binary.sha256"
+(
+  cd "$APP/Contents/Resources/offline-payload"
+  shasum -a 256 -c "$agentdock_archive.sha256"
+  shasum -a 256 -c "$cloudflared_binary.sha256"
+)
 test -f "$DMG"
 test -f "$DMG.sha256"
 test ! -e "$ZIP"
@@ -66,6 +120,12 @@ test "$(readlink "$MOUNT_POINT/Applications")" = "/Applications"
 codesign --verify --deep --strict --verbose=2 "$MOUNT_POINT/AgentDock.app"
 cmp "$APP/Contents/MacOS/AgentDock" "$MOUNT_POINT/AgentDock.app/Contents/MacOS/AgentDock"
 cmp "$APP/Contents/MacOS/AgentDockLoginHelper" "$MOUNT_POINT/AgentDock.app/Contents/MacOS/AgentDockLoginHelper"
+cmp \
+  "$APP/Contents/Resources/offline-payload/$agentdock_archive" \
+  "$MOUNT_POINT/AgentDock.app/Contents/Resources/offline-payload/$agentdock_archive"
+cmp \
+  "$APP/Contents/Resources/offline-payload/$cloudflared_binary" \
+  "$MOUNT_POINT/AgentDock.app/Contents/Resources/offline-payload/$cloudflared_binary"
 hdiutil detach "$MOUNT_POINT" >/dev/null
 MOUNTED=false
 

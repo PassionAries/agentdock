@@ -58,7 +58,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           for path in \
+            packaging/macos/build-app.sh \
             scripts/install-macos-platform.sh \
+            scripts/test-macos-app.sh \
             scripts/uninstall-macos.sh \
             scripts/sign-macos.sh \
             scripts/deploy-macos-source.sh \
@@ -66,6 +68,7 @@ jobs:
             zsh -n "$path"
           done
           ./scripts/test-install-macos.sh
+          ./scripts/test-macos-app.sh
 
       - name: Check Windows PowerShell installer syntax
         if: runner.os == 'Windows'

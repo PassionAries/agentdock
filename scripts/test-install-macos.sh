@@ -216,6 +216,71 @@ SCRIPT
 chmod 0755 "$fake_cloudflared"
 ln -s ../fake-cloudflared-cellar/cloudflared "$fake_cloudflared_bin/cloudflared"
 
+# 图形 DMG 使用强制离线模式：核心和 cloudflared 都从本地载荷安装，
+# 即使 PATH 中的 curl 被替换为失败程序，也不能发生任何下载尝试。
+offline_home="$TMP_ROOT/offline home"
+offline_bin="$TMP_ROOT/offline bin"
+offline_curl_calls="$TMP_ROOT/offline curl calls"
+offline_cloudflared_checksum="$TMP_ROOT/cloudflared.sha256"
+mkdir -p "$offline_home" "$offline_bin"
+cat > "$offline_bin/curl" <<SCRIPT
+#!/bin/zsh
+print -r -- "\$*" >> "$offline_curl_calls"
+exit 91
+SCRIPT
+chmod 0755 "$offline_bin/curl"
+shasum -a 256 "$fake_cloudflared" > "$offline_cloudflared_checksum"
+env -i \
+  HOME="$offline_home" \
+  PATH="$offline_bin:$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+    --offline \
+    --agentdock-archive "$release_dir/$asset" \
+    --agentdock-checksum-file "$release_dir/$asset.sha256" \
+    --cloudflared-binary "$fake_cloudflared" \
+    --cloudflared-checksum-file "$offline_cloudflared_checksum" \
+    --register-service \
+    --tunnel quick \
+    --no-start
+test ! -e "$offline_curl_calls"
+test -x "$offline_home/.local/bin/agentdock"
+test -x "$offline_home/.local/bin/cloudflared"
+assert_file_contains "$offline_home/Library/Application Support/AgentDock/cloudflared.env" 'AGENTDOCK_TUNNEL_MODE=quick'
+
+bad_agentdock_checksum="$TMP_ROOT/bad-agentdock.sha256"
+print -r -- "$(printf '0%.0s' {1..64})  $asset" > "$bad_agentdock_checksum"
+if env -i \
+  HOME="$TMP_ROOT/offline bad checksum home" \
+  PATH="$offline_bin:$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+    --offline \
+    --agentdock-archive "$release_dir/$asset" \
+    --agentdock-checksum-file "$bad_agentdock_checksum" \
+    --register-service \
+    --tunnel none \
+    --no-start >/dev/null 2>&1; then
+  print -u2 -- "offline installer accepted a corrupted AgentDock checksum"
+  exit 1
+fi
+test ! -e "$TMP_ROOT/offline bad checksum home/.local/bin/agentdock"
+test ! -e "$offline_curl_calls"
+
+if env -i \
+  HOME="$TMP_ROOT/offline missing payload home" \
+  PATH="$offline_bin:$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+    --offline \
+    --register-service \
+    --tunnel none \
+    --no-start >/dev/null 2>&1; then
+  print -u2 -- "offline installer accepted missing AgentDock payload"
+  exit 1
+fi
+test ! -e "$offline_curl_calls"
+
 # 图形安装器通过受限临时文件传递 Token。权限过宽时必须在任何安装动作前拒绝并删除文件。
 insecure_token_file="$TMP_ROOT/insecure-tunnel-token"
 print -rn -- 'must-not-be-used' > "$insecure_token_file"
