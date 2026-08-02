@@ -140,7 +140,7 @@ docker compose down
 
 ### Cloudflare Tunnel 公网访问
 
-macOS 和 Linux 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装时只询问是否有已接入 Cloudflare 的域名：
+macOS、Linux 和 Windows 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装时只询问是否有已接入 Cloudflare 的域名：
 
 - **有域名**：使用固定地址，适合长期运行；安装器会询问 HTTPS 公网地址和 Tunnel Token。
 - **没有域名**：自动生成临时 `trycloudflare.com` 地址，适合快速体验；Tunnel 重启后地址可能变化。
@@ -153,7 +153,13 @@ macOS 使用后台服务和公网入口：
 zsh install-macos.sh --register-service
 ```
 
-Linux 直接运行交互式安装器即可。已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。
+Linux 直接运行交互式安装器即可。Windows 使用登录启动模式：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -RegisterStartup
+```
+
+已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
 
 临时地址变化后，重新运行同一个安装脚本即可生成并回写新地址。安装器会保留原 Bearer Token、OAuth 登录密码和签名密钥；用户只需在客户端替换 MCP URL，并重新完成 OAuth 授权。
 

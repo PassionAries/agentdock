@@ -55,17 +55,31 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 
 	for _, want := range []string{
 		"agentdock_windows_$architecture.zip",
+		"cloudflared-windows-$Architecture.exe",
 		"Get-FileHash -LiteralPath $archivePath -Algorithm SHA256",
 		"Stop-AgentDockForUpgrade -BinaryPath $destinationBinary",
-		"Get-Process -Name 'agentdock'",
+		"Get-ProcessesByPath -ProcessName 'agentdock'",
+		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
 		"Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force",
 		"Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary",
-		"Test-Path -LiteralPath $tokenPath -PathType Leaf",
+		"Write-ProtectedText -Path $tokenPath",
+		"Write-ProtectedText -Path $oauthPasswordPath",
+		"Write-ProtectedText -Path $oauthTokenSecretPath",
+		"Write-ProtectedText -Path $tunnelTokenPath",
 		"Copy-Item -LiteralPath $binaryBackup -Destination $destinationBinary -Force",
 		"DataProtectionScope]::CurrentUser",
 		"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
 		"New-ItemProperty -Path $runKey -Name $runValueName",
+		"New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName",
 		"Start-AgentDockLauncher -LauncherPath $launcherPath",
+		"Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath",
+		"Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)",
+		"RedirectStandardOutput = '$escapedCloudflaredStdoutLogPath'",
+		"RedirectStandardError = '$escapedCloudflaredStderrLogPath'",
+		"RuntimeInformation]::OSArchitecture",
+		"$env:AGENTDOCK_OAUTH_ENABLED = 'true'",
+		"$env:AGENTDOCK_SERVER_URL = `$serverUrl",
+		"Authentication: Bearer Token and OAuth are both enabled.",
 		"http://127.0.0.1:$HealthPort/healthz",
 	} {
 		if !strings.Contains(script, want) {
@@ -83,8 +97,11 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 
 	const securityAssemblyLoad = "Add-Type -AssemblyName System.Security"
-	if got := strings.Count(script, securityAssemblyLoad); got != 2 {
-		t.Fatalf("install-windows.ps1 must load System.Security in the installer and generated launcher; got %d occurrences", got)
+	if got := strings.Count(script, securityAssemblyLoad); got != 3 {
+		t.Fatalf("install-windows.ps1 must load System.Security in the installer and both generated launchers; got %d occurrences", got)
+	}
+	if strings.Contains(script, "--token $TunnelToken") || strings.Contains(script, "--token `$env:TUNNEL_TOKEN") {
+		t.Fatal("cloudflared token must be decrypted into its environment, not placed in process arguments")
 	}
 	if strings.Contains(script, "RunLevel Highest") {
 		t.Fatal("Windows installer should not require elevated startup")
@@ -115,6 +132,29 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	} {
 		if strings.Contains(script, incompatible) {
 			t.Fatalf("install-windows.ps1 contains Windows PowerShell 5.1 incompatible syntax %q", incompatible)
+		}
+	}
+}
+
+func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
+	data, err := os.ReadFile("uninstall-windows.ps1")
+	if err != nil {
+		t.Fatalf("read uninstall-windows.ps1: %v", err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		"Stop-ProcessByPath -ProcessName 'cloudflared'",
+		"Remove-ItemProperty -LiteralPath $runKey -Name $CloudflaredStartupValueName",
+		"'start-cloudflared.ps1'",
+		"'oauth-password.dpapi'",
+		"'oauth-token-secret.dpapi'",
+		"'cloudflared-token.dpapi'",
+		"'cloudflared.out.log'",
+		"'cloudflared.err.log'",
+		"Legacy AgentDock scheduled task could not be removed",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("uninstall-windows.ps1 missing %q", want)
 		}
 	}
 }

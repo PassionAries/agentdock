@@ -140,7 +140,7 @@ See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-sta
 
 ### Public access with Cloudflare Tunnel
 
-The macOS and Linux installers do not require regular users to understand internal `quick` or `named` modes. Public installation asks only whether a Cloudflare-managed domain is available:
+The macOS, Linux, and Windows installers do not require regular users to understand internal `quick` or `named` modes. Public installation asks only whether a Cloudflare-managed domain is available:
 
 - **Domain available:** use a fixed hostname for long-running access. The installer asks for the HTTPS public origin and Tunnel Token.
 - **No domain:** create a temporary `trycloudflare.com` URL for immediate testing. The URL may change after `cloudflared` restarts.
@@ -153,7 +153,13 @@ On macOS, install the background service and public endpoint with:
 zsh install-macos.sh --register-service
 ```
 
-On Linux, run the interactive installer normally. Existing automation may still override the prompt with `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`.
+On Linux, run the interactive installer normally. On Windows, use login startup mode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -RegisterStartup
+```
+
+Existing automation may still override the prompt with `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`. Windows protects the Bearer Token, OAuth password, OAuth signing secret, and Tunnel Token separately with current-user DPAPI.
 
 When a temporary URL changes, rerun the same installer. It writes the new URL back to AgentDock while preserving the Bearer Token, OAuth login password, and signing secret. Update the MCP URL in the client and complete OAuth authorization again.
 

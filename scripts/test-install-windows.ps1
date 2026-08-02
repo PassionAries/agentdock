@@ -57,7 +57,17 @@ foreach ($forbidden in @(
 foreach ($required in @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     'New-ItemProperty -Path $runKey -Name $runValueName',
+    'New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName',
     'Start-AgentDockLauncher -LauncherPath $launcherPath',
+    'Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath',
+    'cloudflared-windows-$Architecture.exe',
+    'Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)',
+    "RedirectStandardOutput = '$escapedCloudflaredStdoutLogPath'",
+    "RedirectStandardError = '$escapedCloudflaredStderrLogPath'",
+    'Write-ProtectedText -Path $oauthPasswordPath',
+    'Write-ProtectedText -Path $oauthTokenSecretPath',
+    'Write-ProtectedText -Path $tunnelTokenPath',
+    'Authentication: Bearer Token and OAuth are both enabled.',
     '& $destinationBinary skill bootstrap --bundle $coreSkillBundle',
     "GetEnvironmentVariable('AGENTDOCK_RELEASE_BASE_URL')"
 )) {

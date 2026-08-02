@@ -59,7 +59,8 @@ function Assert-AgentDockHealthy {
         throw "AgentDock HKCU startup command does not reference the launcher: $startupCommand"
     }
 
-    $skillStore = Join-Path $HOME '.agentdock\skill-store'
+    $userHome = [Environment]::GetFolderPath('UserProfile')
+    $skillStore = Join-Path $userHome '.agentdock\skill-store'
     $bundledPath = Join-Path $skillStore 'bundled-skills.json'
     if (-not (Test-Path -LiteralPath $bundledPath -PathType Leaf)) {
         throw "Bundled Skill list was not created: $bundledPath"
@@ -92,6 +93,7 @@ try {
         -Version $Version `
         -InstallDir $installDir `
         -RegisterStartup `
+        -TunnelMode none `
         -Port $Port `
         -AuthToken 'agentdock-e2e-token'
 
@@ -103,6 +105,7 @@ try {
         -Version $Version `
         -InstallDir $installDir `
         -RegisterStartup `
+        -TunnelMode none `
         -Port $Port
 
     Assert-AgentDockHealthy
