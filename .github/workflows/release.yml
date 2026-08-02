@@ -129,7 +129,12 @@ jobs:
 
       - name: Validate menu app
         run: |
-          zsh -n packaging/macos/build-app.sh scripts/test-macos-app.sh
+          zsh -n \
+            packaging/macos/build-app.sh \
+            scripts/install-browser-runner-macos.sh \
+            scripts/test-install-browser-runner-macos.sh \
+            scripts/test-macos-app.sh
+          ./scripts/test-install-browser-runner-macos.sh
           ./scripts/test-macos-app.sh
 
       - name: Build universal menu app

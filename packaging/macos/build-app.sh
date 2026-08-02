@@ -5,6 +5,8 @@ ROOT_DIR="${0:A:h:h:h}"
 SOURCE_DIR="$ROOT_DIR/desktop/macos/AgentDockApp/Sources"
 LOGIN_HELPER_SOURCE="$ROOT_DIR/desktop/macos/AgentDockLoginHelper/main.swift"
 INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-macos-platform.sh"
+BROWSER_INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-browser-runner-macos.sh"
+BROWSER_RUNNER_SOURCE="$ROOT_DIR/examples/browser-runner"
 OUTPUT_DIR="${AGENTDOCK_MACOS_APP_OUTPUT_DIR:-$ROOT_DIR/dist/macos-app}"
 ARCH_LIST="${AGENTDOCK_MACOS_ARCHES:-$(uname -m)}"
 MIN_VERSION="${AGENTDOCK_MACOS_MIN_VERSION:-13.0}"
@@ -32,12 +34,15 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-for command_name in codesign ditto file lipo plutil shasum swiftc xcrun; do
+for command_name in codesign ditto file lipo npm plutil shasum swiftc xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
 [[ -f "$LOGIN_HELPER_SOURCE" && ! -L "$LOGIN_HELPER_SOURCE" ]] || die "缺少 macOS 登录代理源码：$LOGIN_HELPER_SOURCE"
 [[ -f "$INSTALLER_SCRIPT" && ! -L "$INSTALLER_SCRIPT" ]] || die "缺少 macOS 安装脚本：$INSTALLER_SCRIPT"
+[[ -f "$BROWSER_INSTALLER_SCRIPT" && ! -L "$BROWSER_INSTALLER_SCRIPT" ]] || die "缺少浏览器支持安装脚本：$BROWSER_INSTALLER_SCRIPT"
+[[ -d "$BROWSER_RUNNER_SOURCE" && ! -L "$BROWSER_RUNNER_SOURCE" ]] || die "缺少 browser-runner 源码：$BROWSER_RUNNER_SOURCE"
+[[ -f "$BROWSER_RUNNER_SOURCE/package-lock.json" && ! -L "$BROWSER_RUNNER_SOURCE/package-lock.json" ]] || die "缺少 browser-runner package-lock.json"
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
@@ -48,6 +53,19 @@ fi
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentdock-macos-app.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+BROWSER_RUNNER_BUNDLE="$TMP_DIR/browser-runner"
+ditto "$BROWSER_RUNNER_SOURCE" "$BROWSER_RUNNER_BUNDLE"
+print -- "==> 安装 browser-runner 生产依赖"
+(
+  cd "$BROWSER_RUNNER_BUNDLE"
+  npm ci --omit=dev --ignore-scripts --no-bin-links >/dev/null
+)
+[[ -f "$BROWSER_RUNNER_BUNDLE/node_modules/playwright-core/package.json" && ! -L "$BROWSER_RUNNER_BUNDLE/node_modules/playwright-core/package.json" ]] || \
+  die "browser-runner 生产依赖安装失败"
+if find "$BROWSER_RUNNER_BUNDLE" -type l -print -quit | grep -q .; then
+  die "browser-runner Bundle 不能包含符号链接"
+fi
 
 mkdir -p "$OUTPUT_DIR"
 rm -rf "$OUTPUT_DIR/AgentDock.app" "$OUTPUT_DIR/AgentDock-macos-universal.zip" "$OUTPUT_DIR/AgentDock-macos-universal.zip.sha256"
@@ -107,7 +125,11 @@ fi
 chmod 0755 "$MACOS_DIR/AgentDockLoginHelper"
 
 cp -p "$INSTALLER_SCRIPT" "$RESOURCES_DIR/install-macos-platform.sh"
-chmod 0755 "$RESOURCES_DIR/install-macos-platform.sh"
+cp -p "$BROWSER_INSTALLER_SCRIPT" "$RESOURCES_DIR/install-browser-runner-macos.sh"
+ditto "$BROWSER_RUNNER_BUNDLE" "$RESOURCES_DIR/browser-runner"
+chmod 0755 "$RESOURCES_DIR/install-macos-platform.sh" "$RESOURCES_DIR/install-browser-runner-macos.sh"
+find "$RESOURCES_DIR/browser-runner" -type d -exec chmod 0755 {} +
+find "$RESOURCES_DIR/browser-runner" -type f -exec chmod 0644 {} +
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
