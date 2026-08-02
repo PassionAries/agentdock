@@ -10,9 +10,9 @@ SOURCE="$TMP_ROOT/source"
 STATE="$TMP_ROOT/state"
 RESULT="$TMP_ROOT/result.json"
 mkdir -p "$SOURCE/node_modules/playwright-core"
-cp "$ROOT_DIR/examples/browser-runner/browser-runner.js" "$SOURCE/browser-runner.js"
-cp "$ROOT_DIR/examples/browser-runner/package.json" "$SOURCE/package.json"
-cp "$ROOT_DIR/examples/browser-runner/package-lock.json" "$SOURCE/package-lock.json"
+cp "$ROOT_DIR/tools/browser-runner/browser-runner.js" "$SOURCE/browser-runner.js"
+cp "$ROOT_DIR/tools/browser-runner/package.json" "$SOURCE/package.json"
+cp "$ROOT_DIR/tools/browser-runner/package-lock.json" "$SOURCE/package-lock.json"
 print -- '{"name":"playwright-core","version":"test"}' > "$SOURCE/node_modules/playwright-core/package.json"
 
 AGENTDOCK_STATE_DIR="$STATE" \
