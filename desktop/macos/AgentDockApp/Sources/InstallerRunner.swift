@@ -52,8 +52,7 @@ final class InstallerRunner {
 
         let resultURL = temporaryDirectory.appendingPathComponent("result.json")
         var tokenURL: URL?
-        if request.mode == .named {
-            let token = try request.validatedTunnelToken() ?? ""
+        if request.mode == .named, let token = try request.validatedTunnelToken() {
             let url = temporaryDirectory.appendingPathComponent("tunnel-token")
             guard FileManager.default.createFile(atPath: url.path, contents: Data(token.utf8), attributes: [.posixPermissions: 0o600]) else {
                 throw ValidationError("无法创建安全的 Tunnel Token 临时文件。")

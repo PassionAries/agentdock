@@ -29,6 +29,14 @@ struct InstallRequest {
     let mode: TunnelMode
     let serverURL: String
     let tunnelToken: String
+    let reuseExistingTunnelToken: Bool
+
+    init(mode: TunnelMode, serverURL: String, tunnelToken: String, reuseExistingTunnelToken: Bool = false) {
+        self.mode = mode
+        self.serverURL = serverURL
+        self.tunnelToken = tunnelToken
+        self.reuseExistingTunnelToken = reuseExistingTunnelToken
+    }
 
     func validatedServerURL() throws -> String? {
         guard mode == .named else { return nil }
@@ -71,6 +79,9 @@ struct InstallRequest {
     func validatedTunnelToken() throws -> String? {
         guard mode == .named else { return nil }
         let token = tunnelToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if token.isEmpty, reuseExistingTunnelToken {
+            return nil
+        }
         guard !token.isEmpty else {
             throw ValidationError("请填写 Cloudflare Tunnel Token。")
         }
@@ -95,13 +106,12 @@ struct InstallRequest {
             "--result-file", resultPath,
         ]
         if mode == .named {
-            guard let tokenPath, !tokenPath.isEmpty else {
+            arguments += ["--server-url", try validatedServerURL() ?? ""]
+            if let tokenPath, !tokenPath.isEmpty {
+                arguments += ["--tunnel-token-file", tokenPath]
+            } else if !reuseExistingTunnelToken {
                 throw ValidationError("缺少安全的 Tunnel Token 临时文件。")
             }
-            arguments += [
-                "--server-url", try validatedServerURL() ?? "",
-                "--tunnel-token-file", tokenPath,
-            ]
         }
         return arguments
     }

@@ -3,24 +3,61 @@ import ServiceManagement
 
 final class MenuLoginAgentController {
     private let label = "com.uvwt.agentdock.menu"
+    private let preferenceKey = "menuLoginEnabled"
+    private let preferenceInitializedKey = "menuLoginPreferenceInitialized"
     private let fileManager = FileManager.default
+    private let defaults: UserDefaults
+    private let paths: AppPaths
+
+    init(defaults: UserDefaults = .standard, paths: AppPaths = AppPaths()) {
+        self.defaults = defaults
+        self.paths = paths
+    }
+
+    func configureOnLaunch() throws {
+        migrateLegacyMainAppLoginItem()
+        if !defaults.bool(forKey: preferenceInitializedKey) {
+            defaults.set(true, forKey: preferenceInitializedKey)
+            defaults.set(true, forKey: preferenceKey)
+        }
+        if isEnabled {
+            try register()
+        } else {
+            try unregister()
+        }
+    }
+
+    var isEnabled: Bool {
+        if defaults.bool(forKey: preferenceInitializedKey) {
+            return defaults.bool(forKey: preferenceKey)
+        }
+        return fileManager.fileExists(atPath: paths.menuLaunchAgent.path)
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        let previous = isEnabled
+        guard previous != enabled else { return }
+        if enabled {
+            try register()
+        } else {
+            try unregister()
+        }
+        defaults.set(true, forKey: preferenceInitializedKey)
+        defaults.set(enabled, forKey: preferenceKey)
+    }
 
     func register() throws {
         migrateLegacyMainAppLoginItem()
-
         guard let helperPath = Bundle.main.path(forAuxiliaryExecutable: "AgentDockLoginHelper"),
               fileManager.isExecutableFile(atPath: helperPath) else {
             throw ValidationError("应用包缺少菜单栏登录代理。")
         }
 
-        let home = fileManager.homeDirectoryForCurrentUser
-        let launchAgents = home.appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-        let plistURL = launchAgents.appendingPathComponent("\(label).plist")
+        let launchAgents = paths.menuLaunchAgent.deletingLastPathComponent()
         try fileManager.createDirectory(at: launchAgents, withIntermediateDirectories: true)
-
-        if let attributes = try? fileManager.attributesOfItem(atPath: plistURL.path),
-           attributes[.type] as? FileAttributeType == .typeSymbolicLink {
-            throw ValidationError("菜单栏登录项不能写入符号链接：\(plistURL.path)")
+        if let values = try? paths.menuLaunchAgent.resourceValues(forKeys: [.isSymbolicLinkKey]),
+           values.isSymbolicLink == true {
+            throw ValidationError("菜单栏登录项不能写入符号链接：\(paths.menuLaunchAgent.path)")
         }
 
         let plist: [String: Any] = [
@@ -30,35 +67,43 @@ final class MenuLoginAgentController {
             "ProcessType": "Background",
             "LimitLoadToSessionType": "Aqua",
         ]
-        let data = try PropertyListSerialization.data(
-            fromPropertyList: plist,
-            format: .xml,
-            options: 0
-        )
-        let currentData = try? Data(contentsOf: plistURL)
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        let currentData = try? Data(contentsOf: paths.menuLaunchAgent)
         let changed = currentData != data
+        let domain = "gui/\(getuid())"
 
         if changed {
-            let domain = "gui/\(getuid())"
             if isLoaded(domain: domain) {
-                _ = try? runProcess(
-                    executable: "/bin/launchctl",
-                    arguments: ["bootout", "\(domain)/\(label)"]
-                )
+                _ = try? runProcess(executable: "/bin/launchctl", arguments: ["bootout", "\(domain)/\(label)"])
             }
-            try data.write(to: plistURL, options: .atomic)
-            try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: plistURL.path)
+            try data.write(to: paths.menuLaunchAgent, options: .atomic)
+            try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: paths.menuLaunchAgent.path)
         }
 
-        let domain = "gui/\(getuid())"
         guard changed || !isLoaded(domain: domain) else { return }
         let result = try runProcess(
             executable: "/bin/launchctl",
-            arguments: ["bootstrap", domain, plistURL.path]
+            arguments: ["bootstrap", domain, paths.menuLaunchAgent.path]
         )
         guard result.status == 0 else {
-            let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw ValidationError(message.isEmpty ? "菜单栏登录项注册失败。" : message)
+            throw ValidationError(commandError(result.output, fallback: "菜单栏登录项注册失败。"))
+        }
+    }
+
+    func unregister() throws {
+        migrateLegacyMainAppLoginItem()
+        let domain = "gui/\(getuid())"
+        if isLoaded(domain: domain) {
+            let result = try runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["bootout", "\(domain)/\(label)"]
+            )
+            guard result.status == 0 else {
+                throw ValidationError(commandError(result.output, fallback: "菜单栏登录项停止失败。"))
+            }
+        }
+        if fileManager.fileExists(atPath: paths.menuLaunchAgent.path) {
+            try fileManager.removeItem(at: paths.menuLaunchAgent)
         }
     }
 
@@ -74,5 +119,10 @@ final class MenuLoginAgentController {
             executable: "/bin/launchctl",
             arguments: ["print", "\(domain)/\(label)"]
         ).status) == 0
+    }
+
+    private func commandError(_ output: String, fallback: String) -> String {
+        let message = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.isEmpty ? fallback : message
     }
 }

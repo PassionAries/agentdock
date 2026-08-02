@@ -9,6 +9,8 @@ swiftc \
   -swift-version 5 \
   -parse-as-library \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Tests/InstallerConfigurationTests.swift" \
   -o "$TMP_ROOT/installer-configuration-tests"
 "$TMP_ROOT/installer-configuration-tests"
@@ -22,6 +24,9 @@ ZIP="$TMP_ROOT/output/AgentDock-macos-universal.zip"
 test -x "$APP/Contents/MacOS/AgentDock"
 test -x "$APP/Contents/MacOS/AgentDockLoginHelper"
 test -x "$APP/Contents/Resources/install-macos-platform.sh"
+test -x "$APP/Contents/Resources/install-browser-runner-macos.sh"
+test -f "$APP/Contents/Resources/browser-runner/browser-runner.js"
+test -f "$APP/Contents/Resources/browser-runner/node_modules/playwright-core/package.json"
 test -f "$ZIP"
 test -f "$ZIP.sha256"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
