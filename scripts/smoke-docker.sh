@@ -34,6 +34,10 @@ def request(method, path, payload=None):
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["content-type"] = "application/json"
+    if path == "/mcp":
+        # Streamable HTTP 客户端必须同时声明可接收 JSON 和 SSE；即使当前服务返回 JSON，
+        # 官方 MCP SDK 也会在协议入口校验这两个媒体类型。
+        headers["accept"] = "application/json, text/event-stream"
     if token:
         headers["authorization"] = f"Bearer {token}"
     req = urllib.request.Request(base_url + path, data=data, headers=headers, method=method)
@@ -71,7 +75,8 @@ def require(condition, message):
 
 def tool_call(name, arguments, request_id):
     envelope = mcp("tools/call", {"name": name, "arguments": arguments}, request_id=request_id)
-    require(envelope.get("isError") is False, f"{name} returned an error envelope: {envelope}")
+    # MCP 将 isError 定义为可选字段；缺省值表示成功，只有显式 true 才是工具错误。
+    require(envelope.get("isError", False) is False, f"{name} returned an error envelope: {envelope}")
     result = envelope.get("structuredContent") or {}
     if name.startswith("browser_"):
         require(result.get("browser_ok") is True, f"{name} did not return browser_ok=true: {result}")
