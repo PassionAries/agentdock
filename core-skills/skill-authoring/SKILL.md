@@ -1,7 +1,7 @@
 ---
 name: skill-authoring
 description: 创建、设计、修改、升级、重构和验证 AgentDock Skill 时使用；负责可移植核心、文档、引用、辅助脚本、测试、版本和本地安装验证。
-version: 1.1.3
+version: 1.2.0
 ---
 
 # Skill Authoring
@@ -73,21 +73,27 @@ version: 1.1.3
 
 ### 3. 创建源码目录
 
-默认放在仓库：
+普通第一方和社区 Skill 默认放在独立的 `agentdock-skills` 仓库：
 
 ```text
-skill-sources/<skill-name>/
+skills/<skill-name>/
+```
+
+只有随 AgentDock 安装包自举、与运行时版本强绑定的核心 Skill 才放在 AgentDock 主仓库：
+
+```text
+core-skills/<skill-name>/
 ```
 
 按需选择结构：
 
 ```text
-skill-sources/<skill-name>/
+skills/<skill-name>/
 └── SKILL.md
 ```
 
 ```text
-skill-sources/<skill-name>/
+skills/<skill-name>/
 ├── SKILL.md
 ├── references/
 ├── scripts/
@@ -95,13 +101,13 @@ skill-sources/<skill-name>/
 ```
 
 ```text
-skill-sources/<skill-name>/
+skills/<skill-name>/
 ├── SKILL.md
 ├── run.py
 └── tests/
 ```
 
-不要为了形式创建空目录。
+不要为了形式创建空目录，也不要把普通集成重新放回 AgentDock 主仓库。
 
 ### 4. 编写 Frontmatter
 
@@ -229,7 +235,7 @@ AgentDock 验证时使用 `exec_command` 的 `skill: "<skill-name>"` 绑定当�
 ```json
 {
   "skill_action": "lint",
-  "source": "/path/to/skill-sources/example-skill"
+  "source": "/path/to/agentdock-skills/skills/example-skill"
 }
 ```
 

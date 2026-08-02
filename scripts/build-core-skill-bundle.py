@@ -78,7 +78,7 @@ def build_bundle(repo_root: Path, output: Path) -> None:
 
     entries: list[dict[str, str]] = []
     for expected_name in CORE_SKILLS:
-        skill_root = repo_root / "skill-sources" / expected_name
+        skill_root = repo_root / "core-skills" / expected_name
         name, version = read_identity(skill_root, expected_name)
         relative_archive = Path("packages") / f"{name}.zip"
         digest = package_skill(skill_root, output / relative_archive)

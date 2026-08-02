@@ -55,14 +55,14 @@ python3 run.py
 ## 3. 最小包结构
 
 ```text
-skill-sources/<skill-name>/
+skills/<skill-name>/
 └── SKILL.md
 ```
 
 按需扩展：
 
 ```text
-skill-sources/<skill-name>/
+skills/<skill-name>/
 ├── SKILL.md
 ├── references/
 ├── scripts/

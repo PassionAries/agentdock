@@ -82,7 +82,7 @@ version: 1.0.0
 """)
         self.addCleanup(temp.cleanup)
         (root / ".agentdock-install.json").write_text(
-            json.dumps({"source": "/Users/alice/agentdock/skill-sources/demo-skill"}),
+            json.dumps({"source": "/Users/alice/agentdock-skills/skills/demo-skill"}),
             encoding="utf-8",
         )
 

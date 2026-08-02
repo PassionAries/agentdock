@@ -248,6 +248,8 @@ agentdock update
 
 ### Skill 与动态 MCP
 
+官方与社区 Skill 源码统一维护在 [uvwt/agentdock-skills](https://github.com/uvwt/agentdock-skills)。本仓库只保留必须随 AgentDock 运行时发布的三个自举核心 Skill。
+
 - Skill 包校验、安装、激活和回滚
 - 稳定版、开发版、Canary 和固定版本通道
 - Skill 独立环境变量与运行环境
