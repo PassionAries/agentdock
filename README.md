@@ -101,7 +101,7 @@ Start here: [Install AgentDock](https://uvwt.github.io/agentdock-docs/docs/getti
 
 ### Windows installation
 
-Regular Windows users should download the signed offline installer matching their system: `AgentDockSetup-amd64.exe` for common Intel/AMD PCs or `AgentDockSetup-arm64.exe` for Windows on ARM. The installer already contains the AgentDock core, tray, bundled Skills, and cloudflared, so installation and upgrades do not download components from GitHub. The wizard defaults to local-only access and can register login startup. A temporary or fixed Cloudflare Tunnel is configured only when the user explicitly selects public access. The completion page shows MCP connection details, while the tray exposes status, address copying, restart, and core update actions.
+Regular Windows users should download the signed offline installer matching their system: `AgentDockSetup-amd64.exe` for common Intel/AMD PCs or `AgentDockSetup-arm64.exe` for Windows on ARM. The installer already contains the AgentDock core, tray, bundled Skills, and cloudflared, so installation and upgrades do not download components from GitHub. The wizard defaults to local-only access, login startup, and administrator-enhanced core execution. Setup itself and the tray remain normal current-user processes; a one-time UAC action creates a highest-privilege scheduled task for the AgentDock core while DPAPI secrets, Skills, tasks, and the workspace stay bound to the interactive user. Accounts that cannot elevate fall back to standard-user mode. A temporary or fixed Cloudflare Tunnel is configured only when the user explicitly selects public access. Existing installations default to a direct upgrade that preserves all settings, while an explicit option opens startup and connection settings.
 
 The PowerShell installer remains available for automation and advanced use.
 
@@ -239,7 +239,7 @@ agentdock --version
 agentdock update
 ```
 
-`agentdock update` downloads the latest release for the current platform, verifies its SHA-256 checksum, validates the new binary, backs up the current binary, and replaces it. If it detects a LaunchAgent, systemd service, Windows Service, or Windows user startup entry, it restarts the service and verifies the new version. A failed update restores the previous binary. Development builds cannot use this command. The Windows tray delegates to this same core update path; update the tray and Setup itself by running the newer `AgentDockSetup.exe`.
+`agentdock update` downloads the latest release for the current platform, verifies its SHA-256 checksum, validates the new binary, backs up the current binary, and replaces it. If it detects a LaunchAgent, systemd service, Windows Service, highest-privilege scheduled task, or Windows user startup entry, it restarts the service and verifies the new version. A failed update restores the previous binary. Development builds cannot use this command. The Windows tray delegates to this same core update path; update the tray and Setup itself by running the newer `AgentDockSetup.exe`.
 
 ## Core capabilities
 

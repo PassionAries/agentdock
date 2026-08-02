@@ -101,7 +101,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 ### Windows 安装
 
-Windows 普通用户从 Release 下载与系统架构匹配的签名离线安装包：常见 Intel/AMD 电脑使用 `AgentDockSetup-amd64.exe`，Windows ARM 设备使用 `AgentDockSetup-arm64.exe`。安装包已经包含 AgentDock 核心、托盘、内置 Skill 和 cloudflared，安装及升级过程中不会再从 GitHub 下载组件。安装向导默认只允许本机访问，并可选择登录后自动启动；只有用户明确选择时才会配置临时或固定的 Cloudflare Tunnel 公网入口。安装完成页会显示 MCP 地址和需要保存的认证信息，系统托盘可查看状态、复制地址、重启服务和触发核心更新。
+Windows 普通用户从 Release 下载与系统架构匹配的签名离线安装包：常见 Intel/AMD 电脑使用 `AgentDockSetup-amd64.exe`，Windows ARM 设备使用 `AgentDockSetup-arm64.exe`。安装包已经包含 AgentDock 核心、托盘、内置 Skill 和 cloudflared，安装及升级过程中不会再从 GitHub 下载组件。安装向导默认只允许本机访问、登录后自动启动，并默认开启“管理员增强模式”。Setup 本身和系统托盘仍使用当前普通用户身份；安装时只通过一次 UAC 为 AgentDock 核心创建“最高权限”计划任务，DPAPI 凭据、Skill、任务和工作目录仍绑定当前登录用户。无法提权的账号会明确降级为普通用户模式。只有用户明确选择时才会配置临时或固定的 Cloudflare Tunnel 公网入口；检测到已有安装时默认直接升级并保留全部设置，只有主动选择“修改设置”才会展开配置页面。
 
 PowerShell 安装脚本继续保留给自动化和高级用户使用。
 
@@ -239,7 +239,7 @@ agentdock --version
 agentdock update
 ```
 
-`agentdock update` 会下载匹配当前平台的最新 Release，校验 SHA-256 并验证新二进制，然后备份和替换当前版本。检测到 LaunchAgent、systemd、Windows Service 或 Windows 用户启动项时，会自动重启并验证新版本；失败时恢复旧版本。开发构建不能通过该命令更新。Windows 托盘调用的也是这条核心更新链路；托盘程序和 Setup 本身通过重新运行新版 `AgentDockSetup.exe` 更新。
+`agentdock update` 会下载匹配当前平台的最新 Release，校验 SHA-256 并验证新二进制，然后备份和替换当前版本。检测到 LaunchAgent、systemd、Windows Service、最高权限计划任务或 Windows 用户启动项时，会自动重启并验证新版本；失败时恢复旧版本。开发构建不能通过该命令更新。Windows 托盘调用的也是这条核心更新链路；托盘程序和 Setup 本身通过重新运行新版 `AgentDockSetup.exe` 更新。
 
 ## 核心能力
 
