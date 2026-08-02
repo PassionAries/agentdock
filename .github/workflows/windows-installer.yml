@@ -183,7 +183,7 @@ jobs:
           )
           if (-not [string]::IsNullOrWhiteSpace($testTag)) {
             $signScript = Join-Path $PWD 'scripts\sign-windows.ps1'
-            $signCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$signScript`" -Path `$q`$f`$q"
+            $signCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$signScript`$q -Path `$q`$f`$q"
             $arguments += '/DSignedBuild=1'
             $arguments += "/Sagentdock-sign=$signCommand"
           }

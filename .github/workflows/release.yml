@@ -266,7 +266,7 @@ jobs:
           $outputDir = Join-Path $PWD 'dist'
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
           $signScript = Join-Path $PWD 'scripts\sign-windows.ps1'
-          $signCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$signScript`" -Path `$q`$f`$q"
+          $signCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$signScript`$q -Path `$q`$f`$q"
           & $iscc `
             "/DAppVersion=$version" `
             "/DOutputDir=$outputDir" `
