@@ -48,16 +48,22 @@ foreach ($forbidden in @(
         throw "$InstallerPath still contains removed privileged startup or ACL code: $forbidden"
     }
 }
+if ($content.Contains('current account cannot elevate')) {
+    throw "$InstallerPath must request UAC for old scheduled-task cleanup instead of rejecting a standard user early"
+}
 
 foreach ($required in @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     'Get-AgentDockTaskState',
+    'Get-InteractiveDesktopUser',
     'New-ElevatedAgentDockScheduledTask',
     'New-ScheduledTaskPrincipal',
     '-RunLevel Highest',
     'Set-AgentDockTaskSecurity',
     'Start-ElevatedAgentDockTaskAction',
     'Restore-AgentDockTaskBackup',
+    'setup-elevated-context',
+    'Start Setup normally under the signed-in account',
     'New-ItemProperty -Path $runKey -Name $runValueName',
     'New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName',
     'Start-AgentDockLauncher -LauncherPath $launcherPath',
@@ -76,7 +82,8 @@ foreach ($required in @(
     'Write-ProtectedText -Path $oauthTokenSecretPath',
     'Write-ProtectedText -Path $tunnelTokenPath',
     'Authentication: Bearer Token and OAuth are both enabled.',
-    '& $destinationBinary skill bootstrap --bundle $coreSkillBundle',
+    '$coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)',
+    '-ErrorCode $installErrorCode',
     "GetEnvironmentVariable('AGENTDOCK_RELEASE_BASE_URL')"
 )) {
     if (-not $content.Contains($required)) {

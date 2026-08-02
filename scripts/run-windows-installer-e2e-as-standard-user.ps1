@@ -21,6 +21,10 @@ $credential = [PSCredential]::new(".\$userName", $password)
 $testScriptDir = Join-Path $env:PUBLIC ('agentdock-installer-e2e-' + [Guid]::NewGuid().ToString('N'))
 $stdoutPath = Join-Path $env:RUNNER_TEMP 'agentdock-installer-e2e.stdout.log'
 $stderrPath = Join-Path $env:RUNNER_TEMP 'agentdock-installer-e2e.stderr.log'
+$contextResultPath = Join-Path $env:PUBLIC ('agentdock-setup-context-' + [Guid]::NewGuid().ToString('N') + '.ini')
+$contextInstallDir = Join-Path $env:PUBLIC ('agentdock-setup-context-' + [Guid]::NewGuid().ToString('N') + '\bin')
+$contextStdoutPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-context.stdout.log'
+$contextStderrPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-context.stderr.log'
 
 try {
     New-LocalUser `
@@ -60,11 +64,46 @@ try {
     if ($process.ExitCode -ne 0) {
         throw "Windows installer E2E failed as standard user with exit code $($process.ExitCode)."
     }
+
+    # Setup must never continue when an over-the-shoulder administrator or any
+    # other account owns the process instead of the signed-in desktop user.
+    $contextArguments =
+        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$installerScript`"" +
+        " -InstallChannel setup -InstallDir `"$contextInstallDir`"" +
+        " -ResultFile `"$contextResultPath`""
+    $contextProcess = Start-Process `
+        -FilePath 'powershell.exe' `
+        -Credential $credential `
+        -LoadUserProfile `
+        -WorkingDirectory $env:SystemRoot `
+        -ArgumentList $contextArguments `
+        -RedirectStandardOutput $contextStdoutPath `
+        -RedirectStandardError $contextStderrPath `
+        -Wait `
+        -PassThru
+
+    if ($contextProcess.ExitCode -eq 0) {
+        throw 'Setup user-context guard unexpectedly allowed a different process user.'
+    }
+    if (-not (Test-Path -LiteralPath $contextResultPath -PathType Leaf)) {
+        throw 'Setup user-context guard did not write its structured result.'
+    }
+    $contextCode = Get-Content -LiteralPath $contextResultPath |
+        Where-Object { $_ -like 'Code=*' } |
+        Select-Object -First 1
+    if ($contextCode -ne 'Code=setup-elevated-context') {
+        throw "Unexpected Setup user-context result: $contextCode"
+    }
+    if (Test-Path -LiteralPath $contextInstallDir) {
+        throw 'Setup user-context guard wrote installation files before rejecting the wrong account.'
+    }
+    Write-Host 'AgentDock Setup user-context guard passed.'
 }
 finally {
     Remove-LocalUser -Name $userName -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testScriptDir -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stdoutPath, $stderrPath, $contextResultPath, $contextStdoutPath, $contextStderrPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Split-Path -Parent $contextInstallDir) -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host 'AgentDock Windows standard-user E2E passed.'

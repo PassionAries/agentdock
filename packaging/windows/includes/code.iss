@@ -436,6 +436,7 @@ var
   TunnelMode: String;
   PrivilegeMode: String;
   ExitCode: Integer;
+  ErrorCode: String;
   ErrorMessage: String;
   DeleteTokenFile: Boolean;
 begin
@@ -511,7 +512,10 @@ begin
     end;
     if ExitCode <> 0 then
     begin
+      ErrorCode := GetIniString('AgentDock', 'Code', '', ResultFilePath);
       ErrorMessage := GetIniString('AgentDock', 'Message', '', ResultFilePath);
+      if ErrorCode = 'setup-elevated-context' then
+        ErrorMessage := GetLocalizedMessage('ElevatedSetupUnsupported');
       if ErrorMessage = '' then
         ErrorMessage := GetLocalizedMessage('InstallerExitCode') + ' ' + IntToStr(ExitCode);
       Result := GetLocalizedMessage('InstallFailed') + ' ' + ErrorMessage;

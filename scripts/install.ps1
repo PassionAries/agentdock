@@ -291,7 +291,8 @@ function Write-InstallResult {
         [string] $BearerToken,
         [string] $OAuthLoginPassword,
         [string] $HealthStatus,
-        [string] $PrivilegeMode
+        [string] $PrivilegeMode,
+        [string] $ErrorCode = ''
     )
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -305,6 +306,7 @@ function Write-InstallResult {
     $lines = @(
         '[AgentDock]',
         "Success=$($Success.ToString().ToLowerInvariant())",
+        "Code=$ErrorCode",
         "Message=$safeMessage",
         "Version=$InstalledVersion",
         "LocalMCPUrl=$LocalMCPUrl",
@@ -428,6 +430,24 @@ function Get-CurrentTaskUser {
         Sid = $identity.User.Value
         Name = $identity.Name
         CanElevate = $groupSids -contains 'S-1-5-32-544'
+    }
+}
+
+function Get-InteractiveDesktopUser {
+    try {
+        $userName = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+        if ([string]::IsNullOrWhiteSpace($userName)) {
+            return $null
+        }
+        $sid = (New-Object Security.Principal.NTAccount($userName)).Translate(
+            [Security.Principal.SecurityIdentifier]
+        ).Value
+        return [pscustomobject]@{
+            Sid = $sid
+            Name = $userName
+        }
+    } catch {
+        return $null
     }
 }
 
@@ -1008,6 +1028,7 @@ $taskBackupDirectory = Join-Path $tempRoot 'scheduled-task-backup'
 $taskTransactionPrepared = $false
 $taskTransactionCommitted = $false
 $taskRestored = $false
+$installErrorCode = ''
 $resolvedTunnelMode = Resolve-TunnelMode -RequestedMode $TunnelMode -ModePath $tunnelModePath -StartupRequested ([bool] $RegisterStartup) -PublicAccessRequested ([bool] $ConfigurePublicAccess)
 if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
     $RegisterStartup = $true
@@ -1027,6 +1048,21 @@ $managedRuntimeFiles = @(
 )
 
 try {
+    # Setup must stay in the signed-in desktop user's context so HKCU,
+    # current-user DPAPI, and per-user Skill state remain on the right account.
+    if ($InstallChannel -eq 'setup') {
+        $interactiveUser = Get-InteractiveDesktopUser
+        if ($null -ne $interactiveUser -and
+            -not [string]::Equals(
+                $interactiveUser.Sid,
+                $taskUser.Sid,
+                [StringComparison]::OrdinalIgnoreCase
+            )) {
+            $installErrorCode = 'setup-elevated-context'
+            throw "AgentDock Setup is running as $($taskUser.Name), but the signed-in desktop user is $($interactiveUser.Name). Start Setup normally under the signed-in account; it requests administrator approval only for scheduled-task operations."
+        }
+    }
+
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $runtimeBackupDir -Force | Out-Null
     foreach ($item in $managedRuntimeFiles) {
@@ -1085,9 +1121,6 @@ try {
     $processWasRunning = @(Get-AgentDockProcesses -BinaryPath $destinationBinary).Count -gt 0
     if ($effectivePrivilegeMode -eq 'elevated' -or $taskState.Exists) {
         $taskAction = if ($effectivePrivilegeMode -eq 'elevated') { 'prepare-elevated' } else { 'prepare-standard' }
-        if (-not $taskUser.CanElevate) {
-            throw 'The existing AgentDock scheduled task requires administrator cleanup, but the current account cannot elevate.'
-        }
         Start-ElevatedAgentDockTaskAction `
             -Action $taskAction `
             -BackupDirectory $taskBackupDirectory `
@@ -1526,9 +1559,21 @@ exit `$process.ExitCode
         -Channel $InstallChannel
 
     Write-Host 'Installing official core Skills...'
-    & $destinationBinary skill bootstrap --bundle $coreSkillBundle
-    if ($LASTEXITCODE -ne 0) {
-        throw "Core Skill bootstrap failed with exit code $LASTEXITCODE."
+    $coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)
+    $coreSkillExitCode = $LASTEXITCODE
+    $coreSkillOutputText = (($coreSkillOutput | Out-String).Trim())
+    if (-not [string]::IsNullOrWhiteSpace($coreSkillOutputText)) {
+        Write-Host $coreSkillOutputText
+    }
+    if ($coreSkillExitCode -ne 0) {
+        $installErrorCode = 'core-skill-bootstrap'
+        if ($coreSkillOutputText.Length -gt 2000) {
+            $coreSkillOutputText = $coreSkillOutputText.Substring($coreSkillOutputText.Length - 2000)
+        }
+        if ([string]::IsNullOrWhiteSpace($coreSkillOutputText)) {
+            throw "Core Skill bootstrap failed with exit code $coreSkillExitCode."
+        }
+        throw "Core Skill bootstrap failed with exit code $coreSkillExitCode`: $coreSkillOutputText"
     }
 
     if ($RegisterStartup -or $trayProcessWasRunning) {
@@ -1688,7 +1733,8 @@ exit `$process.ExitCode
         -BearerToken '' `
         -OAuthLoginPassword '' `
         -HealthStatus 'failed' `
-        -PrivilegeMode $effectivePrivilegeMode
+        -PrivilegeMode $effectivePrivilegeMode `
+        -ErrorCode $installErrorCode
     throw $installError
 } finally {
     if ($DeleteTunnelTokenFile -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {

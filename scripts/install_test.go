@@ -149,6 +149,7 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Get-CimInstance Win32_Process",
 		"ExecutablePath",
 		"Get-AgentDockTaskState",
+		"Get-InteractiveDesktopUser",
 		"Start-ElevatedAgentDockTaskAction",
 		"New-ElevatedAgentDockScheduledTask",
 		"New-ScheduledTaskPrincipal",
@@ -156,6 +157,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Set-AgentDockTaskSecurity",
 		"prepare-elevated",
 		"Restore-AgentDockTaskBackup",
+		"setup-elevated-context",
+		"Start Setup normally under the signed-in account",
 		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
 		"Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force",
 		"Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary",
@@ -183,6 +186,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"$env:AGENTDOCK_OAUTH_ENABLED = 'true'",
 		"$env:AGENTDOCK_SERVER_URL = `$serverUrl",
 		"Authentication: Bearer Token and OAuth are both enabled.",
+		"$coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)",
+		"-ErrorCode $installErrorCode",
 		"http://127.0.0.1:$HealthPort/healthz",
 	} {
 		if !strings.Contains(script, want) {
@@ -211,6 +216,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 	if strings.Contains(script, "Start-Process -FilePath $destinationBinary -Verb RunAs") {
 		t.Fatal("the installer must not launch the core directly under a different administrator account")
+	}
+	if strings.Contains(script, "current account cannot elevate") {
+		t.Fatal("scheduled-task cleanup must request UAC instead of rejecting a standard user before elevation")
 	}
 	if strings.Contains(script, "--token $TunnelToken") || strings.Contains(script, "--token `$env:TUNNEL_TOKEN") {
 		t.Fatal("cloudflared token must be decrypted into its environment, not placed in process arguments")
@@ -470,6 +478,8 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"UpgradeKeepSettings",
 		"UpgradeChangeSettings",
 		"RuntimeUsesElevatedCore",
+		"ElevatedSetupUnsupported",
+		"GetIniString('AgentDock', 'Code'",
 		"#ifdef SignedBuild",
 		"SignedUninstaller=yes",
 		"DeinitializeSetup",
