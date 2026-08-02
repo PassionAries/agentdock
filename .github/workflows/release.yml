@@ -120,6 +120,33 @@ jobs:
             agentdock_darwin_${{ matrix.goarch }}.tar.gz.sha256
           if-no-files-found: error
 
+  build-macos-app:
+    name: Build macOS menu app
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate menu app
+        run: |
+          zsh -n packaging/macos/build-app.sh scripts/test-macos-app.sh
+          ./scripts/test-macos-app.sh
+
+      - name: Build universal menu app
+        env:
+          AGENTDOCK_MACOS_ARCHES: arm64,x86_64
+          AGENTDOCK_MACOS_APP_OUTPUT_DIR: dist/macos-app
+        run: packaging/macos/build-app.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentdock-macos-app
+          path: |
+            dist/macos-app/AgentDock-macos-universal.zip
+            dist/macos-app/AgentDock-macos-universal.zip.sha256
+          if-no-files-found: error
+
   build-windows:
     name: Build Windows ${{ matrix.goarch }}
     runs-on: windows-latest
@@ -236,7 +263,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-macos-app, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

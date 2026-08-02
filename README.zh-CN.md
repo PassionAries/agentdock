@@ -138,9 +138,15 @@ docker compose down
 
 完整配置、数据持久化和客户端接入方式见 [Docker 快速部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
 
+### macOS 图形安装
+
+普通 macOS 用户可以从 GitHub Release 下载 `AgentDock-macos-universal.zip`，解压后将 `AgentDock.app` 拖入“应用程序”。当前免费版本使用 ad-hoc 签名、未经过 Apple 公证，因此首次启动需要右键应用并选择“打开”；之后不需要终端或管理员权限。
+
+首次启动的图形界面可以直接选择仅本机、临时公网或固定 Cloudflare 域名。固定域名和 Tunnel Token 都在图形表单中填写，Token 通过仅当前用户可读的临时文件交给安装器，不会进入进程命令行。安装完成后，菜单栏可以查看状态、复制 MCP 地址、启动、停止、重启、更新和打开日志。
+
 ### Cloudflare Tunnel 公网访问
 
-macOS、Linux 和 Windows 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装时只询问是否有已接入 Cloudflare 的域名：
+macOS 图形应用以及 Linux、Windows 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装只需要确认是否有已接入 Cloudflare 的域名：
 
 - **有域名**：使用固定地址，适合长期运行；安装器会询问 HTTPS 公网地址和 Tunnel Token。
 - **没有域名**：自动生成临时 `trycloudflare.com` 地址，适合快速体验；Tunnel 重启后地址可能变化。
@@ -165,7 +171,7 @@ powershell -ExecutionPolicy Bypass -File $script -RegisterStartup
 
 已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
 
-临时地址变化后，重新运行同一个安装脚本即可生成并回写新地址。安装器会保留原 Bearer Token、OAuth 登录密码和签名密钥；用户只需在客户端替换 MCP URL，并重新完成 OAuth 授权。
+macOS Quick Tunnel 每次启动都会自动取得新地址、回写 OAuth Origin 并重启验证 AgentDock，菜单栏随后可以复制最新地址；Bearer Token、OAuth 登录密码和签名密钥保持不变。临时地址变化后，用户仍需在客户端替换 MCP URL，并重新完成 OAuth 授权。
 
 Docker Quick Tunnel：
 
