@@ -151,6 +151,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'cloudflared-token.dpapi'",
 		"'cloudflared.out.log'",
 		"'cloudflared.err.log'",
+		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared'",
 		"Legacy AgentDock scheduled task could not be removed",
 	} {
 		if !strings.Contains(script, want) {

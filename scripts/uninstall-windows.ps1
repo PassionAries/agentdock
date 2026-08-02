@@ -46,14 +46,16 @@ if (Test-Path -LiteralPath $runKey) {
     Remove-ItemProperty -LiteralPath $runKey -Name $CloudflaredStartupValueName -ErrorAction SilentlyContinue
 }
 
-# Clean up the legacy scheduled task if an older release created it.
-$task = Get-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
-if ($task) {
-    try {
-        Stop-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName 'AgentDock' -Confirm:$false -ErrorAction Stop
-    } catch {
-        Write-Warning "Legacy AgentDock scheduled task could not be removed: $($_.Exception.Message)"
+# Legacy scheduled-task cleanup applies only to the default installation names.
+if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared') {
+    $task = Get-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
+    if ($task) {
+        try {
+            Stop-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName 'AgentDock' -Confirm:$false -ErrorAction Stop
+        } catch {
+            Write-Warning "Legacy AgentDock scheduled task could not be removed: $($_.Exception.Message)"
+        }
     }
 }
 
