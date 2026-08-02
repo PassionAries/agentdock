@@ -164,6 +164,7 @@ var
   ExistingInstallDetected: Boolean;
   ExistingInstallVersion: String;
   ExistingInstallSource: String;
+  ResolvedInstallRoot: String;
 
 function GetLocalizedMessage(Key: String): String;
 begin
@@ -182,9 +183,29 @@ begin
   end;
 end;
 
+function ResolveInstallRoot(): String;
+var
+  UninstallKey: String;
+  InstallLocation: String;
+begin
+  Result := Trim(ExpandConstant('{param:DIR|}'));
+  if Result <> '' then
+    Exit;
+
+  UninstallKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1';
+  if RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', InstallLocation) and
+    (Trim(InstallLocation) <> '') then
+  begin
+    Result := RemoveBackslashUnlessRoot(Trim(InstallLocation));
+    Exit;
+  end;
+
+  Result := ExpandConstant('{localappdata}\AgentDock');
+end;
+
 function ExistingInstallRoot(): String;
 begin
-  Result := ExpandConstant('{app}');
+  Result := ResolvedInstallRoot;
 end;
 
 function DetectExistingInstallation(): Boolean;
@@ -336,6 +357,7 @@ var
   ModeParam: String;
   AutoStartParam: String;
 begin
+  ResolvedInstallRoot := ResolveInstallRoot();
   ExistingInstallDetected := DetectExistingInstallation();
 
   StartupPage := CreateInputOptionPage(
