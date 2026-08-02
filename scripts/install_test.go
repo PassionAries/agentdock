@@ -36,16 +36,28 @@ func TestDockerSmokeUsesStreamableHTTPAcceptHeader(t *testing.T) {
 		t.Fatalf("read smoke-docker.sh: %v", err)
 	}
 	const streamableHTTPAccept = `if path == "/mcp":
-        # Streamable HTTP 客户端必须同时声明可接收 JSON 和 SSE；即使当前服务返回 JSON，
-        # 官方 MCP SDK 也会在协议入口校验这两个媒体类型。
         headers["accept"] = "application/json, text/event-stream"`
-	script := string(data)
-	if !strings.Contains(script, streamableHTTPAccept) {
-		t.Fatal("smoke-docker.sh must send the Streamable HTTP Accept header for MCP requests")
-	}
 	const optionalIsError = `envelope.get("isError", False) is False`
-	if !strings.Contains(script, optionalIsError) {
-		t.Fatal("smoke-docker.sh must treat an omitted MCP isError field as success")
+
+	// actions/checkout 在 Windows Runner 上可能把 shell 脚本检出为 CRLF；
+	// 同时验证两种换行，测试协议语义而不是平台文本格式。
+	lfScript := strings.ReplaceAll(string(data), "\r\n", "\n")
+	for _, test := range []struct {
+		name   string
+		script string
+	}{
+		{name: "LF", script: lfScript},
+		{name: "CRLF", script: strings.ReplaceAll(lfScript, "\n", "\r\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			script := strings.ReplaceAll(test.script, "\r\n", "\n")
+			if !strings.Contains(script, streamableHTTPAccept) {
+				t.Fatal("smoke-docker.sh must send the Streamable HTTP Accept header for MCP requests")
+			}
+			if !strings.Contains(script, optionalIsError) {
+				t.Fatal("smoke-docker.sh must treat an omitted MCP isError field as success")
+			}
+		})
 	}
 }
 

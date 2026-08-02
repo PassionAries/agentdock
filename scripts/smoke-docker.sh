@@ -34,9 +34,9 @@ def request(method, path, payload=None):
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["content-type"] = "application/json"
+    # Streamable HTTP 客户端必须同时声明可接收 JSON 和 SSE；即使当前服务返回 JSON，
+    # 官方 MCP SDK 也会在协议入口校验这两个媒体类型。
     if path == "/mcp":
-        # Streamable HTTP 客户端必须同时声明可接收 JSON 和 SSE；即使当前服务返回 JSON，
-        # 官方 MCP SDK 也会在协议入口校验这两个媒体类型。
         headers["accept"] = "application/json, text/event-stream"
     if token:
         headers["authorization"] = f"Bearer {token}"
