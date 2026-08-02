@@ -360,6 +360,96 @@ function Get-AgentDockTrayProcesses {
     return @(Get-ProcessesByPath -ProcessName 'agentdock-tray' -BinaryPath $BinaryPath)
 }
 
+function Test-LegacyAgentDockTaskEligible {
+    param(
+        [string] $AgentDockValueName,
+        [string] $CloudflaredValueName,
+        [string] $TrayValueName
+    )
+
+    return $AgentDockValueName -eq 'AgentDock' -and
+        $CloudflaredValueName -eq 'AgentDockCloudflared' -and
+        $TrayValueName -eq 'AgentDockTray'
+}
+
+function Get-LegacyAgentDockTaskState {
+    param(
+        [string] $AgentDockValueName,
+        [string] $CloudflaredValueName,
+        [string] $TrayValueName
+    )
+
+    $state = [pscustomobject]@{
+        Exists = $false
+        WasEnabled = $false
+        WasRunning = $false
+    }
+    if (-not (Test-LegacyAgentDockTaskEligible `
+        -AgentDockValueName $AgentDockValueName `
+        -CloudflaredValueName $CloudflaredValueName `
+        -TrayValueName $TrayValueName)) {
+        return $state
+    }
+
+    try {
+        $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+    } catch {
+        return $state
+    }
+    $state.Exists = $true
+    $state.WasEnabled = $task.State -ne 'Disabled'
+    $state.WasRunning = $task.State -eq 'Running'
+    return $state
+}
+
+function Suspend-LegacyAgentDockTask {
+    param([pscustomobject] $State)
+
+    if ($null -eq $State -or -not $State.Exists) {
+        return
+    }
+    try {
+        Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+        Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+            if ($task.State -ne 'Running') {
+                return
+            }
+            Start-Sleep -Milliseconds 250
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw 'The legacy AgentDock scheduled task did not stop within 15 seconds.'
+    } catch {
+        throw "Unable to suspend the legacy AgentDock scheduled task: $($_.Exception.Message)"
+    }
+}
+
+function Restore-LegacyAgentDockTask {
+    param([pscustomobject] $State)
+
+    if ($null -eq $State -or -not $State.Exists) {
+        return
+    }
+    if ($State.WasEnabled) {
+        Enable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
+    } else {
+        Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
+    }
+    if ($State.WasRunning) {
+        Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+    }
+}
+
+function Remove-LegacyAgentDockTask {
+    param([pscustomobject] $State)
+
+    if ($null -eq $State -or -not $State.Exists) {
+        return
+    }
+    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction Stop
+}
+
 function Stop-ProcessesForUpgrade {
     param(
         [string] $ProcessName,
@@ -662,6 +752,10 @@ $tunnelStartupRegistrationChanged = $false
 $previousRunValue = $null
 $previousTrayRunValue = $null
 $previousTunnelRunValue = $null
+$legacyTaskState = $null
+$legacyTaskSuspended = $false
+$legacyTaskMigrationCommitted = $false
+$legacyTaskRestored = $false
 $resolvedTunnelMode = Resolve-TunnelMode -RequestedMode $TunnelMode -ModePath $tunnelModePath -StartupRequested ([bool] $RegisterStartup) -PublicAccessRequested ([bool] $ConfigurePublicAccess)
 if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
     $RegisterStartup = $true
@@ -722,6 +816,15 @@ try {
 
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $processWasRunning = @(Get-AgentDockProcesses -BinaryPath $destinationBinary).Count -gt 0
+    $legacyTaskState = Get-LegacyAgentDockTaskState `
+        -AgentDockValueName $runValueName `
+        -CloudflaredValueName $cloudflaredRunValueName `
+        -TrayValueName $trayRunValueName
+    if ($legacyTaskState.Exists) {
+        $legacyTaskSuspended = $true
+        Suspend-LegacyAgentDockTask -State $legacyTaskState
+        Write-Host 'Suspended legacy AgentDock scheduled task for migration.'
+    }
     $agentDockStopAttempted = $true
     [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
     if (Test-Path -LiteralPath $destinationBinary -PathType Leaf) {
@@ -1023,6 +1126,16 @@ exit `$process.ExitCode
         -OAuthLoginPassword $OAuthPassword `
         -HealthStatus $healthStatus
 
+    if ($legacyTaskSuspended) {
+        try {
+            Remove-LegacyAgentDockTask -State $legacyTaskState
+            $legacyTaskMigrationCommitted = $true
+            Write-Host 'Removed legacy AgentDock scheduled task after migration.'
+        } catch {
+            Write-Warning "The legacy AgentDock scheduled task remains disabled: $($_.Exception.Message)"
+        }
+    }
+
     Write-Host "AgentDock installed: $destinationBinary"
     Write-Host "Local MCP address: $localMCPUrl"
     Write-Host 'Open a new terminal if the updated user PATH is not visible yet.'
@@ -1121,7 +1234,14 @@ exit `$process.ExitCode
             }
         }
 
-        if ($processWasRunning -and (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
+        if ($legacyTaskSuspended -and -not $legacyTaskMigrationCommitted) {
+            Restore-LegacyAgentDockTask -State $legacyTaskState
+            $legacyTaskRestored = $true
+        }
+
+        $legacyTaskWillRestartAgentDock = $legacyTaskRestored -and $legacyTaskState.WasRunning
+        if ($processWasRunning -and -not $legacyTaskWillRestartAgentDock -and
+            (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
             Start-AgentDockLauncher -LauncherPath $launcherPath
         }
         if ($cloudflaredProcessWasRunning -and (Test-Path -LiteralPath $cloudflaredLauncherPath -PathType Leaf)) {

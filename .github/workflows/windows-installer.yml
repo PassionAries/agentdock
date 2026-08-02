@@ -206,7 +206,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\scripts\test-windows-setup-e2e.ps1 `
             -SetupPath (Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup.exe') `
-            -ReleaseRoot (Join-Path $env:RUNNER_TEMP 'agentdock-current-release')
+            -ReleaseRoot (Join-Path $env:RUNNER_TEMP 'agentdock-current-release') `
+            -AllowLegacyTaskMutation
 
       - name: Smoke test current binary as standard user
         shell: powershell

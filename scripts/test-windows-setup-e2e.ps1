@@ -4,12 +4,17 @@ param(
     [string] $SetupPath,
     [string] $ReleaseRoot = '',
     [string] $ReleaseBaseUrl = '',
-    [string] $InstallRoot = (Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e')
+    [string] $InstallRoot = (Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e'),
+    [switch] $AllowLegacyTaskMutation
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+if (-not $AllowLegacyTaskMutation) {
+    throw 'Legacy scheduled-task mutation is disabled. Pass -AllowLegacyTaskMutation only in an isolated Windows test environment.'
+}
 
 function Get-FreeTcpPort {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -83,6 +88,7 @@ $binaryPath = Join-Path $InstallRoot 'bin\agentdock.exe'
 $trayPath = Join-Path $InstallRoot 'bin\agentdock-tray.exe'
 $trayIconPath = Join-Path $InstallRoot 'bin\agentdock.ico'
 $manifestPath = Join-Path $InstallRoot 'runtime.json'
+$launcherPath = Join-Path $InstallRoot 'start-agentdock.ps1'
 $uninstallerPath = Join-Path $InstallRoot 'unins000.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $userHome = [Environment]::GetFolderPath('UserProfile')
@@ -99,6 +105,7 @@ $uninstallLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-uninstall.lo
 $oldReleaseBaseUrl = $env:AGENTDOCK_RELEASE_BASE_URL
 
 try {
+    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     [IO.File]::WriteAllText(
@@ -190,6 +197,40 @@ try {
         }
     }
 
+    Write-Host 'Creating a running legacy AgentDock scheduled task for migration testing.'
+    Stop-ProcessByPath -ProcessName 'agentdock' -BinaryPath $binaryPath
+    Start-Sleep -Milliseconds 500
+    foreach ($name in @('AgentDock', 'AgentDockTray')) {
+        Remove-ItemProperty -LiteralPath $runKey -Name $name -ErrorAction SilentlyContinue
+    }
+    $legacyTaskAction = New-ScheduledTaskAction `
+        -Execute 'powershell.exe' `
+        -Argument "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
+    $legacyTaskTrigger = New-ScheduledTaskTrigger -AtLogOn
+    Register-ScheduledTask `
+        -TaskName 'AgentDock' `
+        -TaskPath '\' `
+        -Action $legacyTaskAction `
+        -Trigger $legacyTaskTrigger `
+        -Description 'AgentDock legacy migration test' `
+        -Force | Out-Null
+    Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\'
+    $legacyDeadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        Start-Sleep -Milliseconds 500
+        try {
+            $legacyHealth = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 2
+            $legacyTask = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+            if ($legacyHealth.StatusCode -eq 200 -and $legacyTask.State -eq 'Running') {
+                break
+            }
+        } catch {
+        }
+        if ([DateTime]::UtcNow -ge $legacyDeadline) {
+            throw 'Legacy AgentDock scheduled task did not start a healthy server.'
+        }
+    } while ($true)
+
     Write-Host 'Starting AgentDockSetup.exe again to verify Setup-managed repair detection.'
     $repairProcess = Start-Process `
         -FilePath $resolvedSetup `
@@ -210,6 +251,17 @@ try {
     $repairLog = Get-Content -LiteralPath $repairLogPath -Raw
     if ($repairLog -notmatch 'existing installation detected: source=setup') {
         throw 'Setup did not recognize the existing Setup-managed installation.'
+    }
+    if ($repairLog -notmatch 'AgentDock legacy scheduled task detected') {
+        throw 'Setup did not detect the legacy AgentDock scheduled task.'
+    }
+    if ($null -ne (Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue)) {
+        throw 'Setup did not remove the migrated legacy AgentDock scheduled task.'
+    }
+    foreach ($name in @('AgentDock', 'AgentDockTray')) {
+        if ([string]::IsNullOrWhiteSpace((Get-RunValue -Name $name))) {
+            throw "Setup repair did not preserve startup through HKCU: $name"
+        }
     }
     if ((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).tunnel_mode -ne 'none') {
         throw 'Setup repair did not preserve local-only connection mode.'
@@ -258,6 +310,8 @@ try {
     throw
 } finally {
     $env:AGENTDOCK_RELEASE_BASE_URL = $oldReleaseBaseUrl
+    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
     foreach ($process in @($setupProcess, $repairProcess, $uninstallProcess)) {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue

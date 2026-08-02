@@ -143,6 +143,11 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Get-ProcessesByPath -ProcessName 'agentdock'",
 		"Get-CimInstance Win32_Process",
 		"ExecutablePath",
+		"Get-LegacyAgentDockTaskState",
+		"Suspend-LegacyAgentDockTask -State $legacyTaskState",
+		"Disable-ScheduledTask -TaskName 'AgentDock'",
+		"Remove-LegacyAgentDockTask -State $legacyTaskState",
+		"Restore-LegacyAgentDockTask -State $legacyTaskState",
 		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
 		"Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force",
 		"Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary",
@@ -199,11 +204,6 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"$AclSelfTest",
 		"SetSecurityDescriptorSddlForm(",
 		"$sddl",
-		"Register-ScheduledTask",
-		"Start-ScheduledTask",
-		"Stop-ScheduledTask",
-		"Get-ScheduledTask",
-		"Unregister-ScheduledTask",
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("install.ps1 still contains removed privileged startup or ACL code %q", forbidden)
@@ -396,6 +396,9 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"ExistingInstallSource := 'setup'",
 		"ExistingInstallSource := 'powershell'",
 		"LoadExistingSettings",
+		"LegacyAgentDockScheduledTaskExists",
+		"/Query /TN \"\\AgentDock\"",
+		"AgentDock legacy scheduled task detected.",
 		"cloudflared-token.dpapi",
 		"-TunnelMode ",
 		"-TunnelTokenFile ",
@@ -480,6 +483,7 @@ func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T
 		"WINDOWS_SIGNING_CERT_PASSWORD",
 		"sign-windows.ps1 -Path $paths",
 		"sign-windows.ps1 -Path $paths -VerifyOnly",
+		"-AllowLegacyTaskMutation",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("windows-installer.yml missing Authenticode integration check %q", want)

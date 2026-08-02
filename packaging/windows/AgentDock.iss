@@ -241,6 +241,23 @@ begin
   Result := False;
 end;
 
+function LegacyAgentDockScheduledTaskExists(): Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result :=
+    Exec(
+      ExpandConstant('{sys}\schtasks.exe'),
+      '/Query /TN "\AgentDock"',
+      '',
+      SW_HIDE,
+      ewWaitUntilTerminated,
+      ExitCode) and
+    (ExitCode = 0);
+  if Result then
+    Log('AgentDock legacy scheduled task detected.');
+end;
+
 procedure LoadExistingSettings();
 var
   Mode: String;
@@ -253,7 +270,8 @@ begin
   RunKey := 'Software\Microsoft\Windows\CurrentVersion\Run';
   StartupPage.Values[0] :=
     RegValueExists(HKCU, RunKey, 'AgentDock') or
-    RegValueExists(HKCU, RunKey, 'AgentDockTray');
+    RegValueExists(HKCU, RunKey, 'AgentDockTray') or
+    LegacyAgentDockScheduledTaskExists();
 
   Mode := Lowercase(ReadTrimmedTextFile(AddBackslash(ExistingInstallRoot()) + 'cloudflared-mode.txt'));
   if Mode = 'quick' then
