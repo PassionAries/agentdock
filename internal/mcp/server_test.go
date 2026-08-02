@@ -152,22 +152,44 @@ func TestOfficialSDKServerListsAndCallsAgentDockTools(t *testing.T) {
 	}
 }
 
-func TestStreamableHTTPHandlerAllowsConfiguredPublicHost(t *testing.T) {
-	response := serveStreamableHTTPRequest(t, config.Config{
-		OAuthServerURL: "https://dockmini.example",
-	})
-	if response.Code == http.StatusForbidden {
-		t.Fatalf("configured public Host was rejected: status=%d body=%s", response.Code, response.Body.String())
+func TestStreamableHTTPHandlerAllowsAuthenticatedPublicHost(t *testing.T) {
+	for name, cfg := range map[string]config.Config{
+		"static token": {
+			AuthToken:      "configured-token",
+			OAuthServerURL: "https://dockmini.example",
+		},
+		"OAuth": {
+			OAuthEnabled:   true,
+			OAuthServerURL: "https://dockmini.example",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := serveStreamableHTTPRequest(t, cfg)
+			if response.Code == http.StatusForbidden {
+				t.Fatalf("authenticated public Host was rejected: status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 
-func TestStreamableHTTPHandlerKeepsLocalhostProtectionWithoutPublicURL(t *testing.T) {
-	response := serveStreamableHTTPRequest(t, config.Config{})
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("unconfigured public Host status=%d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body.String())
-	}
-	if !strings.Contains(response.Body.String(), "invalid Host header") {
-		t.Fatalf("unexpected rejection body: %s", response.Body.String())
+func TestStreamableHTTPHandlerKeepsLocalhostProtection(t *testing.T) {
+	for name, cfg := range map[string]config.Config{
+		"no public URL": {
+			AuthToken: "configured-token",
+		},
+		"public URL without authentication": {
+			OAuthServerURL: "https://dockmini.example",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := serveStreamableHTTPRequest(t, cfg)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("untrusted public Host status=%d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), "invalid Host header") {
+				t.Fatalf("unexpected rejection body: %s", response.Body.String())
+			}
+		})
 	}
 }
 

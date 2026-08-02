@@ -36,9 +36,9 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	server.httpHandler = mcpsdk.NewStreamableHTTPHandler(
 		func(*http.Request) *mcpsdk.Server { return server.sdk },
 		&mcpsdk.StreamableHTTPOptions{
-			// 显式配置公网服务 URL 时，AgentDock 会通过认证中间件和 OAuth resource
-			// 绑定保护入口；反代或 Tunnel 保留公网 Host，SDK 的 localhost 检查会误拦截。
-			DisableLocalhostProtection:   cfg.OAuthServerURL != "",
+			// 仅在显式配置公网 URL 且启用认证时放宽 SDK 的 localhost Host 校验。
+			// 反代或 Tunnel 会保留公网 Host，入口仍由静态 Token 或 OAuth resource 绑定保护。
+			DisableLocalhostProtection:   cfg.OAuthServerURL != "" && cfg.AuthRequired(),
 			Stateless:                    true,
 			JSONResponse:                 true,
 			MaxRequestBodyBytes:          1 << 20,
