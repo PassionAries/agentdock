@@ -179,7 +179,7 @@ powershell -ExecutionPolicy Bypass -File $script -RegisterStartup -ConfigurePubl
 
 仅使用 `-RegisterStartup` 只会配置本机启动，不会默认开放公网。自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 直接指定模式；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
 
-macOS Quick Tunnel 每次启动都会自动取得新地址、回写 OAuth Origin 并重启验证 AgentDock，菜单栏随后可以复制最新地址；Bearer Token、OAuth 登录密码和签名密钥保持不变。临时地址变化后，用户仍需在客户端替换 MCP URL，并重新完成 OAuth 授权。
+macOS 和 Windows 的 Quick Tunnel 每次启动都会自动取得新地址、回写 OAuth Origin 与运行 manifest，并重启验证 AgentDock；Bearer Token、OAuth 登录密码和签名密钥保持不变。macOS 控制面板提供“重新生成临时地址”，Windows 托盘提供“重新生成临时公网地址”，可以随时手动刷新。临时地址变化后，用户仍需在客户端替换 MCP URL，并重新完成 OAuth 授权。
 
 Docker Quick Tunnel：
 

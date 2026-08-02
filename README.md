@@ -179,7 +179,7 @@ powershell -ExecutionPolicy Bypass -File $script -RegisterStartup -ConfigurePubl
 
 `-RegisterStartup` by itself configures local startup and does not expose AgentDock publicly. Automation may still set `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`. Windows protects the Bearer Token, OAuth password, OAuth signing secret, and Tunnel Token separately with current-user DPAPI.
 
-On macOS, Quick Tunnel obtains its new URL on every start, writes the OAuth origin back, and restarts and verifies AgentDock. The menu bar then exposes the latest URL while preserving the Bearer Token, OAuth login password, and signing secret. When the temporary URL changes, update the MCP URL in the client and complete OAuth authorization again.
+On macOS and Windows, Quick Tunnel obtains a new URL whenever the tunnel starts, writes the OAuth origin and runtime manifest back, and restarts and verifies AgentDock. Existing Bearer, OAuth password, and signing credentials are preserved. The macOS control panel provides **Regenerate temporary URL**, and the Windows tray provides **Regenerate temporary public URL** for manual refresh. When the temporary URL changes, update the MCP URL in the client and complete OAuth authorization again.
 
 Docker Quick Tunnel:
 
