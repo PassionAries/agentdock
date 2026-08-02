@@ -113,7 +113,8 @@ try {
 
         $signer = $initialSignature.SignerCertificate
         if ($signer.Subject -eq $signer.Issuer) {
-            foreach ($storeName in @('Root', 'TrustedPublisher')) {
+            Write-Host "Temporarily trusting self-signed Authenticode publisher $($signer.Subject)."
+            foreach ($storeName in @('TrustedPeople', 'TrustedPublisher')) {
                 if (Add-TemporaryTrust -Certificate $signer -StoreName $storeName) {
                     $temporaryTrust.Add([pscustomobject]@{
                         StoreName = $storeName
@@ -123,6 +124,7 @@ try {
             }
         }
 
+        Write-Host "Verifying Authenticode signature: $item"
         & $signTool.FullName verify /pa /all /v $item
         if ($LASTEXITCODE -ne 0) {
             throw "signtool verify failed for $item with exit code $LASTEXITCODE."

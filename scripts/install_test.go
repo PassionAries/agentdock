@@ -421,7 +421,7 @@ func TestWindowsSigningTemporarilyTrustsSelfSignedCertificate(t *testing.T) {
 	for _, want := range []string{
 		"SignerCertificate",
 		"$signer.Subject -eq $signer.Issuer",
-		"@('Root', 'TrustedPublisher')",
+		"@('TrustedPeople', 'TrustedPublisher')",
 		"StoreLocation]::CurrentUser",
 		"Remove-TemporaryTrust",
 		"signtool verify failed",
