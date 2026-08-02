@@ -171,14 +171,14 @@ begin
 end;
 
 function ReadTrimmedTextFile(Path: String): String;
+var
+  Content: AnsiString;
 begin
   Result := '';
   if FileExists(Path) then
   begin
-    if LoadStringFromFile(Path, Result) then
-      Result := Trim(Result)
-    else
-      Result := '';
+    if LoadStringFromFile(Path, Content) then
+      Result := Trim(String(Content));
   end;
 end;
 
