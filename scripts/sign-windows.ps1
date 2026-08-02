@@ -116,6 +116,7 @@ try {
         if ($expectedCertificate -and
             (Test-IsExpectedSelfSignedTrustFailure -Signature $signature -SignToolOutput $verifyText)) {
             Write-Warning "Accepted self-signed AgentDock certificate for ${item}: signer identity and file signature are valid, but Windows does not trust the certificate chain."
+            $global:LASTEXITCODE = 0
             continue
         }
 
