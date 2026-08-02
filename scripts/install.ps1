@@ -3,16 +3,23 @@ param(
     [string] $Version = 'latest',
     [string] $InstallDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AgentDock\bin'),
     [switch] $RegisterStartup,
+    [switch] $ConfigurePublicAccess,
     [int] $Port = 8765,
     [string] $AuthToken = '',
     [ValidateSet('auto', 'none', 'quick', 'named')]
     [string] $TunnelMode = 'auto',
     [string] $ServerUrl = '',
     [string] $TunnelToken = '',
+    [string] $TunnelTokenFile = '',
+    [switch] $DeleteTunnelTokenFile,
+    [string] $ResultFile = '',
+    [ValidateSet('script', 'setup')]
+    [string] $InstallChannel = 'script',
     [string] $OAuthPassword = '',
     [string] $OAuthTokenSecret = '',
     [string] $StartupValueName = 'AgentDock',
-    [string] $CloudflaredStartupValueName = 'AgentDockCloudflared'
+    [string] $CloudflaredStartupValueName = 'AgentDockCloudflared',
+    [string] $TrayStartupValueName = 'AgentDockTray'
 )
 
 Set-StrictMode -Version Latest
@@ -172,7 +179,8 @@ function Resolve-TunnelMode {
     param(
         [string] $RequestedMode,
         [string] $ModePath,
-        [bool] $StartupRequested
+        [bool] $StartupRequested,
+        [bool] $PublicAccessRequested
     )
 
     if ($RequestedMode -ne 'auto') {
@@ -197,7 +205,7 @@ function Resolve-TunnelMode {
         }
     }
 
-    if (-not $StartupRequested) {
+    if (-not $StartupRequested -or -not $PublicAccessRequested) {
         return 'none'
     }
 
@@ -210,6 +218,86 @@ function Resolve-TunnelMode {
         return 'named'
     }
     return 'quick'
+}
+
+function Read-SecretFile {
+    param([string] $Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ''
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Secret file was not found: $Path"
+    }
+    $value = (Get-Content -LiteralPath $Path -Raw).Trim()
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        throw "Secret file is empty: $Path"
+    }
+    return $value
+}
+
+function Write-RuntimeManifest {
+    param(
+        [string] $Path,
+        [string] $AgentDockBinary,
+        [string] $TrayBinary,
+        [string] $AgentDockLauncher,
+        [string] $CloudflaredLauncher,
+        [int] $RuntimePort,
+        [string] $RuntimeTunnelMode,
+        [string] $RuntimePublicUrl,
+        [string] $Channel
+    )
+
+    $manifest = [ordered]@{
+        schema_version = 1
+        agentdock_binary = $AgentDockBinary
+        tray_binary = $TrayBinary
+        agentdock_launcher = $AgentDockLauncher
+        cloudflared_launcher = $CloudflaredLauncher
+        host = '127.0.0.1'
+        port = $RuntimePort
+        local_mcp_url = "http://127.0.0.1:$RuntimePort/mcp"
+        tunnel_mode = $RuntimeTunnelMode
+        public_url = $RuntimePublicUrl
+        install_channel = $Channel
+    }
+    [IO.File]::WriteAllText($Path, ($manifest | ConvertTo-Json -Depth 3), $Utf8NoBom)
+}
+
+function Write-InstallResult {
+    param(
+        [string] $Path,
+        [bool] $Success,
+        [string] $Message,
+        [string] $InstalledVersion,
+        [string] $LocalMCPUrl,
+        [string] $PublicMCPUrl,
+        [string] $BearerToken,
+        [string] $OAuthLoginPassword,
+        [string] $HealthStatus
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+    $parent = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    $safeMessage = $Message.Replace("`r", ' ').Replace("`n", ' ')
+    $lines = @(
+        '[AgentDock]',
+        "Success=$($Success.ToString().ToLowerInvariant())",
+        "Message=$safeMessage",
+        "Version=$InstalledVersion",
+        "LocalMCPUrl=$LocalMCPUrl",
+        "PublicMCPUrl=$PublicMCPUrl",
+        "BearerToken=$BearerToken",
+        "OAuthPassword=$OAuthLoginPassword",
+        "Health=$HealthStatus"
+    )
+    [IO.File]::WriteAllLines($Path, $lines, $Utf8NoBom)
 }
 
 function Get-ProcessesByPath {
@@ -241,6 +329,11 @@ function Get-AgentDockProcesses {
 function Get-CloudflaredProcesses {
     param([string] $BinaryPath)
     return @(Get-ProcessesByPath -ProcessName 'cloudflared' -BinaryPath $BinaryPath)
+}
+
+function Get-AgentDockTrayProcesses {
+    param([string] $BinaryPath)
+    return @(Get-ProcessesByPath -ProcessName 'agentdock-tray' -BinaryPath $BinaryPath)
 }
 
 function Stop-ProcessesForUpgrade {
@@ -282,6 +375,11 @@ function Stop-CloudflaredForUpgrade {
     return Stop-ProcessesForUpgrade -ProcessName 'cloudflared' -BinaryPath $BinaryPath
 }
 
+function Stop-AgentDockTrayForUpgrade {
+    param([string] $BinaryPath)
+    return Stop-ProcessesForUpgrade -ProcessName 'agentdock-tray' -BinaryPath $BinaryPath
+}
+
 function Start-HiddenPowerShellScript {
     param([string] $ScriptPath)
 
@@ -300,6 +398,15 @@ function Start-AgentDockLauncher {
 function Start-CloudflaredLauncher {
     param([string] $LauncherPath)
     Start-HiddenPowerShellScript -ScriptPath $LauncherPath
+}
+
+function Start-AgentDockTray {
+    param([string] $BinaryPath)
+
+    if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
+        throw "AgentDock tray was not found: $BinaryPath"
+    }
+    Start-Process -FilePath $BinaryPath -WindowStyle Hidden | Out-Null
 }
 
 function Install-AgentDockBinary {
@@ -491,8 +598,12 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("agentdock-install-" + [Guid]:
 $archivePath = Join-Path $tempRoot $assetName
 $checksumPath = "$archivePath.sha256"
 $destinationBinary = Join-Path $InstallDir 'agentdock.exe'
+$destinationTrayBinary = Join-Path $InstallDir 'agentdock-tray.exe'
+$destinationTrayIcon = Join-Path $InstallDir 'agentdock.ico'
 $cloudflaredBinary = Join-Path $InstallDir 'cloudflared.exe'
 $binaryBackup = Join-Path $tempRoot 'agentdock.exe.previous'
+$trayBackup = Join-Path $tempRoot 'agentdock-tray.exe.previous'
+$trayIconBackup = Join-Path $tempRoot 'agentdock.ico.previous'
 $cloudflaredBackup = Join-Path $tempRoot 'cloudflared.exe.previous'
 $runtimeDir = Split-Path -Parent $InstallDir
 $launcherPath = Join-Path $runtimeDir 'start-agentdock.ps1'
@@ -503,24 +614,31 @@ $oauthTokenSecretPath = Join-Path $runtimeDir 'oauth-token-secret.dpapi'
 $serverUrlPath = Join-Path $runtimeDir 'server-url.txt'
 $tunnelModePath = Join-Path $runtimeDir 'cloudflared-mode.txt'
 $tunnelTokenPath = Join-Path $runtimeDir 'cloudflared-token.dpapi'
+$runtimeManifestPath = Join-Path $runtimeDir 'runtime.json'
 $cloudflaredStdoutLogPath = Join-Path $runtimeDir 'cloudflared.out.log'
 $cloudflaredStderrLogPath = Join-Path $runtimeDir 'cloudflared.err.log'
 $runtimeBackupDir = Join-Path $tempRoot 'runtime-backup'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = $StartupValueName
 $cloudflaredRunValueName = $CloudflaredStartupValueName
+$trayRunValueName = $TrayStartupValueName
 $processWasRunning = $false
+$trayProcessWasRunning = $false
 $cloudflaredProcessWasRunning = $false
 $agentDockStopAttempted = $false
+$trayStopAttempted = $false
 $cloudflaredStopAttempted = $false
 $rollbackStateCaptured = $false
 $binaryReplacementStarted = $false
+$trayReplacementStarted = $false
 $cloudflaredReplacementStarted = $false
 $startupRegistrationChanged = $false
+$trayStartupRegistrationChanged = $false
 $tunnelStartupRegistrationChanged = $false
 $previousRunValue = $null
+$previousTrayRunValue = $null
 $previousTunnelRunValue = $null
-$resolvedTunnelMode = Resolve-TunnelMode -RequestedMode $TunnelMode -ModePath $tunnelModePath -StartupRequested ([bool] $RegisterStartup)
+$resolvedTunnelMode = Resolve-TunnelMode -RequestedMode $TunnelMode -ModePath $tunnelModePath -StartupRequested ([bool] $RegisterStartup) -PublicAccessRequested ([bool] $ConfigurePublicAccess)
 if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
     $RegisterStartup = $true
 }
@@ -533,7 +651,8 @@ $managedRuntimeFiles = @(
     @{ Path = $oauthTokenSecretPath; Name = 'oauth-token-secret.dpapi' },
     @{ Path = $serverUrlPath; Name = 'server-url.txt' },
     @{ Path = $tunnelModePath; Name = 'cloudflared-mode.txt' },
-    @{ Path = $tunnelTokenPath; Name = 'cloudflared-token.dpapi' }
+    @{ Path = $tunnelTokenPath; Name = 'cloudflared-token.dpapi' },
+    @{ Path = $runtimeManifestPath; Name = 'runtime.json' }
 )
 
 try {
@@ -543,6 +662,7 @@ try {
         Backup-FileState -Path $item.Path -Name $item.Name -BackupDirectory $runtimeBackupDir
     }
     $previousRunValue = Get-RunValue -RegistryPath $runKey -Name $runValueName
+    $previousTrayRunValue = Get-RunValue -RegistryPath $runKey -Name $trayRunValueName
     $previousTunnelRunValue = Get-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName
     $rollbackStateCaptured = $true
 
@@ -561,6 +681,14 @@ try {
     if (-not (Test-Path -LiteralPath $sourceBinary -PathType Leaf)) {
         throw "Release archive does not contain agentdock.exe: $assetName"
     }
+    $sourceTrayBinary = Join-Path $extractDir 'agentdock-tray.exe'
+    $sourceTrayIcon = Join-Path $extractDir 'agentdock.ico'
+    if (-not (Test-Path -LiteralPath $sourceTrayBinary -PathType Leaf)) {
+        throw "Release archive does not contain agentdock-tray.exe: $assetName"
+    }
+    if (-not (Test-Path -LiteralPath $sourceTrayIcon -PathType Leaf)) {
+        throw "Release archive does not contain agentdock.ico: $assetName"
+    }
     $coreSkillBundle = Join-Path $extractDir 'share\agentdock\core-skills'
     $coreSkillManifest = Join-Path $coreSkillBundle 'manifest.json'
     if (-not (Test-Path -LiteralPath $coreSkillBundle -PathType Container) -or
@@ -578,6 +706,19 @@ try {
 
     $binaryReplacementStarted = $true
     Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary
+
+    $trayProcessWasRunning = @(Get-AgentDockTrayProcesses -BinaryPath $destinationTrayBinary).Count -gt 0
+    $trayStopAttempted = $true
+    [void] (Stop-AgentDockTrayForUpgrade -BinaryPath $destinationTrayBinary)
+    if (Test-Path -LiteralPath $destinationTrayBinary -PathType Leaf) {
+        Copy-Item -LiteralPath $destinationTrayBinary -Destination $trayBackup -Force
+    }
+    if (Test-Path -LiteralPath $destinationTrayIcon -PathType Leaf) {
+        Copy-Item -LiteralPath $destinationTrayIcon -Destination $trayIconBackup -Force
+    }
+    $trayReplacementStarted = $true
+    Install-AgentDockBinary -SourceBinary $sourceTrayBinary -DestinationBinary $destinationTrayBinary
+    Copy-Item -LiteralPath $sourceTrayIcon -Destination $destinationTrayIcon -Force
     Add-UserPath -Directory $InstallDir
 
     $agentDockHome = Join-Path $userHome '.agentdock'
@@ -650,6 +791,9 @@ try {
                 $ServerUrl = Normalize-ServerUrl -Value $ServerUrl
 
                 $existingTunnelToken = Read-ProtectedText -Path $tunnelTokenPath -Entropy 'agentdock.cloudflare.tunnel.v1'
+                if ([string]::IsNullOrWhiteSpace($TunnelToken) -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {
+                    $TunnelToken = Read-SecretFile -Path $TunnelTokenFile
+                }
                 if ([string]::IsNullOrWhiteSpace($TunnelToken)) {
                     $TunnelToken = [Environment]::GetEnvironmentVariable('AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN')
                 }
@@ -713,6 +857,9 @@ if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
         $startupCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
         New-ItemProperty -Path $runKey -Name $runValueName -Value $startupCommand -PropertyType String -Force | Out-Null
         $startupRegistrationChanged = $true
+        $trayStartupCommand = "`"$destinationTrayBinary`""
+        New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $trayStartupCommand -PropertyType String -Force | Out-Null
+        $trayStartupRegistrationChanged = $true
         Start-AgentDockLauncher -LauncherPath $launcherPath
         Wait-AgentDockHealth -HealthPort $Port
 
@@ -801,10 +948,31 @@ exit `$process.ExitCode
         }
     }
 
+    if (-not $RegisterStartup) {
+        Remove-ItemProperty -LiteralPath $runKey -Name $trayRunValueName -ErrorAction SilentlyContinue
+        $trayStartupRegistrationChanged = $true
+    }
+
     $mustRestartExistingProcess = (-not $RegisterStartup) -and $processWasRunning -and (Test-Path -LiteralPath $launcherPath -PathType Leaf)
     if ($mustRestartExistingProcess) {
         Start-AgentDockLauncher -LauncherPath $launcherPath
     }
+
+    $localMCPUrl = "http://127.0.0.1:$Port/mcp"
+    $publicMCPUrl = ''
+    if (-not [string]::IsNullOrWhiteSpace($publicUrl)) {
+        $publicMCPUrl = "$publicUrl/mcp"
+    }
+    Write-RuntimeManifest `
+        -Path $runtimeManifestPath `
+        -AgentDockBinary $destinationBinary `
+        -TrayBinary $destinationTrayBinary `
+        -AgentDockLauncher $launcherPath `
+        -CloudflaredLauncher $cloudflaredLauncherPath `
+        -RuntimePort $Port `
+        -RuntimeTunnelMode $resolvedTunnelMode `
+        -RuntimePublicUrl $publicUrl `
+        -Channel $InstallChannel
 
     Write-Host 'Installing official core Skills...'
     & $destinationBinary skill bootstrap --bundle $coreSkillBundle
@@ -812,7 +980,27 @@ exit `$process.ExitCode
         throw "Core Skill bootstrap failed with exit code $LASTEXITCODE."
     }
 
+    if ($RegisterStartup -or $trayProcessWasRunning) {
+        Start-AgentDockTray -BinaryPath $destinationTrayBinary
+    }
+
+    $healthStatus = 'not-started'
+    if ($RegisterStartup) {
+        $healthStatus = 'healthy'
+    }
+    Write-InstallResult `
+        -Path $ResultFile `
+        -Success $true `
+        -Message 'AgentDock installation completed.' `
+        -InstalledVersion $Version `
+        -LocalMCPUrl $localMCPUrl `
+        -PublicMCPUrl $publicMCPUrl `
+        -BearerToken $AuthToken `
+        -OAuthLoginPassword $OAuthPassword `
+        -HealthStatus $healthStatus
+
     Write-Host "AgentDock installed: $destinationBinary"
+    Write-Host "Local MCP address: $localMCPUrl"
     Write-Host 'Open a new terminal if the updated user PATH is not visible yet.'
     if ($RegisterStartup) {
         Write-Host "Bearer Token: $AuthToken"
@@ -839,6 +1027,9 @@ exit `$process.ExitCode
 } catch {
     $installError = $_
     try {
+        if ($trayStopAttempted -or $trayReplacementStarted -or $trayStartupRegistrationChanged) {
+            [void] (Stop-AgentDockTrayForUpgrade -BinaryPath $destinationTrayBinary)
+        }
         if ($cloudflaredStopAttempted -or $cloudflaredReplacementStarted -or $tunnelStartupRegistrationChanged) {
             [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
         }
@@ -853,6 +1044,23 @@ exit `$process.ExitCode
             }
             if (-not $cloudflaredBackupExists) {
                 Remove-Item -LiteralPath $cloudflaredBinary -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        if ($trayReplacementStarted) {
+            $trayBackupExists = Test-Path -LiteralPath $trayBackup -PathType Leaf
+            if ($trayBackupExists) {
+                Copy-Item -LiteralPath $trayBackup -Destination $destinationTrayBinary -Force
+            }
+            if (-not $trayBackupExists) {
+                Remove-Item -LiteralPath $destinationTrayBinary -Force -ErrorAction SilentlyContinue
+            }
+            $trayIconBackupExists = Test-Path -LiteralPath $trayIconBackup -PathType Leaf
+            if ($trayIconBackupExists) {
+                Copy-Item -LiteralPath $trayIconBackup -Destination $destinationTrayIcon -Force
+            }
+            if (-not $trayIconBackupExists) {
+                Remove-Item -LiteralPath $destinationTrayIcon -Force -ErrorAction SilentlyContinue
             }
         }
 
@@ -877,6 +1085,11 @@ exit `$process.ExitCode
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             }
+            if ($null -ne $previousTrayRunValue) {
+                New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $previousTrayRunValue -PropertyType String -Force | Out-Null
+            } else {
+                Remove-ItemProperty -LiteralPath $runKey -Name $trayRunValueName -ErrorAction SilentlyContinue
+            }
             if ($null -ne $previousTunnelRunValue) {
                 New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName -Value $previousTunnelRunValue -PropertyType String -Force | Out-Null
             } else {
@@ -890,10 +1103,26 @@ exit `$process.ExitCode
         if ($cloudflaredProcessWasRunning -and (Test-Path -LiteralPath $cloudflaredLauncherPath -PathType Leaf)) {
             Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath
         }
+        if ($trayProcessWasRunning -and (Test-Path -LiteralPath $destinationTrayBinary -PathType Leaf)) {
+            Start-AgentDockTray -BinaryPath $destinationTrayBinary
+        }
     } catch {
         Write-Warning "AgentDock rollback failed: $($_.Exception.Message)"
     }
+    Write-InstallResult `
+        -Path $ResultFile `
+        -Success $false `
+        -Message $installError.Exception.Message `
+        -InstalledVersion $Version `
+        -LocalMCPUrl "http://127.0.0.1:$Port/mcp" `
+        -PublicMCPUrl '' `
+        -BearerToken '' `
+        -OAuthLoginPassword '' `
+        -HealthStatus 'failed'
     throw $installError
 } finally {
+    if ($DeleteTunnelTokenFile -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {
+        Remove-Item -LiteralPath $TunnelTokenFile -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

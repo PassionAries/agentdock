@@ -17,10 +17,14 @@ $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('agentdock-installer-e2e-' + [Guid]::NewGuid().ToString('N'))
 $installDir = Join-Path $testRoot 'bin'
 $binaryPath = Join-Path $installDir 'agentdock.exe'
+$trayBinaryPath = Join-Path $installDir 'agentdock-tray.exe'
+$trayIconPath = Join-Path $installDir 'agentdock.ico'
+$runtimeManifestPath = Join-Path $testRoot 'runtime.json'
 $tokenPath = Join-Path $testRoot 'auth-token.dpapi'
 $launcherPath = Join-Path $testRoot 'start-agentdock.ps1'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = 'AgentDock'
+$trayRunValueName = 'AgentDockTray'
 $healthUrl = "http://127.0.0.1:$Port/healthz"
 $originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $originalReleaseBaseUrl = $env:AGENTDOCK_RELEASE_BASE_URL
@@ -29,6 +33,14 @@ if ($ReleaseBaseUrl) {
 }
 
 function Stop-TestAgentDock {
+    Get-Process -Name 'agentdock-tray' -ErrorAction SilentlyContinue | Where-Object {
+        try {
+            [string]::Equals([IO.Path]::GetFullPath($_.Path), [IO.Path]::GetFullPath($trayBinaryPath), [StringComparison]::OrdinalIgnoreCase)
+        } catch {
+            $false
+        }
+    } | Stop-Process -Force -ErrorAction SilentlyContinue
+
     Get-Process -Name 'agentdock' -ErrorAction SilentlyContinue | Where-Object {
         try {
             [string]::Equals(
@@ -51,10 +63,27 @@ function Assert-AgentDockHealthy {
     if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
         throw "AgentDock binary was not installed: $binaryPath"
     }
+    if (-not (Test-Path -LiteralPath $trayIconPath -PathType Leaf)) {
+        throw "AgentDock tray icon was not installed: $trayIconPath"
+    }
+    if (-not (Test-Path -LiteralPath $trayBinaryPath -PathType Leaf)) {
+        throw "AgentDock tray was not installed: $trayBinaryPath"
+    }
+    if (-not (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf)) {
+        throw "AgentDock runtime manifest was not created: $runtimeManifestPath"
+    }
+    $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+    if ($runtimeManifest.tunnel_mode -ne 'none' -or $runtimeManifest.local_mcp_url -ne "http://127.0.0.1:$Port/mcp") {
+        throw 'AgentDock runtime manifest contains unexpected local settings.'
+    }
     if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
         throw "AgentDock DPAPI token was not created: $tokenPath"
     }
     $startupCommand = Get-ItemPropertyValue -LiteralPath $runKey -Name $runValueName -ErrorAction Stop
+    $trayStartupCommand = Get-ItemPropertyValue -LiteralPath $runKey -Name $trayRunValueName -ErrorAction Stop
+    if (-not $trayStartupCommand.Contains($trayBinaryPath)) {
+        throw "AgentDock tray HKCU startup command is incorrect: $trayStartupCommand"
+    }
     if (-not $startupCommand.Contains($launcherPath)) {
         throw "AgentDock HKCU startup command does not reference the launcher: $startupCommand"
     }
@@ -119,6 +148,7 @@ try {
 finally {
     Stop-TestAgentDock
     Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
+    Remove-ItemProperty -LiteralPath $runKey -Name $trayRunValueName -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
     $env:AGENTDOCK_RELEASE_BASE_URL = $originalReleaseBaseUrl

@@ -128,6 +128,15 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 
 	for _, want := range []string{
 		"agentdock_windows_$architecture.zip",
+		"agentdock-tray.exe",
+		"agentdock.ico",
+		"[switch] $ConfigurePublicAccess",
+		"[string] $TunnelTokenFile = ''",
+		"[switch] $DeleteTunnelTokenFile",
+		"Write-RuntimeManifest",
+		"Write-InstallResult",
+		"runtime.json",
+		"New-ItemProperty -Path $runKey -Name $trayRunValueName",
 		"cloudflared-windows-$Architecture.exe",
 		"Get-FileHash -LiteralPath $archivePath -Algorithm SHA256",
 		"Stop-AgentDockForUpgrade -BinaryPath $destinationBinary",
@@ -216,7 +225,10 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 	}
 	script := string(data)
 	for _, want := range []string{
+		"Stop-ProcessByPath -ProcessName 'agentdock-tray'",
 		"Stop-ProcessByPath -ProcessName 'cloudflared'",
+		"Remove-ItemProperty -LiteralPath $runKey -Name $TrayStartupValueName",
+		"'runtime.json'",
 		"Remove-ItemProperty -LiteralPath $runKey -Name $CloudflaredStartupValueName",
 		"'start-cloudflared.ps1'",
 		"'oauth-password.dpapi'",
@@ -224,7 +236,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'cloudflared-token.dpapi'",
 		"'cloudflared.out.log'",
 		"'cloudflared.err.log'",
-		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared'",
+		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray'",
 		"Legacy AgentDock scheduled task could not be removed",
 	} {
 		if !strings.Contains(script, want) {
@@ -359,5 +371,56 @@ func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
 	}
 	if strings.Contains(string(baseData), "TUNNEL_TOKEN") {
 		t.Fatal("base AgentDock service must not receive TUNNEL_TOKEN")
+	}
+}
+
+func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "AgentDock.iss"))
+	if err != nil {
+		t.Fatalf("read AgentDock.iss: %v", err)
+	}
+	setup := string(data)
+	for _, want := range []string{
+		"PrivilegesRequired=lowest",
+		"-TunnelMode ",
+		"-TunnelTokenFile ",
+		"-DeleteTunnelTokenFile",
+		"-InstallChannel setup",
+		"SignedUninstaller=yes",
+		"DeinitializeSetup",
+		"function InitializeUninstall(): Boolean",
+		"PurgeStateQuestion",
+		"Bearer Token：",
+	} {
+		if !strings.Contains(setup, want) {
+			t.Fatalf("AgentDock.iss missing %q", want)
+		}
+	}
+	if strings.Contains(setup, " -TunnelToken ") {
+		t.Fatal("Setup must pass the Cloudflare Tunnel Token through a temporary file, not process arguments")
+	}
+}
+
+func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(data)
+	for _, want := range []string{
+		"WINDOWS_SIGNING_CERT_BASE64 is required for a formal release",
+		"dist/agentdock-tray.exe",
+		"scripts\\sign-windows.ps1",
+		"build-windows-setup:",
+		"AgentDockSetup.exe",
+		"dist/*.exe.sha256",
+		"-VerifyOnly",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release.yml missing signed Windows release requirement %q", want)
+		}
+	}
+	if strings.Contains(workflow, "if: steps.signing.outputs.enabled == 'true'") {
+		t.Fatal("formal Windows release must not silently skip Authenticode signing")
 	}
 }

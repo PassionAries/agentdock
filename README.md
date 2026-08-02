@@ -99,6 +99,12 @@ Regular users do not need to download source code, install Go, or build an image
 
 Start here: [Install AgentDock](https://uvwt.github.io/agentdock-docs/docs/getting-started/install)
 
+### Windows installation
+
+Regular Windows users should download the signed `AgentDockSetup.exe` from the release. The wizard defaults to local-only access and can register login startup. A temporary or fixed Cloudflare Tunnel is configured only when the user explicitly selects public access. The completion page shows MCP connection details, while the tray exposes status, address copying, restart, and core update actions.
+
+The PowerShell installer remains available for automation and advanced use.
+
 ### Docker deployment
 
 Release images are published to both GitHub Container Registry and Docker Hub. The Compose file attached to each release uses GHCR by default, and the production image runs as a non-root user.
@@ -155,15 +161,15 @@ sh /tmp/agentdock-install.sh                     # Linux
 sh /tmp/agentdock-install.sh --register-service  # macOS
 ```
 
-Windows uses its own PowerShell entry point and login startup mode:
+Regular Windows users run the signed `AgentDockSetup.exe` from the release and choose temporary or fixed public access in the wizard. Advanced PowerShell users must request the public-access prompt explicitly:
 
 ```powershell
 $script = Join-Path $env:TEMP 'install-agentdock.ps1'
 Invoke-WebRequest https://github.com/uvwt/agentdock/releases/latest/download/install.ps1 -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script -RegisterStartup
+powershell -ExecutionPolicy Bypass -File $script -RegisterStartup -ConfigurePublicAccess
 ```
 
-Existing automation may still override the prompt with `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`. Windows protects the Bearer Token, OAuth password, OAuth signing secret, and Tunnel Token separately with current-user DPAPI.
+`-RegisterStartup` by itself configures local startup and does not expose AgentDock publicly. Automation may still set `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`. Windows protects the Bearer Token, OAuth password, OAuth signing secret, and Tunnel Token separately with current-user DPAPI.
 
 When a temporary URL changes, rerun the same installer. It writes the new URL back to AgentDock while preserving the Bearer Token, OAuth login password, and signing secret. Update the MCP URL in the client and complete OAuth authorization again.
 
@@ -225,7 +231,7 @@ agentdock --version
 agentdock update
 ```
 
-`agentdock update` downloads the latest release for the current platform, verifies its SHA-256 checksum, validates the new binary, backs up the current binary, and replaces it. If it detects a LaunchAgent, systemd service, Windows Service, or Windows user startup entry, it restarts the service and verifies the new version. A failed update restores the previous binary. Development builds cannot use this command.
+`agentdock update` downloads the latest release for the current platform, verifies its SHA-256 checksum, validates the new binary, backs up the current binary, and replaces it. If it detects a LaunchAgent, systemd service, Windows Service, or Windows user startup entry, it restarts the service and verifies the new version. A failed update restores the previous binary. Development builds cannot use this command. The Windows tray delegates to this same core update path; update the tray and Setup itself by running the newer `AgentDockSetup.exe`.
 
 ## Core capabilities
 

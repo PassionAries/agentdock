@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/uvwt/agentdock/internal/windowsruntime"
 )
 
 const windowsServiceName = "agentdock"
@@ -214,6 +216,12 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 }
 
 func platformHealthCandidates(_ context.Context, targetPath string) []string {
+	if manifest, err := windowsruntime.LoadForBinary(targetPath); err == nil {
+		return []string{manifest.HealthURL()}
+	}
+
+	// Older installations do not have runtime.json. Keep the launcher fallback
+	// until all supported Windows releases have migrated to the manifest.
 	launcherPath := filepath.Join(filepath.Dir(filepath.Dir(targetPath)), "start-agentdock.ps1")
 	data, err := os.ReadFile(launcherPath)
 	if err != nil {
@@ -227,6 +235,9 @@ func platformHealthCandidates(_ context.Context, targetPath string) []string {
 }
 
 func launcherManagesTarget(ctx context.Context, launcherPath, targetPath string) bool {
+	if manifest, err := windowsruntime.LoadForBinary(targetPath); err == nil {
+		launcherPath = manifest.AgentDockLauncher
+	}
 	data, err := os.ReadFile(launcherPath)
 	if err != nil || !strings.Contains(strings.ToLower(string(data)), strings.ToLower(filepath.Clean(targetPath))) {
 		return false

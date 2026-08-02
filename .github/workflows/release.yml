@@ -161,14 +161,18 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\scripts\test-install-windows.ps1 -InstallerPath $env:DOWNLOADED_INSTALLER
 
-      - name: Detect Authenticode configuration
-        id: signing
+      - name: Require Authenticode configuration
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
-          $enabled = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64)
-          "enabled=$($enabled.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64)) {
+            throw 'WINDOWS_SIGNING_CERT_BASE64 is required for a formal release.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+            throw 'WINDOWS_SIGNING_CERT_PASSWORD is required for a formal release.'
+          }
 
       - name: Build
         shell: pwsh
@@ -182,6 +186,7 @@ jobs:
           $ldflags = "-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=$env:GITHUB_SHA -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=$buildDate"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           go build -trimpath -ldflags $ldflags -o dist/agentdock.exe ./cmd/agentdock
+          go build -trimpath -ldflags '-s -w -H=windowsgui' -o dist/agentdock-tray.exe ./cmd/agentdock-tray
 
       - name: Smoke test current binary as standard user
         if: matrix.goarch == 'amd64'
@@ -191,27 +196,16 @@ jobs:
           & .\scripts\test-windows-current-binary-as-standard-user.ps1 `
             -BinaryPath .\dist\agentdock.exe
 
-      - name: Authenticode sign
-        if: steps.signing.outputs.enabled == 'true'
+      - name: Authenticode sign and verify
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $pfx = Join-Path $env:RUNNER_TEMP 'agentdock-signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64))
-          try {
-            $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Sort-Object FullName |
-              Select-Object -Last 1
-            if (-not $signTool) { throw 'signtool.exe was not found' }
-            & $signTool.FullName sign /fd SHA256 /f $pfx /p $env:WINDOWS_SIGNING_CERT_PASSWORD /tr http://timestamp.digicert.com /td SHA256 dist/agentdock.exe
-            if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
-          }
-          finally {
-            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
-          }
+          .\scripts\sign-windows.ps1 -Path @(
+            '.\dist\agentdock.exe',
+            '.\dist\agentdock-tray.exe'
+          )
 
       - name: Package
         shell: pwsh
@@ -221,7 +215,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $asset = "agentdock_windows_$env:GOARCH.zip"
           python .\scripts\build-core-skill-bundle.py --output dist\share\agentdock\core-skills
-          Compress-Archive -Path dist\agentdock.exe, dist\share -DestinationPath $asset -Force
+          Copy-Item .\packaging\windows\assets\agentdock.ico dist\agentdock.ico -Force
+          Compress-Archive -Path dist\agentdock.exe, dist\agentdock-tray.exe, dist\agentdock.ico, dist\share -DestinationPath $asset -Force
           $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText("$asset.sha256", "$hash  $asset`n", [Text.UTF8Encoding]::new($false))
 
@@ -234,9 +229,65 @@ jobs:
             agentdock_windows_${{ matrix.goarch }}.zip.sha256
           if-no-files-found: error
 
+  build-windows-setup:
+    name: Build signed Windows Setup
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require Authenticode configuration
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_BASE64)) {
+            throw 'WINDOWS_SIGNING_CERT_BASE64 is required for a formal release.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+            throw 'WINDOWS_SIGNING_CERT_PASSWORD is required for a formal release.'
+          }
+
+      - name: Build and sign AgentDockSetup.exe
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ github.event.inputs.tag || github.ref_name }}'
+          $version = $tag.TrimStart('v')
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
+            throw "Inno Setup compiler was not found: $iscc"
+          }
+          $outputDir = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          $signScript = Join-Path $PWD 'scripts\sign-windows.ps1'
+          $signCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$signScript`" -Path `$q`$f`$q"
+          & $iscc `
+            "/DAppVersion=$version" `
+            "/DOutputDir=$outputDir" `
+            '/DSignedBuild=1' `
+            "/Sagentdock-sign=$signCommand" `
+            '.\packaging\windows\AgentDock.iss'
+          if ($LASTEXITCODE -ne 0) {
+            throw "ISCC failed with exit code $LASTEXITCODE."
+          }
+          .\scripts\sign-windows.ps1 -Path '.\dist\AgentDockSetup.exe' -VerifyOnly
+
+      - name: Upload Setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentdock-windows-setup
+          path: dist/AgentDockSetup.exe
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux, build-macos, build-windows, build-windows-setup]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -310,6 +361,7 @@ jobs:
               uninstall-macos.sh \
               install.ps1 \
               uninstall-windows.ps1 \
+              AgentDockSetup.exe \
               skill-desktop.zip; do
               shasum -a 256 "$file" > "$file.sha256"
             done
@@ -328,6 +380,8 @@ jobs:
             dist/*.sh.sha256
             dist/*.ps1
             dist/*.ps1.sha256
+            dist/*.exe
+            dist/*.exe.sha256
             dist/*.yml
             dist/*.example
           generate_release_notes: true
@@ -511,6 +565,25 @@ jobs:
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          $setup = Join-Path $env:RUNNER_TEMP 'AgentDockSetup.exe'
+          Invoke-WebRequest `
+            -UseBasicParsing `
+            -Uri "https://github.com/${{ github.repository }}/releases/download/$tag/AgentDockSetup.exe" `
+            -OutFile $setup
+          "PUBLISHED_SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      - name: Verify published Setup signature
+        shell: pwsh
+        run: |
+          .\scripts\sign-windows.ps1 -Path $env:PUBLISHED_SETUP -VerifyOnly
+
+      - name: Install and uninstall published Setup
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\test-windows-setup-e2e.ps1 `
+            -SetupPath $env:PUBLISHED_SETUP `
+            -ReleaseBaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG"
 
       - name: Install and upgrade published version as standard user
         shell: powershell

@@ -3,7 +3,8 @@ param(
     [string] $InstallDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AgentDock\bin'),
     [switch] $PurgeState,
     [string] $StartupValueName = 'AgentDock',
-    [string] $CloudflaredStartupValueName = 'AgentDockCloudflared'
+    [string] $CloudflaredStartupValueName = 'AgentDockCloudflared',
+    [string] $TrayStartupValueName = 'AgentDockTray'
 )
 
 Set-StrictMode -Version Latest
@@ -35,19 +36,22 @@ function Stop-ProcessByPath {
 $runtimeDir = Split-Path -Parent $InstallDir
 $userHome = [Environment]::GetFolderPath('UserProfile')
 $agentDockBinary = Join-Path $InstallDir 'agentdock.exe'
+$trayBinary = Join-Path $InstallDir 'agentdock-tray.exe'
 $cloudflaredBinary = Join-Path $InstallDir 'cloudflared.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
+Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath $trayBinary
 Stop-ProcessByPath -ProcessName 'cloudflared' -BinaryPath $cloudflaredBinary
 Stop-ProcessByPath -ProcessName 'agentdock' -BinaryPath $agentDockBinary
 
 if (Test-Path -LiteralPath $runKey) {
     Remove-ItemProperty -LiteralPath $runKey -Name $StartupValueName -ErrorAction SilentlyContinue
     Remove-ItemProperty -LiteralPath $runKey -Name $CloudflaredStartupValueName -ErrorAction SilentlyContinue
+    Remove-ItemProperty -LiteralPath $runKey -Name $TrayStartupValueName -ErrorAction SilentlyContinue
 }
 
 # Legacy scheduled-task cleanup applies only to the default installation names.
-if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared') {
+if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray') {
     $task = Get-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
     if ($task) {
         try {
@@ -70,7 +74,8 @@ foreach ($name in @(
     'cloudflared-mode.txt',
     'cloudflared-token.dpapi',
     'cloudflared.out.log',
-    'cloudflared.err.log'
+    'cloudflared.err.log',
+    'runtime.json'
 )) {
     Remove-Item -LiteralPath (Join-Path $runtimeDir $name) -Force -ErrorAction SilentlyContinue
 }
@@ -87,4 +92,4 @@ if ($PurgeState) {
     Remove-Item -LiteralPath (Join-Path $userHome 'AgentDock') -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host 'AgentDock and its managed Cloudflare Tunnel were uninstalled.'
+Write-Host 'AgentDock, its tray, and its managed Cloudflare Tunnel were uninstalled.'

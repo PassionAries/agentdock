@@ -6,9 +6,13 @@ on:
       - main
     paths:
       - 'scripts/install.ps1'
+      - 'scripts/uninstall-windows.ps1'
+      - 'scripts/sign-windows.ps1'
+      - 'packaging/windows/**'
       - 'scripts/test-install-windows.ps1'
       - 'scripts/test-install-windows-download.ps1'
       - 'scripts/test-install-windows-e2e.ps1'
+      - 'scripts/test-windows-setup-e2e.ps1'
       - 'scripts/run-windows-installer-e2e-as-standard-user.ps1'
       - 'scripts/test-windows-current-binary-as-standard-user.ps1'
       - 'cmd/**'
@@ -66,12 +70,14 @@ jobs:
           $env:GOOS = 'windows'
           $env:GOARCH = 'amd64'
           go build -trimpath -o (Join-Path $distRoot 'agentdock.exe') .\cmd\agentdock
+          go build -trimpath -ldflags '-H=windowsgui' -o (Join-Path $distRoot 'agentdock-tray.exe') .\cmd\agentdock-tray
+          Copy-Item .\packaging\windows\assets\agentdock.ico (Join-Path $distRoot 'agentdock.ico') -Force
           python .\scripts\build-core-skill-bundle.py --output $bundleRoot
 
           $assetName = 'agentdock_windows_amd64.zip'
           $archivePath = Join-Path $releaseRoot $assetName
           Compress-Archive `
-            -Path (Join-Path $distRoot 'agentdock.exe'), (Join-Path $distRoot 'share') `
+            -Path (Join-Path $distRoot 'agentdock.exe'), (Join-Path $distRoot 'agentdock-tray.exe'), (Join-Path $distRoot 'agentdock.ico'), (Join-Path $distRoot 'share') `
             -DestinationPath $archivePath `
             -Force
           $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -120,6 +126,40 @@ jobs:
           $env:GOOS = 'windows'
           $env:GOARCH = 'amd64'
           go build -trimpath -o dist\agentdock.exe .\cmd\agentdock
+          go build -trimpath -ldflags '-H=windowsgui' -o dist\agentdock-tray.exe .\cmd\agentdock-tray
+
+      - name: Compile unsigned Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
+            throw "Inno Setup compiler was not found: $iscc"
+          }
+          $config = Get-Content -LiteralPath '.\internal\config\config.go' -Raw
+          $match = [regex]::Match($config, 'Version\s*=\s*"([^"]+)"')
+          if (-not $match.Success) { throw 'Could not read config.Version.' }
+          $outputDir = Join-Path $env:RUNNER_TEMP 'agentdock-setup'
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          & $iscc `
+            "/DAppVersion=$($match.Groups[1].Value)" `
+            "/DOutputDir=$outputDir" `
+            '/DSignedBuild=0' `
+            '.\packaging\windows\AgentDock.iss'
+          if ($LASTEXITCODE -ne 0) {
+            throw "ISCC failed with exit code $LASTEXITCODE."
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $outputDir 'AgentDockSetup.exe') -PathType Leaf)) {
+            throw 'AgentDockSetup.exe was not produced.'
+          }
+
+      - name: Run Setup install and uninstall E2E
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\test-windows-setup-e2e.ps1 `
+            -SetupPath (Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup.exe') `
+            -ReleaseRoot (Join-Path $env:RUNNER_TEMP 'agentdock-current-release')
 
       - name: Smoke test current binary as standard user
         shell: powershell

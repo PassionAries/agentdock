@@ -99,6 +99,12 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 完整安装入口：[安装 AgentDock](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/install)
 
+### Windows 安装
+
+Windows 普通用户优先从 Release 下载签名的 `AgentDockSetup.exe`。安装向导默认只允许本机访问，并可选择登录后自动启动；只有用户明确选择时才会配置临时或固定的 Cloudflare Tunnel 公网入口。安装完成页会显示 MCP 地址和需要保存的认证信息，系统托盘可查看状态、复制地址、重启服务和触发核心更新。
+
+PowerShell 安装脚本继续保留给自动化和高级用户使用。
+
 ### Docker 部署
 
 正式镜像同步发布到 GitHub Container Registry 和 Docker Hub。Release 附带的 Compose 文件默认使用 GHCR，正式镜像以非 root 用户运行。
@@ -155,15 +161,15 @@ sh /tmp/agentdock-install.sh                 # Linux
 sh /tmp/agentdock-install.sh --register-service  # macOS
 ```
 
-Windows 使用独立的 PowerShell 入口和登录启动模式：
+Windows 普通用户直接运行 Release 中签名的 `AgentDockSetup.exe`，在“连接方式”页面选择临时或固定公网入口。高级用户使用 PowerShell 时，需要显式请求公网配置：
 
 ```powershell
 $script = Join-Path $env:TEMP 'install-agentdock.ps1'
 Invoke-WebRequest https://github.com/uvwt/agentdock/releases/latest/download/install.ps1 -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script -RegisterStartup
+powershell -ExecutionPolicy Bypass -File $script -RegisterStartup -ConfigurePublicAccess
 ```
 
-已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
+仅使用 `-RegisterStartup` 只会配置本机启动，不会默认开放公网。自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 直接指定模式；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
 
 临时地址变化后，重新运行同一个安装脚本即可生成并回写新地址。安装器会保留原 Bearer Token、OAuth 登录密码和签名密钥；用户只需在客户端替换 MCP URL，并重新完成 OAuth 授权。
 
@@ -212,7 +218,7 @@ AgentDock 通过 MCP Streamable HTTP 提供工具能力。下面是一个通用�
 | Linux | [Linux 自动安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/linux) |
 | Linux / VPS | [systemd 部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/vps) |
 | macOS | [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos) |
-| Windows | [Windows 原生安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows) |
+| Windows | [签名 Setup.exe 与原生安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows) |
 
 每个平台文档均包含安装命令、启动检查、MCP 地址和认证方式。浏览器自动化、macOS 桌面操作、Windows / WSL、反向代理和数据迁移等内容位于对应进阶文档。
 
@@ -225,7 +231,7 @@ agentdock --version
 agentdock update
 ```
 
-`agentdock update` 会下载匹配当前平台的最新 Release，校验 SHA-256 并验证新二进制，然后备份和替换当前版本。检测到 LaunchAgent、systemd、Windows Service 或 Windows 用户启动项时，会自动重启并验证新版本；失败时恢复旧版本。开发构建不能通过该命令更新。
+`agentdock update` 会下载匹配当前平台的最新 Release，校验 SHA-256 并验证新二进制，然后备份和替换当前版本。检测到 LaunchAgent、systemd、Windows Service 或 Windows 用户启动项时，会自动重启并验证新版本；失败时恢复旧版本。开发构建不能通过该命令更新。Windows 托盘调用的也是这条核心更新链路；托盘程序和 Setup 本身通过重新运行新版 `AgentDockSetup.exe` 更新。
 
 ## 核心能力
 

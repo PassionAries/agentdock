@@ -85,6 +85,7 @@ $testId = [Guid]::NewGuid().ToString('N')
 $root = Join-Path ([IO.Path]::GetTempPath()) ("agentdock-win-tunnel-e2e-$testId")
 $runValueName = "AgentDockTunnelE2E-$testId"
 $cloudflaredRunValueName = "AgentDockCloudflaredTunnelE2E-$testId"
+$trayRunValueName = "AgentDockTrayTunnelE2E-$testId"
 $releaseDir = Join-Path $root 'release'
 $installDir = Join-Path $root 'AgentDock\bin'
 $runtimeDir = Split-Path -Parent $installDir
@@ -101,8 +102,10 @@ $workExisted = Test-Path -LiteralPath $workDir
 $oldUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $oldAgentDockRun = Get-RunValue -RegistryPath $runKey -Name $runValueName
 $oldCloudflaredRun = Get-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName
+$oldTrayRun = Get-RunValue -RegistryPath $runKey -Name $trayRunValueName
 $realAgentDockRun = Get-RunValue -RegistryPath $runKey -Name 'AgentDock'
 $realCloudflaredRun = Get-RunValue -RegistryPath $runKey -Name 'AgentDockCloudflared'
+$realTrayRun = Get-RunValue -RegistryPath $runKey -Name 'AgentDockTray'
 $httpServer = $null
 
 try {
@@ -142,7 +145,8 @@ try {
         -OAuthPassword 'windows-e2e-oauth-password' `
         -OAuthTokenSecret '0123456789abcdef0123456789abcdef' `
         -StartupValueName $runValueName `
-        -CloudflaredStartupValueName $cloudflaredRunValueName
+        -CloudflaredStartupValueName $cloudflaredRunValueName `
+        -TrayStartupValueName $trayRunValueName
 
     $serverUrlPath = Join-Path $runtimeDir 'server-url.txt'
     $modePath = Join-Path $runtimeDir 'cloudflared-mode.txt'
@@ -151,6 +155,9 @@ try {
     $oauthSecretPath = Join-Path $runtimeDir 'oauth-token-secret.dpapi'
     foreach ($path in @(
         (Join-Path $installDir 'agentdock.exe'),
+        (Join-Path $installDir 'agentdock-tray.exe'),
+        (Join-Path $installDir 'agentdock.ico'),
+        (Join-Path $runtimeDir 'runtime.json'),
         (Join-Path $installDir 'cloudflared.exe'),
         (Join-Path $runtimeDir 'start-agentdock.ps1'),
         (Join-Path $runtimeDir 'start-cloudflared.ps1'),
@@ -188,8 +195,12 @@ try {
 
     $runAgentDock = Get-RunValue -RegistryPath $runKey -Name $runValueName
     $runCloudflared = Get-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName
+    $runTray = Get-RunValue -RegistryPath $runKey -Name $trayRunValueName
     if (-not $runAgentDock.Contains((Join-Path $runtimeDir 'start-agentdock.ps1'))) {
         throw 'AgentDock startup entry is incorrect.'
+    }
+    if (-not $runTray.Contains((Join-Path $installDir 'agentdock-tray.exe'))) {
+        throw 'AgentDock tray startup entry is incorrect.'
     }
     if (-not $runCloudflared.Contains((Join-Path $runtimeDir 'start-cloudflared.ps1'))) {
         throw 'cloudflared startup entry is incorrect.'
@@ -205,7 +216,8 @@ try {
         -InstallDir $installDir `
         -Port $agentPort `
         -StartupValueName $runValueName `
-        -CloudflaredStartupValueName $cloudflaredRunValueName
+        -CloudflaredStartupValueName $cloudflaredRunValueName `
+        -TrayStartupValueName $trayRunValueName
 
     if ((Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash -ne $authHash) {
         throw 'Bearer credential changed during refresh.'
@@ -224,7 +236,8 @@ try {
     & $uninstaller `
         -InstallDir $installDir `
         -StartupValueName $runValueName `
-        -CloudflaredStartupValueName $cloudflaredRunValueName
+        -CloudflaredStartupValueName $cloudflaredRunValueName `
+        -TrayStartupValueName $trayRunValueName
     if (Test-Path -LiteralPath $installDir) {
         throw 'Windows uninstaller did not remove the test install directory.'
     }
@@ -256,12 +269,15 @@ try {
 } finally {
     Remove-Item Env:AGENTDOCK_RELEASE_BASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:AGENTDOCK_CLOUDFLARED_BINARY -ErrorAction SilentlyContinue
+    Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath (Join-Path $installDir 'agentdock-tray.exe')
     Stop-ProcessByPath -ProcessName 'cloudflared' -BinaryPath (Join-Path $installDir 'cloudflared.exe')
     Stop-ProcessByPath -ProcessName 'agentdock' -BinaryPath (Join-Path $installDir 'agentdock.exe')
     Restore-RunValue -RegistryPath $runKey -Name $runValueName -Value $oldAgentDockRun
     Restore-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $oldCloudflaredRun
+    Restore-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $oldTrayRun
     Restore-RunValue -RegistryPath $runKey -Name 'AgentDock' -Value $realAgentDockRun
     Restore-RunValue -RegistryPath $runKey -Name 'AgentDockCloudflared' -Value $realCloudflaredRun
+    Restore-RunValue -RegistryPath $runKey -Name 'AgentDockTray' -Value $realTrayRun
     [Environment]::SetEnvironmentVariable('Path', $oldUserPath, 'User')
     if ($httpServer -and -not $httpServer.HasExited) {
         Stop-Process -Id $httpServer.Id -Force -ErrorAction SilentlyContinue
