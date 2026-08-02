@@ -173,28 +173,52 @@ begin
   end;
 end;
 
+procedure CopyTextToClipboard(Value: String);
+var
+  ValueFile: String;
+  PowerShellPath: String;
+  Parameters: String;
+  ExitCode: Integer;
+begin
+  if Value = '' then
+    Exit;
+  ValueFile := ExpandConstant('{tmp}\agentdock-clipboard.txt');
+  if not SaveStringToFile(ValueFile, Value, False) then
+    Exit;
+  try
+    PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+    Parameters :=
+      '-NoLogo -NoProfile -NonInteractive -Command ' +
+      QuoteArgument('$value=[IO.File]::ReadAllText($args[0]); Set-Clipboard -Value $value') +
+      ' ' + QuoteArgument(ValueFile);
+    Exec(PowerShellPath, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  finally
+    DeleteFile(ValueFile);
+  end;
+end;
+
 procedure CopyLocalClick(Sender: TObject);
 begin
   if LocalMCPURL <> '' then
-    SetClipboardText(LocalMCPURL);
+    CopyTextToClipboard(LocalMCPURL);
 end;
 
 procedure CopyPublicClick(Sender: TObject);
 begin
   if PublicMCPURL <> '' then
-    SetClipboardText(PublicMCPURL);
+    CopyTextToClipboard(PublicMCPURL);
 end;
 
 procedure CopyBearerClick(Sender: TObject);
 begin
   if BearerToken <> '' then
-    SetClipboardText(BearerToken);
+    CopyTextToClipboard(BearerToken);
 end;
 
 procedure CopyOAuthClick(Sender: TObject);
 begin
   if OAuthPassword <> '' then
-    SetClipboardText(OAuthPassword);
+    CopyTextToClipboard(OAuthPassword);
 end;
 
 procedure InitializeWizard();
