@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $PSScriptRoot 'install-windows.ps1'
+    $InstallerPath = Join-Path $PSScriptRoot 'install.ps1'
 }
 $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('agentdock-installer-e2e-' + [Guid]::NewGuid().ToString('N'))

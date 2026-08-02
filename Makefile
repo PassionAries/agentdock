@@ -1,4 +1,4 @@
-.PHONY: fmt test test-scripts vet race build check run docker-build docker-dev-build docker-browser-build docker-up docker-browser-up docker-down smoke-docker logs clean clean-local-artifacts install-linux install-macos uninstall-macos test-install-macos deploy-macos-source restart-macos smoke-macos
+.PHONY: fmt test test-scripts vet race build check run docker-build docker-dev-build docker-browser-build docker-up docker-browser-up docker-down smoke-docker logs clean clean-local-artifacts install install-linux install-macos uninstall-macos test-install-macos deploy-macos-source restart-macos smoke-macos
 
 APP := agentdock
 IMAGE := agentdock:local
@@ -20,6 +20,7 @@ test:
 
 test-scripts:
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test_recall_backup_export.py
+	./scripts/test-install-entry.sh
 
 vet:
 	go vet ./...
@@ -35,11 +36,14 @@ check: fmt test test-scripts vet build
 run:
 	go run ./cmd/agentdock --host $(HOST) --port $(PORT) --log-level $(LOG_LEVEL)
 
+install:
+	AGENTDOCK_USE_LOCAL_PLATFORM_INSTALLER=true ./scripts/install.sh
+
 install-linux:
-	./scripts/install-linux.sh
+	./scripts/install-linux-platform.sh
 
 install-macos:
-	./scripts/install-macos.sh
+	./scripts/install-macos-platform.sh
 
 uninstall-macos:
 	./scripts/uninstall-macos.sh

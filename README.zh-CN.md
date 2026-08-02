@@ -147,16 +147,20 @@ macOS、Linux 和 Windows 安装器不会要求普通用户理解 `quick`、`nam
 
 两种方式都会自动生成或复用 **Bearer Token** 与 **OAuth** 配置。安装完成框会显示公网地址、MCP 地址、Bearer Token 和 OAuth 登录密码；OAuth 签名密钥与 Tunnel Token 只保存在受限配置文件中，不会显示或传给无关进程。
 
-macOS 使用后台服务和公网入口：
+Linux 与 macOS 使用同一个入口；macOS 需要 `--register-service` 才会注册后台服务：
 
 ```bash
-zsh install-macos.sh --register-service
+curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh -o /tmp/agentdock-install.sh
+sh /tmp/agentdock-install.sh                 # Linux
+sh /tmp/agentdock-install.sh --register-service  # macOS
 ```
 
-Linux 直接运行交互式安装器即可。Windows 使用登录启动模式：
+Windows 使用独立的 PowerShell 入口和登录启动模式：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -RegisterStartup
+$script = Join-Path $env:TEMP 'install-agentdock.ps1'
+Invoke-WebRequest https://github.com/uvwt/agentdock/releases/latest/download/install.ps1 -OutFile $script
+powershell -ExecutionPolicy Bypass -File $script -RegisterStartup
 ```
 
 已有自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 覆盖交互；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。

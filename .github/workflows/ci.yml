@@ -47,19 +47,18 @@ jobs:
       - name: Check browser runner syntax
         run: node --check examples/browser-runner/browser-runner.js
 
-      - name: Check Linux script syntax
+      - name: Check Linux installer entry
         if: runner.os == 'Linux'
         run: |
-          bash -n \
-            scripts/install-linux.sh \
-            scripts/install-linux-bootstrap.sh \
-            scripts/test-docker-images.sh
+          sh -n scripts/install.sh scripts/test-install-entry.sh
+          bash -n scripts/install-linux-platform.sh scripts/test-docker-images.sh
+          ./scripts/test-install-entry.sh
 
       - name: Test macOS scripts
         if: runner.os == 'macOS'
         run: |
           for path in \
-            scripts/install-macos.sh \
+            scripts/install-macos-platform.sh \
             scripts/uninstall-macos.sh \
             scripts/sign-macos.sh \
             scripts/deploy-macos-source.sh \
@@ -73,7 +72,7 @@ jobs:
         shell: powershell
         run: |
           $failed = $false
-          foreach ($path in @('scripts/install-windows.ps1', 'scripts/uninstall-windows.ps1')) {
+          foreach ($path in @('scripts/install.ps1', 'scripts/uninstall-windows.ps1')) {
             $tokens = $null
             $errors = $null
             [void] [System.Management.Automation.Language.Parser]::ParseFile(

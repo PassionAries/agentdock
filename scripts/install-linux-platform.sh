@@ -58,14 +58,13 @@ usage() {
 AgentDock Linux 问答式一键部署脚本。
 
 用法：
-  bash scripts/install-linux.sh
-  curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install-linux.sh -o /tmp/agentdock-install.sh
-  bash /tmp/agentdock-install.sh
+  curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh -o /tmp/agentdock-install.sh
+  sh /tmp/agentdock-install.sh
 
 Alpine/极简系统如果没有 curl/bash：
   apk add --no-cache bash curl
-  curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install-linux.sh -o /tmp/agentdock-install.sh
-  bash /tmp/agentdock-install.sh
+  curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh -o /tmp/agentdock-install.sh
+  sh /tmp/agentdock-install.sh
 
 环境变量可覆盖默认值：
   AGENTDOCK_INSTALL_MODE、AGENTDOCK_RELEASE_VERSION、AGENTDOCK_NONINTERACTIVE
@@ -180,7 +179,7 @@ confirm() {
 }
 
 require_linux() {
-  [[ "$(uname -s)" == "Linux" ]] || die "此脚本只支持 Linux；macOS 请使用 scripts/install-macos.sh。"
+  [[ "$(uname -s)" == "Linux" ]] || die "此脚本只支持 Linux；macOS 请使用 install.sh。"
 }
 
 detect_service_manager() {

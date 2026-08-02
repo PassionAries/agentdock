@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $InstallerPath = (Join-Path $PSScriptRoot 'install-windows.ps1')
+    [string] $InstallerPath = (Join-Path $PSScriptRoot 'install.ps1')
 )
 
 Set-StrictMode -Version Latest
@@ -62,8 +62,8 @@ foreach ($required in @(
     'Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath',
     'cloudflared-windows-$Architecture.exe',
     'Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)',
-    "RedirectStandardOutput = '$escapedCloudflaredStdoutLogPath'",
-    "RedirectStandardError = '$escapedCloudflaredStderrLogPath'",
+    'RedirectStandardOutput = ''$escapedCloudflaredStdoutLogPath''',
+    'RedirectStandardError = ''$escapedCloudflaredStderrLogPath''',
     'Write-ProtectedText -Path $oauthPasswordPath',
     'Write-ProtectedText -Path $oauthTokenSecretPath',
     'Write-ProtectedText -Path $tunnelTokenPath',

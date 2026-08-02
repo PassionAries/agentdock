@@ -8,10 +8,52 @@ import (
 	"testing"
 )
 
-func TestInstallLinuxWritesExplicitNexusDockToken(t *testing.T) {
-	data, err := os.ReadFile("install-linux.sh")
+func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
+	for _, path := range []string{
+		"install.sh",
+		"install-linux-platform.sh",
+		"install-macos-platform.sh",
+		"install.ps1",
+	} {
+		if info, err := os.Stat(path); err != nil {
+			t.Fatalf("required installer file %s: %v", path, err)
+		} else if !info.Mode().IsRegular() {
+			t.Fatalf("required installer path is not a regular file: %s", path)
+		}
+	}
+
+	for _, legacyPath := range []string{
+		"install-linux.sh",
+		"install-linux-bootstrap.sh",
+		"install-macos.sh",
+		"install-windows.ps1",
+	} {
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("legacy installer entry must not exist: %s", legacyPath)
+		}
+	}
+
+	data, err := os.ReadFile("install.sh")
 	if err != nil {
-		t.Fatalf("read install-linux.sh: %v", err)
+		t.Fatalf("read install.sh: %v", err)
+	}
+	entry := string(data)
+	for _, want := range []string{
+		"install-linux-platform.sh",
+		"install-macos-platform.sh",
+		"AGENTDOCK_INSTALLER_BASE_URL",
+		"verify_checksum",
+	} {
+		if !strings.Contains(entry, want) {
+			t.Fatalf("install.sh missing %q", want)
+		}
+	}
+}
+
+func TestInstallLinuxWritesExplicitNexusDockToken(t *testing.T) {
+	data, err := os.ReadFile("install-linux-platform.sh")
+	if err != nil {
+		t.Fatalf("read install-linux-platform.sh: %v", err)
 	}
 	script := string(data)
 	checks := []string{
@@ -22,24 +64,24 @@ func TestInstallLinuxWritesExplicitNexusDockToken(t *testing.T) {
 	}
 	for _, want := range checks {
 		if !strings.Contains(script, want) {
-			t.Fatalf("install-linux.sh missing NexusDock token handling: %s", want)
+			t.Fatalf("install-linux-platform.sh missing NexusDock token handling: %s", want)
 		}
 	}
 	for _, removed := range []string{"AGENTDOCK_NEXUS_DEVICE_NAME", "AGENTDOCK_NEXUS_HEARTBEAT_SECONDS", "Nexus 设备名"} {
 		if strings.Contains(script, removed) {
-			t.Fatalf("install-linux.sh still contains removed device-agent config %q", removed)
+			t.Fatalf("install-linux-platform.sh still contains removed device-agent config %q", removed)
 		}
 	}
 }
 
 func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
-	data, err := os.ReadFile("install-windows.ps1")
+	data, err := os.ReadFile("install.ps1")
 	if err != nil {
-		t.Fatalf("read install-windows.ps1: %v", err)
+		t.Fatalf("read install.ps1: %v", err)
 	}
 	for index, value := range data {
 		if value > 0x7f {
-			t.Fatalf("install-windows.ps1 must remain ASCII for Windows PowerShell 5.1; non-ASCII byte at offset %d", index)
+			t.Fatalf("install.ps1 must remain ASCII for Windows PowerShell 5.1; non-ASCII byte at offset %d", index)
 		}
 	}
 
@@ -48,7 +90,7 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		trimmed := strings.TrimSpace(line)
 		for _, keyword := range []string{"else", "elseif", "catch", "finally"} {
 			if trimmed == keyword || strings.HasPrefix(trimmed, keyword+" ") {
-				t.Fatalf("install-windows.ps1 must keep %s on the same line as the preceding closing brace: %q", keyword, line)
+				t.Fatalf("install.ps1 must keep %s on the same line as the preceding closing brace: %q", keyword, line)
 			}
 		}
 	}
@@ -83,22 +125,22 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"http://127.0.0.1:$HealthPort/healthz",
 	} {
 		if !strings.Contains(script, want) {
-			t.Fatalf("install-windows.ps1 missing %q", want)
+			t.Fatalf("install.ps1 missing %q", want)
 		}
 	}
 	stopCall := strings.Index(script, "Stop-AgentDockForUpgrade -BinaryPath $destinationBinary")
 	replaceCall := strings.Index(script, "Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary")
 	if stopCall < 0 || replaceCall < 0 || stopCall > replaceCall {
-		t.Fatal("install-windows.ps1 must stop the running instance before replacing agentdock.exe")
+		t.Fatal("install.ps1 must stop the running instance before replacing agentdock.exe")
 	}
 	backupCall := strings.Index(script, "Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force")
 	if backupCall < stopCall || backupCall > replaceCall {
-		t.Fatal("install-windows.ps1 must back up the stopped binary before replacement")
+		t.Fatal("install.ps1 must back up the stopped binary before replacement")
 	}
 
 	const securityAssemblyLoad = "Add-Type -AssemblyName System.Security"
 	if got := strings.Count(script, securityAssemblyLoad); got != 3 {
-		t.Fatalf("install-windows.ps1 must load System.Security in the installer and both generated launchers; got %d occurrences", got)
+		t.Fatalf("install.ps1 must load System.Security in the installer and both generated launchers; got %d occurrences", got)
 	}
 	if strings.Contains(script, "--token $TunnelToken") || strings.Contains(script, "--token `$env:TUNNEL_TOKEN") {
 		t.Fatal("cloudflared token must be decrypted into its environment, not placed in process arguments")
@@ -122,7 +164,7 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Unregister-ScheduledTask",
 	} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("install-windows.ps1 still contains removed privileged startup or ACL code %q", forbidden)
+			t.Fatalf("install.ps1 still contains removed privileged startup or ACL code %q", forbidden)
 		}
 	}
 	for _, incompatible := range []string{
@@ -131,7 +173,7 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		`Replace(\"`,
 	} {
 		if strings.Contains(script, incompatible) {
-			t.Fatalf("install-windows.ps1 contains Windows PowerShell 5.1 incompatible syntax %q", incompatible)
+			t.Fatalf("install.ps1 contains Windows PowerShell 5.1 incompatible syntax %q", incompatible)
 		}
 	}
 }
@@ -161,9 +203,9 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 }
 
 func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.T) {
-	data, err := os.ReadFile("install-linux.sh")
+	data, err := os.ReadFile("install-linux-platform.sh")
 	if err != nil {
-		t.Fatalf("read install-linux.sh: %v", err)
+		t.Fatalf("read install-linux-platform.sh: %v", err)
 	}
 	script := string(data)
 	for _, want := range []string{
@@ -182,7 +224,7 @@ func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.
 		`server_url="$TUNNEL_PUBLIC_URL"`,
 	} {
 		if !strings.Contains(script, want) {
-			t.Fatalf("install-linux.sh missing Cloudflare Tunnel integration %q", want)
+			t.Fatalf("install-linux-platform.sh missing Cloudflare Tunnel integration %q", want)
 		}
 	}
 	if strings.Contains(script, "--token $token") || strings.Contains(script, "--token \\$TUNNEL_TOKEN") {
@@ -209,7 +251,7 @@ func TestLinuxInstallerPreservesCredentialsAndCapturesQuickURL(t *testing.T) {
 
 	script := `
 set -Eeuo pipefail
-source ./install-linux.sh
+source ./install-linux-platform.sh
 run_root() {
   if [[ "$1" == systemctl ]]; then
     return 0

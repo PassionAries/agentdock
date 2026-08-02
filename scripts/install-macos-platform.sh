@@ -65,7 +65,8 @@ usage() {
 AgentDock macOS 预编译版本安装脚本。
 
 用法：
-  zsh install-macos.sh [选项]
+  curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh -o /tmp/agentdock-install.sh
+  sh /tmp/agentdock-install.sh [选项]
 
 选项：
   --version latest|vX.Y.Z  Release 版本，默认 latest
@@ -1458,7 +1459,7 @@ else
   $TARGET --host 127.0.0.1 --port 8765
 
 注册后台服务：
-  zsh install-macos.sh --register-service
+  sh install.sh --register-service
 STATUS
 fi
 }

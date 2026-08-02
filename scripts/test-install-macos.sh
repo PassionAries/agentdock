@@ -43,7 +43,7 @@ run_installer() {
     PATH="$TEST_PATH" \
     TMPDIR="$TMP_ROOT" \
     AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-    zsh "$ROOT_DIR/scripts/install-macos.sh" "$@"
+    zsh "$ROOT_DIR/scripts/install-macos-platform.sh" "$@"
 }
 
 mode_of() {
@@ -208,7 +208,7 @@ env -i \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
   AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='named-token-value' \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --tunnel named \
     --server-url https://agent.example.test \
     --no-start
@@ -239,7 +239,7 @@ env -i \
   PATH="$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --register-service \
     --no-start
 assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
@@ -254,7 +254,7 @@ env -i \
   PATH="$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --tunnel quick \
     --no-start
 assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=quick'
@@ -280,7 +280,7 @@ if env -i \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
   AGENTDOCK_CLOUDFLARED_BINARY="$invalid_cloudflared" \
   AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='must-not-survive' \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --tunnel named \
     --server-url https://broken.example.test \
     --no-start >/dev/null 2>&1; then
@@ -329,7 +329,7 @@ env -i \
     register_and_start_tunnel() { TUNNEL_PUBLIC_URL=https://fresh.trycloudflare.com; }
     register_and_start_service() { print -- restarted >> "$TEST_QUICK_REFRESH_STATE/restarts"; }
     configure_tunnel
-  ' _ "$ROOT_DIR/scripts/install-macos.sh"
+  ' _ "$ROOT_DIR/scripts/install-macos-platform.sh"
 assert_file_contains "$quick_refresh_env" 'AGENTDOCK_SERVER_URL=https://fresh.trycloudflare.com'
 assert_file_contains "$quick_refresh_env" 'AGENTDOCK_OAUTH_ENABLED=true'
 assert_file_contains "$quick_refresh_env" 'AGENTDOCK_AUTH_TOKEN=stable-bearer-token'
@@ -347,7 +347,7 @@ fi
 invalid_home="$TMP_ROOT/invalid target home"
 mkdir -p "$invalid_home/.local/bin/agentdock"
 if env -i HOME="$invalid_home" PATH="$TEST_PATH" AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" >/dev/null 2>&1; then
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" >/dev/null 2>&1; then
   print -u2 -- "installer accepted a non-regular binary target"
   exit 1
 fi
@@ -452,7 +452,7 @@ if env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --register-service \
     --port 18767 >/dev/null 2>&1; then
   print -u2 -- "installer unexpectedly succeeded after simulated first-install kickstart failure"
@@ -472,7 +472,7 @@ env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --register-service \
     --port 18767 \
     --auth-token test-token
@@ -490,7 +490,7 @@ env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --register-service >/dev/null
 assert_file_contains "$fake_state/curl.calls" 'http://127.0.0.1:18767/healthz'
 assert_file_not_contains "$fake_state/curl.calls" 'http://127.0.0.1:8765/healthz'
@@ -539,7 +539,7 @@ if env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$rollback_release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --register-service \
     --host 127.0.0.8 \
     --port 18888 >/dev/null 2>&1; then
@@ -565,7 +565,7 @@ if env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$rollback_release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos.sh" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
     --register-service \
     --host 127.0.0.8 \
     --port 18888 >/dev/null 2>&1; then
