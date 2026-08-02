@@ -248,6 +248,8 @@ agentdock update
 
 ### Skills and dynamic MCP
 
+Official and community Skill sources live in [uvwt/agentdock-skills](https://github.com/uvwt/agentdock-skills). This repository only keeps the three bootstrap Skills that must ship with the AgentDock runtime.
+
 - Validate, install, activate, and roll back Skill packages
 - Stable, development, canary, and pinned release channels
 - Isolated environment variables and runtimes for each Skill

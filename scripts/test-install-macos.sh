@@ -110,7 +110,7 @@ test -x "$binary"
 "$binary" --help >/dev/null 2>&1
 test -d "$state_dir"
 test -f "$state_dir/skill-store/bundled-skills.json"
-test -f "$state_dir/skill-store/installed/skill-authoring/1.1.3/SKILL.md"
+test -f "$state_dir/skill-store/installed/skill-authoring/1.2.0/SKILL.md"
 test -f "$state_dir/skill-store/installed/skill-installation/1.2.0/SKILL.md"
 test -f "$state_dir/skill-store/installed/skill-vetter-runtime/0.1.5/SKILL.md"
 test -d "$backup_dir"

@@ -1,4 +1,4 @@
-.PHONY: fmt test test-scripts vet race build check run docker-build docker-dev-build docker-browser-build docker-up docker-browser-up docker-down smoke-docker logs clean clean-local-artifacts install install-linux install-macos uninstall-macos test-install-macos deploy-macos-source restart-macos smoke-macos
+.PHONY: fmt test test-scripts vet race build check run docker-build docker-dev-build docker-browser-build docker-up docker-browser-up docker-down smoke-docker logs clean clean-local-artifacts install install-linux install-macos uninstall-macos test-install-macos deploy-macos-source restart-macos
 
 APP := agentdock
 IMAGE := agentdock:local
@@ -56,9 +56,6 @@ deploy-macos-source:
 
 restart-macos:
 	./scripts/restart-macos.sh
-
-smoke-macos:
-	printf '%s\n' '{"skill_action":"status","check_screenshot":false,"check_applescript":true}' | ./skill-sources/desktop/run.py
 
 docker-build:
 	docker build $(DOCKER_BUILD_ARGS) --target runtime -t $(IMAGE) .
