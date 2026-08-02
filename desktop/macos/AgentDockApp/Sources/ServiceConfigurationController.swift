@@ -11,9 +11,7 @@ struct EditableServiceSettings {
     let browserNodePath: String
 
     func validated() throws -> EditableServiceSettings {
-        guard (1...65535).contains(port) else {
-            throw ValidationError("服务端口必须在 1 到 65535 之间。")
-        }
+        try ServicePortValidation.validate(port)
         let normalizedLogLevel = ServiceConfiguration.normalizedLogLevel(logLevel)
         guard ["debug", "info", "warn", "error"].contains(normalizedLogLevel) else {
             throw ValidationError("日志级别必须是 debug、info、warn 或 error。")

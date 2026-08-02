@@ -109,7 +109,15 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         menuAutostart.target = self
         menuAutostart.action = #selector(markChanged)
 
+        let portFormatter = NumberFormatter()
+        portFormatter.numberStyle = .none
+        portFormatter.allowsFloats = false
+        portFormatter.minimum = NSNumber(value: 1024)
+        portFormatter.maximum = NSNumber(value: 65535)
+        portField.formatter = portFormatter
         portField.alignment = .right
+        portField.placeholderString = "1024–65535"
+        portField.toolTip = "普通用户服务端口必须在 1024 到 65535 之间"
         portField.widthAnchor.constraint(equalToConstant: 96).isActive = true
         portField.target = self
         portField.action = #selector(markChanged)

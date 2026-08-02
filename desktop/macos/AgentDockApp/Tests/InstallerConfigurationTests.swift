@@ -2,7 +2,7 @@ import Foundation
 
 @main
 struct InstallerConfigurationTests {
-    static func main() throws {
+    static func main() async throws {
         let offlinePayload = OfflinePayloadPaths(
             agentDockArchive: "/payload/agentdock_darwin_arm64.tar.gz",
             agentDockChecksum: "/payload/agentdock_darwin_arm64.tar.gz.sha256",
@@ -105,8 +105,64 @@ struct InstallerConfigurationTests {
         expectFailure("请填写 Cloudflare Tunnel Token") {
             _ = try InstallRequest(mode: .named, serverURL: "https://mini.example.com", tunnelToken: " ").validatedTunnelToken()
         }
+        try ServicePortValidation.validate(1024)
+        try ServicePortValidation.validate(65535)
+        expectFailure("1024 到 65535") {
+            try ServicePortValidation.validate(8)
+        }
 
+        try await testPublicEndpointChecker()
         print("installer configuration tests passed")
+    }
+
+    private static func testPublicEndpointChecker() async throws {
+        let publicMCPURL = URL(string: "https://temporary.example.com/mcp")!
+        precondition(
+            PublicEndpointChecker.healthURL(from: publicMCPURL)?.absoluteString
+                == "https://temporary.example.com/healthz"
+        )
+        precondition(PublicEndpointChecker.healthURL(from: URL(string: "http://temporary.example.com/mcp")!) == nil)
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let checker = PublicEndpointChecker(session: session)
+
+        MockURLProtocol.handler = { request in
+            precondition(request.url?.absoluteString == "https://temporary.example.com/healthz")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data("{\"ok\":true,\"version\":\"0.6.0\"}".utf8))
+        }
+        let success = await checker.check(publicMCPURL: publicMCPURL)
+        precondition(success.isReachable)
+        precondition(success.message == "可正常访问")
+        precondition(success.latencyMilliseconds != nil)
+
+        MockURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 502,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            )!
+            return (response, Data())
+        }
+        let badGateway = await checker.check(publicMCPURL: publicMCPURL)
+        precondition(!badGateway.isReachable)
+        precondition(badGateway.message == "公网地址返回 HTTP 502")
+
+        MockURLProtocol.handler = { _ in
+            throw URLError(.timedOut)
+        }
+        let timeout = await checker.check(publicMCPURL: publicMCPURL)
+        precondition(!timeout.isReachable)
+        precondition(timeout.message == "公网访问超时")
     }
 
     private static func expectFailure(_ message: String, _ operation: () throws -> Void) {
@@ -121,4 +177,29 @@ struct InstallerConfigurationTests {
             }
         }
     }
+}
+
+private final class MockURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unknown))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

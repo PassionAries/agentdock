@@ -1,9 +1,16 @@
 import AppKit
 import Foundation
 
+private enum QuickTunnelRefreshState {
+    case idle
+    case refreshing
+    case failed
+}
+
 @MainActor
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let installer = InstallerRunner()
+    private let publicEndpointChecker = PublicEndpointChecker()
     private let service: ServiceController
     private let menuLoginAgent: MenuLoginAgentController
     private let onChanged: () -> Void
@@ -15,6 +22,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let serviceSection = NSStackView()
     private let localAddress = NSTextField(labelWithString: "未安装")
     private let publicAddress = NSTextField(labelWithString: "未启用")
+    private let publicCheckStatus = NSTextField(labelWithString: "")
+    private let publicTestButton = NSButton(title: "测试", target: nil, action: nil)
+    private let publicCopyButton = NSButton(title: "复制", target: nil, action: nil)
     private let authToken = NSTextField(labelWithString: "未生成")
     private let oauthPassword = NSTextField(labelWithString: "未生成")
     private let authReveal = NSButton(title: "显示", target: nil, action: nil)
@@ -48,6 +58,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var authVisible = false
     private var oauthVisible = false
     private var isBusy = false
+    private var quickTunnelRefreshState: QuickTunnelRefreshState = .idle
+    private var displayedPublicMCPURL: URL?
+    private var lastCheckedPublicMCPURL: URL?
+    private var activePublicCheckURL: URL?
+    private var publicCheckTask: Task<Void, Never>?
 
     private lazy var advancedSettings = AdvancedSettingsWindowController(
         service: service,
@@ -93,6 +108,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         authVisible = false
         oauthVisible = false
         statusLabel.isHidden = true
+        quickTunnelRefreshState = .idle
+        cancelPublicCheck(clearLastResult: true)
         setBusy(false)
 
         if status.installed {
@@ -164,6 +181,18 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         }
 
+        publicCheckStatus.font = .systemFont(ofSize: 11.5)
+        publicCheckStatus.textColor = .secondaryLabelColor
+        publicCheckStatus.isHidden = true
+        publicCheckStatus.lineBreakMode = .byTruncatingTail
+        publicCheckStatus.widthAnchor.constraint(equalToConstant: 450).isActive = true
+        publicTestButton.bezelStyle = .inline
+        publicTestButton.target = self
+        publicTestButton.action = #selector(testPublicAddressPressed)
+        publicCopyButton.bezelStyle = .inline
+        publicCopyButton.target = self
+        publicCopyButton.action = #selector(copyPublicAddress)
+
         authReveal.bezelStyle = .inline
         authReveal.target = self
         authReveal.action = #selector(toggleAuthToken)
@@ -176,7 +205,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         serviceSection.spacing = 8
         serviceSection.addArrangedSubview(sectionTitle("连接信息"))
         serviceSection.addArrangedSubview(valueRow(title: "本地 MCP", field: localAddress, actions: [copyButton(#selector(copyLocalAddress))]))
-        serviceSection.addArrangedSubview(valueRow(title: "公网 MCP", field: publicAddress, actions: [copyButton(#selector(copyPublicAddress))]))
+        serviceSection.addArrangedSubview(valueRow(title: "公网 MCP", field: publicAddress, actions: [publicTestButton, publicCopyButton]))
+        serviceSection.addArrangedSubview(valueDetailRow(publicCheckStatus))
         serviceSection.addArrangedSubview(valueRow(title: "Bearer Token", field: authToken, actions: [authReveal, copyButton(#selector(copyAuthToken))]))
         serviceSection.addArrangedSubview(valueRow(title: "OAuth 密码", field: oauthPassword, actions: [oauthReveal, copyButton(#selector(copyOAuthPassword))]))
 
@@ -278,7 +308,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         let configuration = status.configuration
         localAddress.stringValue = configuration?.localMCPURL?.absoluteString ?? "配置不可用"
-        publicAddress.stringValue = configuration?.publicMCPURL?.absoluteString ?? "未启用"
+        renderPublicAddress(configuration?.publicMCPURL, automaticallyCheck: true)
         authTokenValue = configuration?.authToken ?? ""
         oauthPasswordValue = configuration?.oauthPassword ?? ""
         startStopButton.title = status.loaded ? "停止服务" : "启动服务"
@@ -287,6 +317,127 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             restartButton.isEnabled = status.installed
             updateButton.isEnabled = status.installed
         }
+    }
+
+    private func renderPublicAddress(_ publicMCPURL: URL?, automaticallyCheck: Bool) {
+        switch quickTunnelRefreshState {
+        case .refreshing:
+            cancelPublicCheck(clearLastResult: true)
+            displayedPublicMCPURL = nil
+            publicAddress.stringValue = "正在生成新地址…"
+            publicCheckStatus.stringValue = "旧地址已隐藏，等待新的临时公网地址"
+            publicCheckStatus.textColor = .secondaryLabelColor
+            publicCheckStatus.isHidden = false
+            refreshPublicActions()
+        case .failed:
+            cancelPublicCheck(clearLastResult: true)
+            displayedPublicMCPURL = nil
+            publicAddress.stringValue = "未生成新地址"
+            publicCheckStatus.stringValue = "刷新失败，旧地址未作为新地址显示"
+            publicCheckStatus.textColor = .systemRed
+            publicCheckStatus.isHidden = false
+            refreshPublicActions()
+        case .idle:
+            setDisplayedPublicMCPURL(publicMCPURL, automaticallyCheck: automaticallyCheck)
+        }
+    }
+
+    private func setDisplayedPublicMCPURL(_ publicMCPURL: URL?, automaticallyCheck: Bool) {
+        let addressChanged = displayedPublicMCPURL != publicMCPURL
+        if addressChanged {
+            cancelPublicCheck(clearLastResult: true)
+        }
+        displayedPublicMCPURL = publicMCPURL
+        publicAddress.stringValue = publicMCPURL?.absoluteString ?? "未启用"
+
+        guard let publicMCPURL else {
+            publicCheckStatus.stringValue = ""
+            publicCheckStatus.isHidden = true
+            refreshPublicActions()
+            return
+        }
+
+        refreshPublicActions()
+        if automaticallyCheck,
+           activePublicCheckURL != publicMCPURL,
+           lastCheckedPublicMCPURL != publicMCPURL {
+            beginPublicCheck(publicMCPURL, automatic: true)
+        }
+    }
+
+    private func beginQuickTunnelRefresh() {
+        quickTunnelRefreshState = .refreshing
+        renderPublicAddress(nil, automaticallyCheck: false)
+    }
+
+    private func markQuickTunnelRefreshFailed() {
+        quickTunnelRefreshState = .failed
+        renderPublicAddress(nil, automaticallyCheck: false)
+    }
+
+    private func beginPublicCheck(_ publicMCPURL: URL, automatic: Bool) {
+        guard quickTunnelRefreshState == .idle else { return }
+        if automatic, lastCheckedPublicMCPURL == publicMCPURL { return }
+
+        cancelPublicCheck(clearLastResult: !automatic)
+        activePublicCheckURL = publicMCPURL
+        publicCheckStatus.stringValue = "正在检测公网访问…"
+        publicCheckStatus.textColor = .secondaryLabelColor
+        publicCheckStatus.isHidden = false
+        refreshPublicActions()
+
+        publicCheckTask = Task { [weak self] in
+            guard let self else { return }
+            let maximumAttempts = automatic ? 3 : 1
+            var finalResult: PublicEndpointCheckResult?
+
+            for attempt in 1...maximumAttempts {
+                if Task.isCancelled { return }
+                if maximumAttempts > 1 {
+                    publicCheckStatus.stringValue = "正在检测公网访问（\(attempt)/\(maximumAttempts)）…"
+                }
+                let result = await publicEndpointChecker.check(publicMCPURL: publicMCPURL)
+                finalResult = result
+                if result.isReachable || attempt == maximumAttempts { break }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+
+            guard !Task.isCancelled, let finalResult else { return }
+            finishPublicCheck(finalResult, for: publicMCPURL)
+        }
+    }
+
+    private func finishPublicCheck(_ result: PublicEndpointCheckResult, for publicMCPURL: URL) {
+        guard quickTunnelRefreshState == .idle,
+              activePublicCheckURL == publicMCPURL,
+              displayedPublicMCPURL == publicMCPURL else {
+            return
+        }
+
+        activePublicCheckURL = nil
+        publicCheckTask = nil
+        lastCheckedPublicMCPURL = publicMCPURL
+        let latency = result.latencyMilliseconds.map { " · \($0) ms" } ?? ""
+        publicCheckStatus.stringValue = "● \(result.message)\(latency)"
+        publicCheckStatus.textColor = result.isReachable ? .systemGreen : .systemRed
+        publicCheckStatus.isHidden = false
+        refreshPublicActions()
+    }
+
+    private func cancelPublicCheck(clearLastResult: Bool) {
+        publicCheckTask?.cancel()
+        publicCheckTask = nil
+        activePublicCheckURL = nil
+        if clearLastResult {
+            lastCheckedPublicMCPURL = nil
+        }
+    }
+
+    private func refreshPublicActions() {
+        let hasAddress = quickTunnelRefreshState == .idle && displayedPublicMCPURL != nil
+        publicCopyButton.isEnabled = hasAddress
+        publicTestButton.title = activePublicCheckURL == nil ? "测试" : "检测中"
+        publicTestButton.isEnabled = hasAddress && activePublicCheckURL == nil && !isBusy
     }
 
     private func selectCurrentMode(configuration: ServiceConfiguration?) {
@@ -361,25 +512,39 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
 
         let refreshingQuickTunnel = currentStatus.installed && initialMode == .quick && selectedMode == .quick
+        if refreshingQuickTunnel {
+            // 生成过程中立即隐藏旧地址，避免用户把旧地址误认为本次生成结果。
+            beginQuickTunnelRefresh()
+        }
         setBusy(true)
         showStatus(
-            refreshingQuickTunnel ? "正在生成新的临时公网地址…" : "正在下载、校验并应用 AgentDock 配置…",
+            refreshingQuickTunnel ? "正在生成新的临时公网地址…" : "正在校验并应用 AgentDock 配置…",
             isError: false
         )
         Task {
             do {
                 let result = try await installer.run(request: request)
+                let resultPublicMCPURL: URL?
+                if result.publicMCPURL.isEmpty {
+                    resultPublicMCPURL = nil
+                } else if let parsedURL = URL(string: result.publicMCPURL) {
+                    resultPublicMCPURL = parsedURL
+                } else {
+                    throw ValidationError("安装器返回的公网 MCP 地址格式无效。")
+                }
+
                 authTokenValue = result.authToken
                 oauthPasswordValue = result.oauthPassword
                 localAddress.stringValue = result.localMCPURL
-                publicAddress.stringValue = result.publicMCPURL.isEmpty ? "未启用" : result.publicMCPURL
+                quickTunnelRefreshState = .idle
+                setDisplayedPublicMCPURL(resultPublicMCPURL, automaticallyCheck: true)
                 tunnelTokenField.stringValue = ""
                 authVisible = false
                 oauthVisible = false
                 refreshCredentialFields()
                 showStatus(
                     refreshingQuickTunnel
-                        ? "新的临时公网地址已生成并生效。"
+                        ? "新的临时公网地址已生成，正在自动检测公网访问。"
                         : "AgentDock \(result.version) 已配置并正常运行。",
                     isError: false
                 )
@@ -389,6 +554,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
                 refreshChangeState()
                 onChanged()
             } catch {
+                if refreshingQuickTunnel {
+                    markQuickTunnelRefreshFailed()
+                }
                 setBusy(false)
                 showStatus(error.localizedDescription, isError: true)
             }
@@ -440,8 +608,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func openAdvancedPressed() { advancedSettings.present(status: currentStatus) }
     @objc private func openLogsPressed() { service.openLogs() }
+
+    @objc private func testPublicAddressPressed() {
+        guard let displayedPublicMCPURL else { return }
+        beginPublicCheck(displayedPublicMCPURL, automatic: false)
+    }
+
     @objc private func copyLocalAddress(_ sender: NSButton) { copy(localAddress.stringValue, button: sender) }
-    @objc private func copyPublicAddress(_ sender: NSButton) { copy(publicAddress.stringValue == "未启用" ? "" : publicAddress.stringValue, button: sender) }
+    @objc private func copyPublicAddress(_ sender: NSButton) {
+        copy(displayedPublicMCPURL?.absoluteString ?? "", button: sender)
+    }
     @objc private func copyAuthToken(_ sender: NSButton) { copy(authTokenValue, button: sender) }
     @objc private func copyOAuthPassword(_ sender: NSButton) { copy(oauthPasswordValue, button: sender) }
 
@@ -511,6 +687,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             progress.stopAnimation(nil)
             refreshChangeState()
         }
+        refreshPublicActions()
     }
 
     private func showStatus(_ message: String, isError: Bool) {
@@ -520,7 +697,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateWindowHeight() {
-        let installedHeight: CGFloat = selectedMode == .named ? 650 : 555
+        let installedHeight: CGFloat = selectedMode == .named ? 675 : 580
         let installHeight: CGFloat = selectedMode == .named ? 455 : 360
         let target = currentStatus.installed ? installedHeight : installHeight
         guard let window else { return }
@@ -552,6 +729,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 10
+        return row
+    }
+
+    private func valueDetailRow(_ detail: NSTextField) -> NSView {
+        let spacer = NSView()
+        spacer.widthAnchor.constraint(equalToConstant: 102).isActive = true
+        let row = NSStackView(views: [spacer, detail])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 0
         return row
     }
 
