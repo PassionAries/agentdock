@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="${0:A:h:h:h}"
 SOURCE_DIR="$ROOT_DIR/desktop/macos/AgentDockApp/Sources"
+LOGIN_HELPER_SOURCE="$ROOT_DIR/desktop/macos/AgentDockLoginHelper/main.swift"
 INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-macos-platform.sh"
 OUTPUT_DIR="${AGENTDOCK_MACOS_APP_OUTPUT_DIR:-$ROOT_DIR/dist/macos-app}"
 ARCH_LIST="${AGENTDOCK_MACOS_ARCHES:-$(uname -m)}"
@@ -35,6 +36,7 @@ for command_name in codesign ditto file lipo plutil shasum swiftc xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
+[[ -f "$LOGIN_HELPER_SOURCE" && ! -L "$LOGIN_HELPER_SOURCE" ]] || die "缺少 macOS 登录代理源码：$LOGIN_HELPER_SOURCE"
 [[ -f "$INSTALLER_SCRIPT" && ! -L "$INSTALLER_SCRIPT" ]] || die "缺少 macOS 安装脚本：$INSTALLER_SCRIPT"
 
 VERSION="${1:-}"
@@ -53,6 +55,7 @@ rm -rf "$OUTPUT_DIR/AgentDock.app" "$OUTPUT_DIR/AgentDock-macos-universal.zip" "
 IFS=',' read -rA architectures <<< "$ARCH_LIST"
 (( ${#architectures[@]} > 0 )) || die "没有可构建的架构"
 compiled_binaries=()
+login_helper_binaries=()
 for architecture in "${architectures[@]}"; do
   architecture="${architecture//[[:space:]]/}"
   case "$architecture" in
@@ -70,6 +73,17 @@ for architecture in "${architectures[@]}"; do
     "$SOURCE_DIR"/*.swift \
     -o "$binary"
   compiled_binaries+=("$binary")
+
+  login_helper="$TMP_DIR/AgentDockLoginHelper-$architecture"
+  xcrun swiftc \
+    -swift-version 5 \
+    -O \
+    -whole-module-optimization \
+    -target "$architecture-apple-macosx$MIN_VERSION" \
+    -sdk "$SDK_PATH" \
+    "$LOGIN_HELPER_SOURCE" \
+    -o "$login_helper"
+  login_helper_binaries+=("$login_helper")
 done
 
 APP_DIR="$OUTPUT_DIR/AgentDock.app"
@@ -84,6 +98,14 @@ else
   lipo -create "${compiled_binaries[@]}" -output "$MACOS_DIR/AgentDock"
 fi
 chmod 0755 "$MACOS_DIR/AgentDock"
+
+if (( ${#login_helper_binaries[@]} == 1 )); then
+  cp -p "$login_helper_binaries[1]" "$MACOS_DIR/AgentDockLoginHelper"
+else
+  lipo -create "${login_helper_binaries[@]}" -output "$MACOS_DIR/AgentDockLoginHelper"
+fi
+chmod 0755 "$MACOS_DIR/AgentDockLoginHelper"
+
 cp -p "$INSTALLER_SCRIPT" "$RESOURCES_DIR/install-macos-platform.sh"
 chmod 0755 "$RESOURCES_DIR/install-macos-platform.sh"
 

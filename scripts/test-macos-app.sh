@@ -20,6 +20,7 @@ AGENTDOCK_MACOS_APP_OUTPUT_DIR="$TMP_ROOT/output" \
 APP="$TMP_ROOT/output/AgentDock.app"
 ZIP="$TMP_ROOT/output/AgentDock-macos-universal.zip"
 test -x "$APP/Contents/MacOS/AgentDock"
+test -x "$APP/Contents/MacOS/AgentDockLoginHelper"
 test -x "$APP/Contents/Resources/install-macos-platform.sh"
 test -f "$ZIP"
 test -f "$ZIP.sha256"

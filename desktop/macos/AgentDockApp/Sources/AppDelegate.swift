@@ -1,10 +1,11 @@
 import AppKit
 import Foundation
-import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let service = ServiceController()
+    private let menuLoginAgent = MenuLoginAgentController()
+    private let launchedInBackground = CommandLine.arguments.contains("--background")
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var currentStatus = ServiceStatus.missing
     private var timer: Timer?
@@ -15,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
         registerLoginItemIfNeeded()
-        refreshStatus(showSetupWhenMissing: true)
+        refreshStatus(showWindow: !launchedInBackground)
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatus()
@@ -28,11 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func registerLoginItemIfNeeded() {
-        guard SMAppService.mainApp.status == .notRegistered else { return }
         do {
-            try SMAppService.mainApp.register()
+            try menuLoginAgent.register()
         } catch {
             // 登录项失败不影响核心 LaunchAgent；用户仍可手动打开菜单栏 App。
+            NSLog("AgentDock 菜单栏登录项注册失败：%@", error.localizedDescription)
         }
     }
 
@@ -44,17 +45,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    private func refreshStatus(showSetupWhenMissing: Bool = false) {
+    private func refreshStatus(showWindow: Bool = false) {
         Task {
             let status = await service.status()
             await MainActor.run {
                 self.currentStatus = status
                 self.rebuildMenu()
-                if showSetupWhenMissing && !status.installed {
-                    self.setupWindow.present()
+                if showWindow {
+                    self.setupWindow.present(status: status)
                 }
             }
         }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        setupWindow.present(status: currentStatus)
+        return true
     }
 
     private func rebuildMenu() {
@@ -107,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menuItem
     }
 
-    @objc private func showSetup() { setupWindow.present() }
+    @objc private func showSetup() { setupWindow.present(status: currentStatus) }
     @objc private func copyLocalMCP() { copy(currentStatus.configuration?.localMCPURL?.absoluteString) }
     @objc private func copyPublicMCP() { copy(currentStatus.configuration?.publicMCPURL?.absoluteString) }
     @objc private func openLogs() { service.openLogs() }

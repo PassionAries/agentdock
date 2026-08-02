@@ -5,6 +5,8 @@ final class SetupWindowController: NSWindowController {
     private let installer = InstallerRunner()
     private let onInstalled: () -> Void
 
+    private let titleLabel = NSTextField(labelWithString: "安装 AgentDock")
+    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let localButton = NSButton(radioButtonWithTitle: TunnelMode.local.title, target: nil, action: nil)
     private let quickButton = NSButton(radioButtonWithTitle: TunnelMode.quick.title, target: nil, action: nil)
     private let namedButton = NSButton(radioButtonWithTitle: TunnelMode.named.title, target: nil, action: nil)
@@ -44,8 +46,8 @@ final class SetupWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func present() {
-        resetForPresentation()
+    func present(status: ServiceStatus) {
+        resetForPresentation(status: status)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -54,10 +56,8 @@ final class SetupWindowController: NSWindowController {
     private func configureUI() {
         guard let contentView = window?.contentView else { return }
 
-        let title = NSTextField(labelWithString: "安装 AgentDock")
-        title.font = .systemFont(ofSize: 25, weight: .semibold)
-        let subtitle = NSTextField(wrappingLabelWithString: "选择连接方式后，AgentDock 会自动安装后台服务并在登录后持续运行。无需打开终端，也不需要管理员权限。")
-        subtitle.textColor = .secondaryLabelColor
+        titleLabel.font = .systemFont(ofSize: 25, weight: .semibold)
+        subtitleLabel.textColor = .secondaryLabelColor
 
         for button in [localButton, quickButton, namedButton] {
             button.target = self
@@ -123,8 +123,8 @@ final class SetupWindowController: NSWindowController {
         actionRow.spacing = 10
 
         let root = NSStackView(views: [
-            title,
-            subtitle,
+            titleLabel,
+            subtitleLabel,
             separator(),
             NSTextField(labelWithString: "连接方式"),
             modeStack,
@@ -146,7 +146,7 @@ final class SetupWindowController: NSWindowController {
             root.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -28),
             root.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28),
             root.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -28),
-            subtitle.widthAnchor.constraint(equalTo: root.widthAnchor),
+            subtitleLabel.widthAnchor.constraint(equalTo: root.widthAnchor),
             modeDescription.widthAnchor.constraint(equalTo: root.widthAnchor),
             statusLabel.widthAnchor.constraint(equalTo: root.widthAnchor),
         ])
@@ -176,15 +176,53 @@ final class SetupWindowController: NSWindowController {
         return row
     }
 
-    private func resetForPresentation() {
+    private func resetForPresentation(status: ServiceStatus) {
         statusLabel.isHidden = true
         resultStack.isHidden = true
         installButton.isEnabled = true
-        installButton.title = "安装并启动"
         authTokenValue = ""
         oauthPasswordValue = ""
         secretsVisible = false
         revealSecretsButton.title = "显示凭据"
+
+        if status.installed {
+            titleLabel.stringValue = "AgentDock"
+            if status.healthy {
+                subtitleLabel.stringValue = "AgentDock 正在运行，版本 \(status.version ?? "未知")。可以在这里修改连接方式并重新应用配置。"
+            } else if status.loaded {
+                subtitleLabel.stringValue = "AgentDock 已安装，但当前服务状态异常。可以重新应用配置或从菜单栏重启服务。"
+            } else {
+                subtitleLabel.stringValue = "AgentDock 已安装但已停止。可以重新应用配置，或从菜单栏启动服务。"
+            }
+            installButton.title = "应用配置并重启"
+            selectCurrentMode(configuration: status.configuration)
+        } else {
+            titleLabel.stringValue = "安装 AgentDock"
+            subtitleLabel.stringValue = "选择连接方式后，AgentDock 会自动安装后台服务并在登录后持续运行。无需打开终端，也不需要管理员权限。"
+            installButton.title = "安装并启动"
+            select(mode: .local)
+        }
+    }
+
+    private func selectCurrentMode(configuration: RuntimeConfiguration?) {
+        guard let publicURL = configuration?.publicURL, !publicURL.isEmpty else {
+            select(mode: .local)
+            return
+        }
+        if publicURL.contains(".trycloudflare.com") {
+            select(mode: .quick)
+        } else {
+            serverURLField.stringValue = publicURL
+            select(mode: .named)
+        }
+    }
+
+    private func select(mode: TunnelMode) {
+        localButton.state = mode == .local ? .on : .off
+        quickButton.state = mode == .quick ? .on : .off
+        namedButton.state = mode == .named ? .on : .off
+        modeDescription.stringValue = mode.detail
+        namedFields.isHidden = mode != .named
     }
 
     @objc private func modeChanged(_ sender: NSButton) {
