@@ -357,6 +357,7 @@ var
   ModeParam: String;
   AutoStartParam: String;
 begin
+  Log('AgentDock active language: ' + ActiveLanguage());
   ResolvedInstallRoot := ResolveInstallRoot();
   ExistingInstallDetected := DetectExistingInstallation();
 

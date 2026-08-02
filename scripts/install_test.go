@@ -388,6 +388,7 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"PrivilegesRequired=lowest",
 		"DisableDirPage=yes",
 		"LanguageDetectionMethod=uilanguage",
+		"AgentDock active language: ",
 		"Name: \"chinesesimplified\"",
 		"DetectExistingInstallation",
 		"ExistingInstallSource := 'setup'",
