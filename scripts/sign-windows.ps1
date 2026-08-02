@@ -129,7 +129,7 @@ try {
         }
         $signature = Get-AuthenticodeSignature -LiteralPath $item
         if ($signature.Status -ne 'Valid') {
-            throw "Authenticode signature is not valid for $item: $($signature.Status)"
+            throw "Authenticode signature is not valid for ${item}: $($signature.Status)"
         }
     }
 } finally {
