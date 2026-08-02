@@ -45,7 +45,7 @@ jobs:
         run: go build ./cmd/agentdock
 
       - name: Check browser runner syntax
-        run: node --check examples/browser-runner/browser-runner.js
+        run: node --check tools/browser-runner/browser-runner.js
 
       - name: Check Linux installer entry
         if: runner.os == 'Linux'
