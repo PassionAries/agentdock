@@ -199,7 +199,7 @@ func (s *Service) BrowserRunnerScript() (ControlPath, error) {
 	}
 	info, err := os.Lstat(runnerDir)
 	if err != nil || !info.IsDir() {
-		return ControlPath{}, toolErrorDetails("BROWSER_RUNNER_NOT_FOUND", "browser runner directory not found", "validation", map[string]any{"runner_dir": runnerDir, "suggestion": "copy examples/browser-runner to the configured runner directory and run npm install; on macOS prefer browser=chrome for system Chrome"})
+		return ControlPath{}, toolErrorDetails("BROWSER_RUNNER_NOT_FOUND", "browser runner directory not found", "validation", map[string]any{"runner_dir": runnerDir, "suggestion": "copy tools/browser-runner to the configured runner directory and run npm install; on macOS prefer browser=chrome for system Chrome"})
 	}
 	candidate := filepath.Join(runnerDir, "browser-runner.js")
 	info, err = os.Lstat(candidate)
