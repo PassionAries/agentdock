@@ -57,8 +57,15 @@ function Assert-ElevatedAgentDockTask {
         throw "AgentDock task does not use the highest run level: $($task.Principal.RunLevel)"
     }
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    if (-not [string]::Equals($task.Principal.UserId, $currentSid, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "AgentDock task belongs to another user: $($task.Principal.UserId)"
+    try {
+        $taskSid = (New-Object Security.Principal.NTAccount($task.Principal.UserId)).Translate(
+            [Security.Principal.SecurityIdentifier]
+        ).Value
+    } catch {
+        $taskSid = $task.Principal.UserId
+    }
+    if (-not [string]::Equals($taskSid, $currentSid, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "AgentDock task belongs to another user: $($task.Principal.UserId) / $taskSid"
     }
     $launcherMatch = @($task.Actions | Where-Object {
         $_.Arguments -and $_.Arguments.Contains($launcherPath)
