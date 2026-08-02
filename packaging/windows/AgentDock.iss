@@ -32,7 +32,7 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
-#if SignedBuild
+#if SignedBuild == 1
 SignTool=agentdock-sign
 SignedUninstaller=yes
 #endif
