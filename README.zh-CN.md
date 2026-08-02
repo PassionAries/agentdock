@@ -101,7 +101,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 ### Windows 安装
 
-Windows 普通用户优先从 Release 下载签名的 `AgentDockSetup.exe`。安装向导默认只允许本机访问，并可选择登录后自动启动；只有用户明确选择时才会配置临时或固定的 Cloudflare Tunnel 公网入口。安装完成页会显示 MCP 地址和需要保存的认证信息，系统托盘可查看状态、复制地址、重启服务和触发核心更新。
+Windows 普通用户从 Release 下载与系统架构匹配的签名离线安装包：常见 Intel/AMD 电脑使用 `AgentDockSetup-amd64.exe`，Windows ARM 设备使用 `AgentDockSetup-arm64.exe`。安装包已经包含 AgentDock 核心、托盘、内置 Skill 和 cloudflared，安装及升级过程中不会再从 GitHub 下载组件。安装向导默认只允许本机访问，并可选择登录后自动启动；只有用户明确选择时才会配置临时或固定的 Cloudflare Tunnel 公网入口。安装完成页会显示 MCP 地址和需要保存的认证信息，系统托盘可查看状态、复制地址、重启服务和触发核心更新。
 
 PowerShell 安装脚本继续保留给自动化和高级用户使用。
 
@@ -161,7 +161,7 @@ sh /tmp/agentdock-install.sh                 # Linux
 sh /tmp/agentdock-install.sh --register-service  # macOS
 ```
 
-Windows 普通用户直接运行 Release 中签名的 `AgentDockSetup.exe`，在“连接方式”页面选择临时或固定公网入口。高级用户使用 PowerShell 时，需要显式请求公网配置：
+Windows 普通用户直接运行 Release 中与系统架构匹配的签名离线安装包，在“连接方式”页面选择临时或固定公网入口。离线安装包内已包含 cloudflared，但固定公网模式仍需要有效的 Cloudflare Tunnel Token；离线安装只消除组件下载，不会绕过 Cloudflare 身份验证。高级用户使用 PowerShell 时，需要显式请求公网配置：
 
 ```powershell
 $script = Join-Path $env:TEMP 'install-agentdock.ps1'

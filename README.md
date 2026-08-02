@@ -101,7 +101,7 @@ Start here: [Install AgentDock](https://uvwt.github.io/agentdock-docs/docs/getti
 
 ### Windows installation
 
-Regular Windows users should download the signed `AgentDockSetup.exe` from the release. The wizard defaults to local-only access and can register login startup. A temporary or fixed Cloudflare Tunnel is configured only when the user explicitly selects public access. The completion page shows MCP connection details, while the tray exposes status, address copying, restart, and core update actions.
+Regular Windows users should download the signed offline installer matching their system: `AgentDockSetup-amd64.exe` for common Intel/AMD PCs or `AgentDockSetup-arm64.exe` for Windows on ARM. The installer already contains the AgentDock core, tray, bundled Skills, and cloudflared, so installation and upgrades do not download components from GitHub. The wizard defaults to local-only access and can register login startup. A temporary or fixed Cloudflare Tunnel is configured only when the user explicitly selects public access. The completion page shows MCP connection details, while the tray exposes status, address copying, restart, and core update actions.
 
 The PowerShell installer remains available for automation and advanced use.
 
@@ -161,7 +161,7 @@ sh /tmp/agentdock-install.sh                     # Linux
 sh /tmp/agentdock-install.sh --register-service  # macOS
 ```
 
-Regular Windows users run the signed `AgentDockSetup.exe` from the release and choose temporary or fixed public access in the wizard. Advanced PowerShell users must request the public-access prompt explicitly:
+Regular Windows users run the signed offline installer matching their system and choose temporary or fixed public access in the wizard. The package includes cloudflared, but fixed public access still requires a valid Cloudflare Tunnel Token; offline installation removes component downloads, not Cloudflare authentication. Advanced PowerShell users must request the public-access prompt explicitly:
 
 ```powershell
 $script = Join-Path $env:TEMP 'install-agentdock.ps1'
