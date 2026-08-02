@@ -437,7 +437,7 @@ func (app *trayApp) handleMenu(command uint16) {
 		}
 		app.notify("AgentDock", "公网 MCP 地址已复制。", false)
 	case menuStart:
-		if err := startPowerShellScript(state.Manifest.AgentDockLauncher); err != nil {
+		if err := startAgentDock(state.Manifest); err != nil {
 			app.notify("AgentDock", "启动失败："+err.Error(), true)
 			return
 		}
@@ -449,7 +449,7 @@ func (app *trayApp) handleMenu(command uint16) {
 		}
 		app.notify("AgentDock", "正在重启 AgentDock。", false)
 	case menuUpdate:
-		if err := launchUpdate(state.Manifest.AgentDockBinary); err != nil {
+		if err := launchUpdate(state.Manifest); err != nil {
 			app.notify("AgentDock", "启动更新失败："+err.Error(), true)
 		}
 	case menuOpenFolder:
@@ -571,13 +571,40 @@ func startPowerShellScript(path string) error {
 	return command.Start()
 }
 
-// restartAgentDock deliberately reuses the installer-managed launcher. The
-// launcher is the single place that decrypts DPAPI settings and builds the
-// AgentDock environment, so the tray must not duplicate that sensitive logic.
+func runScheduledTask(taskName string) error {
+	if strings.TrimSpace(taskName) == "" {
+		return errors.New("AgentDock scheduled task is unavailable")
+	}
+	command := exec.Command("schtasks.exe", "/Run", "/TN", `\`+taskName)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("run scheduled task: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func startAgentDock(manifest windowsruntime.Manifest) error {
+	if manifest.UsesScheduledTask() {
+		return runScheduledTask(manifest.AgentDockTaskName)
+	}
+	return startPowerShellScript(manifest.AgentDockLauncher)
+}
+
+// restartAgentDock keeps the launcher as the single owner of DPAPI settings.
+// Elevated installations are restarted through Task Scheduler so the tray
+// remains a normal user process.
 func restartAgentDock(manifest windowsruntime.Manifest) error {
 	if manifest.AgentDockBinary == "" || manifest.AgentDockLauncher == "" {
 		return errors.New("AgentDock runtime manifest is incomplete")
 	}
+	if manifest.UsesScheduledTask() {
+		end := exec.Command("schtasks.exe", "/End", "/TN", `\`+manifest.AgentDockTaskName)
+		end.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = end.Run()
+		time.Sleep(300 * time.Millisecond)
+		return runScheduledTask(manifest.AgentDockTaskName)
+	}
+
 	target := quotePowerShellLiteral(manifest.AgentDockBinary)
 	launcher := quotePowerShellLiteral(manifest.AgentDockLauncher)
 	script := fmt.Sprintf(
@@ -602,18 +629,29 @@ func restartAgentDock(manifest windowsruntime.Manifest) error {
 }
 
 // launchUpdate delegates replacement, health verification, and rollback to
-// the existing core updater instead of introducing a second update protocol.
-func launchUpdate(binaryPath string) error {
+// the existing core updater. Elevated runtimes request UAC for the updater so
+// it can stop and replace the privileged core process safely.
+func launchUpdate(manifest windowsruntime.Manifest) error {
+	binaryPath := manifest.AgentDockBinary
 	if strings.TrimSpace(binaryPath) == "" {
 		return errors.New("AgentDock binary is unavailable")
 	}
 	if _, err := os.Stat(binaryPath); err != nil {
 		return err
 	}
-	script := fmt.Sprintf(
-		`& '%s' update; Write-Host ''; Read-Host 'Press Enter to close'`,
-		quotePowerShellLiteral(binaryPath),
-	)
+	binary := quotePowerShellLiteral(binaryPath)
+	var script string
+	if manifest.UsesScheduledTask() {
+		script = fmt.Sprintf(
+			`$p=Start-Process -FilePath '%s' -ArgumentList 'update' -Verb RunAs -Wait -PassThru; Write-Host ''; Read-Host 'Press Enter to close'; exit $p.ExitCode`,
+			binary,
+		)
+	} else {
+		script = fmt.Sprintf(
+			`& '%s' update; Write-Host ''; Read-Host 'Press Enter to close'`,
+			binary,
+		)
+	}
 	return exec.Command(
 		"powershell.exe",
 		"-NoLogo",

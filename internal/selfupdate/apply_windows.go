@@ -32,6 +32,7 @@ type windowsUpdatePlan struct {
 	TargetVersion  string   `json:"target_version"`
 	RestartMode    string   `json:"restart_mode"`
 	LauncherPath   string   `json:"launcher_path,omitempty"`
+	TaskName       string   `json:"task_name,omitempty"`
 	HealthURLs     []string `json:"health_urls,omitempty"`
 }
 
@@ -63,8 +64,14 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 
 	restartMode := "none"
 	launcherPath := filepath.Join(filepath.Dir(filepath.Dir(request.CurrentPath)), "start-agentdock.ps1")
+	taskName := ""
 	if serviceManagesTarget(ctx, request.CurrentPath) {
 		restartMode = "service"
+	} else if manifest, err := windowsruntime.LoadForBinary(request.CurrentPath); err == nil &&
+		manifest.UsesScheduledTask() && scheduledTaskManagesTarget(ctx, manifest.AgentDockTaskName, manifest.AgentDockLauncher) {
+		restartMode = "task"
+		taskName = manifest.AgentDockTaskName
+		launcherPath = manifest.AgentDockLauncher
 	} else if launcherManagesTarget(ctx, launcherPath, request.CurrentPath) {
 		restartMode = "launcher"
 	}
@@ -81,6 +88,7 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 		TargetVersion:  request.TargetVersion,
 		RestartMode:    restartMode,
 		LauncherPath:   launcherPath,
+		TaskName:       taskName,
 		HealthURLs:     healthURLs,
 	}
 	planData, err := json.Marshal(plan)
@@ -145,6 +153,15 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 		if err := waitWindowsServiceState(ctx, windowsServiceName, "STOPPED", 20*time.Second); err != nil {
 			return err
 		}
+	}
+	if plan.RestartMode == "task" {
+		if strings.TrimSpace(plan.TaskName) == "" {
+			return errors.New("Windows 更新计划缺少计划任务名称")
+		}
+		// The updater runs elevated for privileged installations. Ending the
+		// task first prevents Task Scheduler from immediately respawning the old
+		// executable while it is being replaced.
+		_ = runWindowsCommand(ctx, "schtasks.exe", "/End", "/TN", `\`+plan.TaskName)
 	}
 	if err := stopWindowsProcessesAtPath(ctx, plan.TargetPath); err != nil {
 		return fmt.Errorf("停止旧 AgentDock 进程失败: %w", err)
@@ -256,6 +273,19 @@ func launcherManagesTarget(ctx context.Context, launcherPath, targetPath string)
 	return strings.Contains(strings.ToLower(string(output)), strings.ToLower(filepath.Clean(launcherPath)))
 }
 
+func scheduledTaskManagesTarget(ctx context.Context, taskName, launcherPath string) bool {
+	if strings.TrimSpace(taskName) == "" || strings.TrimSpace(launcherPath) == "" {
+		return false
+	}
+	output, err := exec.CommandContext(ctx, "schtasks.exe", "/Query", "/TN", `\`+taskName, "/XML").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	normalizedOutput := strings.ToLower(strings.ReplaceAll(string(output), "/", `\`))
+	normalizedLauncher := strings.ToLower(strings.ReplaceAll(filepath.Clean(launcherPath), "/", `\`))
+	return strings.Contains(normalizedOutput, normalizedLauncher)
+}
+
 func serviceManagesTarget(ctx context.Context, targetPath string) bool {
 	output, err := exec.CommandContext(ctx, "sc.exe", "qc", windowsServiceName).CombinedOutput()
 	if err != nil {
@@ -273,6 +303,14 @@ func restartWindowsMode(ctx context.Context, plan windowsUpdatePlan) error {
 			return err
 		}
 		return waitWindowsServiceState(ctx, windowsServiceName, "RUNNING", 20*time.Second)
+	case "task":
+		if strings.TrimSpace(plan.TaskName) == "" {
+			return errors.New("Windows 计划任务名称为空")
+		}
+		if err := runWindowsCommand(ctx, "schtasks.exe", "/Run", "/TN", `\`+plan.TaskName); err != nil {
+			return fmt.Errorf("启动 Windows AgentDock 计划任务失败: %w", err)
+		}
+		return nil
 	case "launcher":
 		if _, err := os.Stat(plan.LauncherPath); err != nil {
 			return fmt.Errorf("Windows 启动脚本不可用: %w", err)

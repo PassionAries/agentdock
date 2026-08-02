@@ -97,12 +97,56 @@ function Remove-DirectoryWithRetry {
     throw "Directory could not be removed within 15 seconds: $Path"
 }
 
+function Remove-AgentDockScheduledTask {
+    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
+        return
+    }
+    try {
+        Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction Stop
+        return
+    } catch {
+        $directError = $_
+    }
+
+    $installerHelper = Join-Path $PSScriptRoot 'install.ps1'
+    if (-not (Test-Path -LiteralPath $installerHelper -PathType Leaf)) {
+        throw "AgentDock scheduled task requires administrator cleanup, but the installer helper is missing: $($directError.Exception.Message)"
+    }
+    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
+    $arguments =
+        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$installerHelper`"" +
+        ' -TaskAdminAction remove'
+    try {
+        $process = Start-Process `
+            -FilePath $powerShellPath `
+            -ArgumentList $arguments `
+            -Verb RunAs `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+    } catch {
+        throw "Administrator approval for AgentDock task removal was not completed: $($_.Exception.Message)"
+    }
+    if ($process.ExitCode -ne 0) {
+        throw "Elevated AgentDock task removal failed with exit code $($process.ExitCode)."
+    }
+}
+
 $runtimeDir = Split-Path -Parent $InstallDir
 $userHome = [Environment]::GetFolderPath('UserProfile')
 $agentDockBinary = Join-Path $InstallDir 'agentdock.exe'
 $trayBinary = Join-Path $InstallDir 'agentdock-tray.exe'
 $cloudflaredBinary = Join-Path $InstallDir 'cloudflared.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+
+# Stop the scheduled task before touching the elevated process. New installs
+# grant the desktop user task control; older administrator-owned tasks use a
+# one-time UAC fallback through the installed helper.
+if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray') {
+    Remove-AgentDockScheduledTask
+}
 
 Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath $trayBinary
 Stop-ProcessByPath -ProcessName 'cloudflared' -BinaryPath $cloudflaredBinary
@@ -112,19 +156,6 @@ if (Test-Path -LiteralPath $runKey) {
     Remove-ItemProperty -LiteralPath $runKey -Name $StartupValueName -ErrorAction SilentlyContinue
     Remove-ItemProperty -LiteralPath $runKey -Name $CloudflaredStartupValueName -ErrorAction SilentlyContinue
     Remove-ItemProperty -LiteralPath $runKey -Name $TrayStartupValueName -ErrorAction SilentlyContinue
-}
-
-# Legacy scheduled-task cleanup applies only to the default installation names.
-if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray') {
-    $task = Get-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
-    if ($task) {
-        try {
-            Stop-ScheduledTask -TaskName 'AgentDock' -ErrorAction SilentlyContinue
-            Unregister-ScheduledTask -TaskName 'AgentDock' -Confirm:$false -ErrorAction Stop
-        } catch {
-            Write-Warning "Legacy AgentDock scheduled task could not be removed: $($_.Exception.Message)"
-        }
-    }
 }
 
 if (-not $KeepInstallDir) {

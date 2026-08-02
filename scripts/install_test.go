@@ -148,11 +148,14 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Get-ProcessesByPath -ProcessName 'agentdock'",
 		"Get-CimInstance Win32_Process",
 		"ExecutablePath",
-		"Get-LegacyAgentDockTaskState",
-		"Suspend-LegacyAgentDockTask -State $legacyTaskState",
-		"Disable-ScheduledTask -TaskName 'AgentDock'",
-		"Remove-LegacyAgentDockTask -State $legacyTaskState",
-		"Restore-LegacyAgentDockTask -State $legacyTaskState",
+		"Get-AgentDockTaskState",
+		"Start-ElevatedAgentDockTaskAction",
+		"New-ElevatedAgentDockScheduledTask",
+		"New-ScheduledTaskPrincipal",
+		"-RunLevel Highest",
+		"Set-AgentDockTaskSecurity",
+		"prepare-elevated",
+		"Restore-AgentDockTaskBackup",
 		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
 		"Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force",
 		"Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary",
@@ -194,11 +197,17 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	if got := strings.Count(script, securityAssemblyLoad); got != 3 {
 		t.Fatalf("install.ps1 must load System.Security in the installer and both generated launchers; got %d occurrences", got)
 	}
+	if !strings.Contains(script, "-Verb RunAs") {
+		t.Fatal("Windows installer must elevate only the scheduled-task helper")
+	}
+	if !strings.Contains(script, "DataProtectionScope]::CurrentUser") {
+		t.Fatal("Windows secrets must remain bound to the interactive user")
+	}
+	if strings.Contains(script, "Start-Process -FilePath $destinationBinary -Verb RunAs") {
+		t.Fatal("the installer must not launch the core directly under a different administrator account")
+	}
 	if strings.Contains(script, "--token $TunnelToken") || strings.Contains(script, "--token `$env:TUNNEL_TOKEN") {
 		t.Fatal("cloudflared token must be decrypted into its environment, not placed in process arguments")
-	}
-	if strings.Contains(script, "RunLevel Highest") {
-		t.Fatal("Windows installer should not require elevated startup")
 	}
 	for _, forbidden := range []string{
 		"Set-PrivateAcl",
@@ -208,7 +217,6 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"$icaclsArguments",
 		"$AclSelfTest",
 		"SetSecurityDescriptorSddlForm(",
-		"$sddl",
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("install.ps1 still contains removed privileged startup or ACL code %q", forbidden)
@@ -248,7 +256,9 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'cloudflared.out.log'",
 		"'cloudflared.err.log'",
 		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray'",
-		"Legacy AgentDock scheduled task could not be removed",
+		"Remove-AgentDockScheduledTask",
+		"-TaskAdminAction remove",
+		"-Verb RunAs",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("uninstall-windows.ps1 missing %q", want)
@@ -386,13 +396,24 @@ func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
 }
 
 func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "AgentDock.iss"))
-	if err != nil {
-		t.Fatalf("read AgentDock.iss: %v", err)
+	var setupBuilder strings.Builder
+	for _, path := range []string{
+		filepath.Join("..", "packaging", "windows", "AgentDock.iss"),
+		filepath.Join("..", "packaging", "windows", "includes", "messages.iss"),
+		filepath.Join("..", "packaging", "windows", "includes", "code.iss"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read Windows Setup source %s: %v", path, err)
+		}
+		setupBuilder.Write(data)
+		setupBuilder.WriteByte('\n')
 	}
-	setup := string(data)
+	setup := setupBuilder.String()
 	for _, want := range []string{
 		"PrivilegesRequired=lowest",
+		"#include \"includes\\messages.iss\"",
+		"#include \"includes\\code.iss\"",
 		"DisableDirPage=yes",
 		"LanguageDetectionMethod=uilanguage",
 		"AgentDock active language: ",
@@ -409,6 +430,11 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"-TunnelTokenFile ",
 		"-DeleteTunnelTokenFile",
 		"-InstallChannel setup",
+		"-CorePrivilegeMode ",
+		"ElevatedCoreOption",
+		"UpgradeKeepSettings",
+		"UpgradeChangeSettings",
+		"RuntimeUsesElevatedCore",
 		"#ifdef SignedBuild",
 		"SignedUninstaller=yes",
 		"DeinitializeSetup",

@@ -17,6 +17,8 @@ type Manifest struct {
 	AgentDockBinary     string `json:"agentdock_binary"`
 	TrayBinary          string `json:"tray_binary,omitempty"`
 	AgentDockLauncher   string `json:"agentdock_launcher,omitempty"`
+	AgentDockTaskName   string `json:"agentdock_task_name,omitempty"`
+	PrivilegeMode       string `json:"privilege_mode,omitempty"`
 	CloudflaredLauncher string `json:"cloudflared_launcher,omitempty"`
 	Host                string `json:"host"`
 	Port                int    `json:"port"`
@@ -63,6 +65,12 @@ func (manifest Manifest) Validate() error {
 	if strings.TrimSpace(manifest.AgentDockBinary) == "" || !filepath.IsAbs(manifest.AgentDockBinary) {
 		return errors.New("Windows runtime manifest requires an absolute agentdock_binary")
 	}
+	if manifest.PrivilegeMode != "" && manifest.PrivilegeMode != "standard" && manifest.PrivilegeMode != "elevated" {
+		return fmt.Errorf("unsupported Windows privilege mode: %s", manifest.PrivilegeMode)
+	}
+	if manifest.PrivilegeMode == "elevated" && strings.TrimSpace(manifest.AgentDockTaskName) == "" {
+		return errors.New("elevated Windows runtime requires agentdock_task_name")
+	}
 	if manifest.Port < 1 || manifest.Port > 65535 {
 		return errors.New("Windows runtime manifest port must be between 1 and 65535")
 	}
@@ -84,6 +92,10 @@ func (manifest Manifest) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (manifest Manifest) UsesScheduledTask() bool {
+	return manifest.PrivilegeMode == "elevated" && strings.TrimSpace(manifest.AgentDockTaskName) != ""
 }
 
 func (manifest Manifest) HealthURL() string {

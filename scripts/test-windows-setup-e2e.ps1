@@ -51,6 +51,23 @@ function Get-RunValue {
     }
 }
 
+function Assert-ElevatedAgentDockTask {
+    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+    if ($task.Principal.RunLevel.ToString() -ne 'Highest') {
+        throw "AgentDock task does not use the highest run level: $($task.Principal.RunLevel)"
+    }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if (-not [string]::Equals($task.Principal.UserId, $currentSid, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "AgentDock task belongs to another user: $($task.Principal.UserId)"
+    }
+    $launcherMatch = @($task.Actions | Where-Object {
+        $_.Arguments -and $_.Arguments.Contains($launcherPath)
+    }).Count -gt 0
+    if (-not $launcherMatch) {
+        throw 'AgentDock task does not launch the installer-managed launcher.'
+    }
+}
+
 function Stop-ProcessByPath {
     param([string] $ProcessName, [string] $BinaryPath)
 
@@ -117,7 +134,8 @@ try {
             "/DIR=$InstallRoot",
             "/LOG=$setupLogPath",
             '/MODE=local',
-            '/AUTOSTART=1'
+            '/AUTOSTART=1',
+            '/ADMINMODE=elevated'
         ) `
         -PassThru
     Wait-ProcessOrThrow `
@@ -149,19 +167,25 @@ try {
     if ($manifest.local_mcp_url -ne 'http://127.0.0.1:8765/mcp') {
         throw "Unexpected local MCP URL: $($manifest.local_mcp_url)"
     }
+    if ($manifest.privilege_mode -ne 'elevated' -or $manifest.agentdock_task_name -ne 'AgentDock') {
+        throw "Setup did not enable the elevated core: $($manifest.privilege_mode) / $($manifest.agentdock_task_name)"
+    }
 
     $health = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 5
     if ($health.StatusCode -ne 200) {
         throw "Unexpected health status: $($health.StatusCode)"
     }
-    foreach ($name in @('AgentDock', 'AgentDockTray')) {
-        $value = Get-ItemPropertyValue -LiteralPath $runKey -Name $name -ErrorAction Stop
-        if ([string]::IsNullOrWhiteSpace($value)) {
-            throw "Setup did not create HKCU startup value: $name"
-        }
+    if ($null -ne (Get-RunValue -Name 'AgentDock')) {
+        throw 'Elevated core must not also be registered in HKCU Run.'
     }
+    if ([string]::IsNullOrWhiteSpace((Get-RunValue -Name 'AgentDockTray'))) {
+        throw 'Setup did not register the normal user tray in HKCU Run.'
+    }
+    Assert-ElevatedAgentDockTask
 
     Write-Host 'Creating a running legacy AgentDock scheduled task for migration testing.'
+    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction Stop
     Stop-ProcessByPath -ProcessName 'agentdock' -BinaryPath $binaryPath
     Start-Sleep -Milliseconds 500
     foreach ($name in @('AgentDock', 'AgentDockTray')) {
@@ -219,13 +243,12 @@ try {
     if ($repairLog -notmatch 'AgentDock legacy scheduled task detected') {
         throw 'Setup did not detect the legacy AgentDock scheduled task.'
     }
-    if ($null -ne (Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue)) {
-        throw 'Setup did not remove the migrated legacy AgentDock scheduled task.'
+    Assert-ElevatedAgentDockTask
+    if ($null -ne (Get-RunValue -Name 'AgentDock')) {
+        throw 'Setup repair incorrectly registered the elevated core in HKCU Run.'
     }
-    foreach ($name in @('AgentDock', 'AgentDockTray')) {
-        if ([string]::IsNullOrWhiteSpace((Get-RunValue -Name $name))) {
-            throw "Setup repair did not preserve startup through HKCU: $name"
-        }
+    if ([string]::IsNullOrWhiteSpace((Get-RunValue -Name 'AgentDockTray'))) {
+        throw 'Setup repair did not preserve the normal user tray startup.'
     }
     if ((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).tunnel_mode -ne 'none') {
         throw 'Setup repair did not preserve local-only connection mode.'
@@ -260,6 +283,9 @@ try {
         if ($null -ne (Get-RunValue -Name $name)) {
             throw "HKCU startup value remained after Setup uninstall: $name"
         }
+    }
+    if ($null -ne (Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue)) {
+        throw 'AgentDock scheduled task remained after Setup uninstall.'
     }
 
     Write-Host 'AgentDock Setup install, health check, and uninstall passed.'

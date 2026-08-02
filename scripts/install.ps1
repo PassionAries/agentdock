@@ -22,7 +22,15 @@ param(
     [string] $OAuthTokenSecret = '',
     [string] $StartupValueName = 'AgentDock',
     [string] $CloudflaredStartupValueName = 'AgentDockCloudflared',
-    [string] $TrayStartupValueName = 'AgentDockTray'
+    [string] $TrayStartupValueName = 'AgentDockTray',
+    [ValidateSet('standard', 'elevated')]
+    [string] $CorePrivilegeMode = 'standard',
+    [ValidateSet('none', 'prepare-elevated', 'prepare-standard', 'restore', 'remove')]
+    [string] $TaskAdminAction = 'none',
+    [string] $TaskBackupDirectory = '',
+    [string] $TaskLauncherPath = '',
+    [string] $TaskUserSid = '',
+    [string] $TaskUserName = ''
 )
 
 Set-StrictMode -Version Latest
@@ -245,6 +253,8 @@ function Write-RuntimeManifest {
         [string] $AgentDockBinary,
         [string] $TrayBinary,
         [string] $AgentDockLauncher,
+        [string] $AgentDockTaskName,
+        [string] $PrivilegeMode,
         [string] $CloudflaredLauncher,
         [int] $RuntimePort,
         [string] $RuntimeTunnelMode,
@@ -257,6 +267,8 @@ function Write-RuntimeManifest {
         agentdock_binary = $AgentDockBinary
         tray_binary = $TrayBinary
         agentdock_launcher = $AgentDockLauncher
+        agentdock_task_name = $AgentDockTaskName
+        privilege_mode = $PrivilegeMode
         cloudflared_launcher = $CloudflaredLauncher
         host = '127.0.0.1'
         port = $RuntimePort
@@ -278,7 +290,8 @@ function Write-InstallResult {
         [string] $PublicMCPUrl,
         [string] $BearerToken,
         [string] $OAuthLoginPassword,
-        [string] $HealthStatus
+        [string] $HealthStatus,
+        [string] $PrivilegeMode
     )
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -298,7 +311,8 @@ function Write-InstallResult {
         "PublicMCPUrl=$PublicMCPUrl",
         "BearerToken=$BearerToken",
         "OAuthPassword=$OAuthLoginPassword",
-        "Health=$HealthStatus"
+        "Health=$HealthStatus",
+        "PrivilegeMode=$PrivilegeMode"
     )
     # Windows INI APIs read BOM-prefixed UTF-16 reliably, including localized errors.
     [IO.File]::WriteAllLines($Path, $lines, [Text.Encoding]::Unicode)
@@ -364,7 +378,7 @@ function Get-AgentDockTrayProcesses {
     return @(Get-ProcessesByPath -ProcessName 'agentdock-tray' -BinaryPath $BinaryPath)
 }
 
-function Test-LegacyAgentDockTaskEligible {
+function Test-AgentDockTaskEligible {
     param(
         [string] $AgentDockValueName,
         [string] $CloudflaredValueName,
@@ -376,7 +390,7 @@ function Test-LegacyAgentDockTaskEligible {
         $TrayValueName -eq 'AgentDockTray'
 }
 
-function Get-LegacyAgentDockTaskState {
+function Get-AgentDockTaskState {
     param(
         [string] $AgentDockValueName,
         [string] $CloudflaredValueName,
@@ -384,20 +398,21 @@ function Get-LegacyAgentDockTaskState {
     )
 
     $state = [pscustomobject]@{
+        Eligible = $false
         Exists = $false
         WasEnabled = $false
         WasRunning = $false
     }
-    if (-not (Test-LegacyAgentDockTaskEligible `
+    $state.Eligible = Test-AgentDockTaskEligible `
         -AgentDockValueName $AgentDockValueName `
         -CloudflaredValueName $CloudflaredValueName `
-        -TrayValueName $TrayValueName)) {
+        -TrayValueName $TrayValueName
+    if (-not $state.Eligible) {
         return $state
     }
 
-    try {
-        $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
-    } catch {
+    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
         return $state
     }
     $state.Exists = $true
@@ -406,52 +421,233 @@ function Get-LegacyAgentDockTaskState {
     return $state
 }
 
-function Suspend-LegacyAgentDockTask {
-    param([pscustomobject] $State)
-
-    if ($null -eq $State -or -not $State.Exists) {
-        return
-    }
-    try {
-        Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
-        Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
-        $deadline = [DateTime]::UtcNow.AddSeconds(15)
-        do {
-            $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
-            if ($task.State -ne 'Running') {
-                return
-            }
-            Start-Sleep -Milliseconds 250
-        } while ([DateTime]::UtcNow -lt $deadline)
-        throw 'The legacy AgentDock scheduled task did not stop within 15 seconds.'
-    } catch {
-        throw "Unable to suspend the legacy AgentDock scheduled task: $($_.Exception.Message)"
+function Get-CurrentTaskUser {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $groupSids = @($identity.Groups | ForEach-Object { $_.Value })
+    return [pscustomobject]@{
+        Sid = $identity.User.Value
+        Name = $identity.Name
+        CanElevate = $groupSids -contains 'S-1-5-32-544'
     }
 }
 
-function Restore-LegacyAgentDockTask {
-    param([pscustomobject] $State)
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
-    if ($null -eq $State -or -not $State.Exists) {
+function Save-AgentDockTaskBackup {
+    param([string] $BackupDirectory)
+
+    New-Item -ItemType Directory -Path $BackupDirectory -Force | Out-Null
+    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    $state = [ordered]@{
+        Exists = $null -ne $task
+        WasEnabled = $false
+        WasRunning = $false
+    }
+    if ($null -ne $task) {
+        $state.WasEnabled = $task.State -ne 'Disabled'
+        $state.WasRunning = $task.State -eq 'Running'
+        [IO.File]::WriteAllText(
+            (Join-Path $BackupDirectory 'task.xml'),
+            (Export-ScheduledTask -TaskName 'AgentDock' -TaskPath '\'),
+            [Text.Encoding]::Unicode
+        )
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $BackupDirectory 'state.json'),
+        ($state | ConvertTo-Json),
+        $Utf8NoBom
+    )
+}
+
+function Remove-AgentDockScheduledTask {
+    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    if ($null -eq $task) {
         return
     }
-    if ($State.WasEnabled) {
+    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+    Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue | Out-Null
+    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction Stop
+}
+
+function Restore-AgentDockTaskBackup {
+    param([string] $BackupDirectory)
+
+    $statePath = Join-Path $BackupDirectory 'state.json'
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        throw "AgentDock task backup state was not found: $statePath"
+    }
+    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    Remove-AgentDockScheduledTask
+    if (-not $state.Exists) {
+        return
+    }
+
+    $xmlPath = Join-Path $BackupDirectory 'task.xml'
+    if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) {
+        throw "AgentDock task backup XML was not found: $xmlPath"
+    }
+    Register-ScheduledTask `
+        -TaskName 'AgentDock' `
+        -TaskPath '\' `
+        -Xml (Get-Content -LiteralPath $xmlPath -Raw) `
+        -Force | Out-Null
+    if ($state.WasEnabled) {
         Enable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
     } else {
         Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
     }
-    if ($State.WasRunning) {
+    if ($state.WasRunning) {
         Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
     }
 }
 
-function Remove-LegacyAgentDockTask {
-    param([pscustomobject] $State)
+function Set-AgentDockTaskSecurity {
+    param([string] $UserSid)
 
-    if ($null -eq $State -or -not $State.Exists) {
+    # The task is created by an elevated helper, but it belongs to the current
+    # desktop user. Grant that user full control so the normal tray can start,
+    # stop and update its own task without remaining elevated.
+    $scheduler = New-Object -ComObject 'Schedule.Service'
+    $scheduler.Connect()
+    $registeredTask = $scheduler.GetFolder('\').GetTask('AgentDock')
+    $taskSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;$UserSid)"
+    $registeredTask.SetSecurityDescriptor($taskSecurityDescriptor, 0)
+}
+
+function New-ElevatedAgentDockScheduledTask {
+    param(
+        [string] $LauncherPath,
+        [string] $UserSid,
+        [string] $UserName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LauncherPath) -or
+        [string]::IsNullOrWhiteSpace($UserSid) -or
+        [string]::IsNullOrWhiteSpace($UserName)) {
+        throw 'Elevated AgentDock task configuration is incomplete.'
+    }
+
+    $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $taskArguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$LauncherPath`""
+    $action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $taskArguments
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserName
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId $UserSid `
+        -LogonType Interactive `
+        -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -RestartCount 3 `
+        -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -MultipleInstances IgnoreNew
+    $definition = New-ScheduledTask `
+        -Action $action `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Description 'AgentDock privileged core service for the current desktop user.'
+    Register-ScheduledTask `
+        -TaskName 'AgentDock' `
+        -TaskPath '\' `
+        -InputObject $definition `
+        -Force | Out-Null
+    Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
+    Set-AgentDockTaskSecurity -UserSid $UserSid
+}
+
+function Invoke-AgentDockTaskAdminAction {
+    param(
+        [ValidateSet('prepare-elevated', 'prepare-standard', 'restore', 'remove')]
+        [string] $Action,
+        [string] $BackupDirectory,
+        [string] $LauncherPath,
+        [string] $UserSid,
+        [string] $UserName
+    )
+
+    if (-not (Test-IsAdministrator)) {
+        throw 'Administrator permission is required for AgentDock task configuration.'
+    }
+    if ($Action -eq 'remove') {
+        Remove-AgentDockScheduledTask
         return
     }
-    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
+        throw 'AgentDock task backup directory is required.'
+    }
+    if ($Action -eq 'restore') {
+        Restore-AgentDockTaskBackup -BackupDirectory $BackupDirectory
+        return
+    }
+
+    Save-AgentDockTaskBackup -BackupDirectory $BackupDirectory
+    Remove-AgentDockScheduledTask
+    if ($Action -eq 'prepare-elevated') {
+        try {
+            New-ElevatedAgentDockScheduledTask `
+                -LauncherPath $LauncherPath `
+                -UserSid $UserSid `
+                -UserName $UserName
+        } catch {
+            try {
+                Restore-AgentDockTaskBackup -BackupDirectory $BackupDirectory
+            } catch {
+                Write-Warning "Unable to restore the previous AgentDock task: $($_.Exception.Message)"
+            }
+            throw
+        }
+    }
+}
+
+function Start-ElevatedAgentDockTaskAction {
+    param(
+        [ValidateSet('prepare-elevated', 'prepare-standard', 'restore', 'remove')]
+        [string] $Action,
+        [string] $BackupDirectory,
+        [string] $LauncherPath,
+        [pscustomobject] $TaskUser
+    )
+
+    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
+    $arguments =
+        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`"" +
+        " -TaskAdminAction $Action"
+    if (-not [string]::IsNullOrWhiteSpace($BackupDirectory)) {
+        $arguments += " -TaskBackupDirectory `"$BackupDirectory`""
+    }
+    if (-not [string]::IsNullOrWhiteSpace($LauncherPath)) {
+        $arguments += " -TaskLauncherPath `"$LauncherPath`""
+    }
+    if ($null -ne $TaskUser) {
+        $arguments += " -TaskUserSid `"$($TaskUser.Sid)`" -TaskUserName `"$($TaskUser.Name)`""
+    }
+
+    try {
+        $process = Start-Process `
+            -FilePath $powerShellPath `
+            -ArgumentList $arguments `
+            -Verb RunAs `
+            -WindowStyle Hidden `
+            -Wait `
+            -PassThru
+    } catch {
+        throw "Administrator approval for AgentDock was not completed: $($_.Exception.Message)"
+    }
+    if ($process.ExitCode -ne 0) {
+        throw "AgentDock administrator task action failed with exit code $($process.ExitCode)."
+    }
+}
+
+function Enable-And-StartAgentDockTask {
+    Enable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
+    Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
 }
 
 function Stop-ProcessesForUpgrade {
@@ -702,6 +898,16 @@ function Get-RunValue {
     }
 }
 
+if ($TaskAdminAction -ne 'none') {
+    Invoke-AgentDockTaskAdminAction `
+        -Action $TaskAdminAction `
+        -BackupDirectory $TaskBackupDirectory `
+        -LauncherPath $TaskLauncherPath `
+        -UserSid $TaskUserSid `
+        -UserName $TaskUserName
+    return
+}
+
 if ($Port -lt 1 -or $Port -gt 65535) {
     throw 'Port must be between 1 and 65535.'
 }
@@ -760,10 +966,23 @@ $tunnelStartupRegistrationChanged = $false
 $previousRunValue = $null
 $previousTrayRunValue = $null
 $previousTunnelRunValue = $null
-$legacyTaskState = $null
-$legacyTaskSuspended = $false
-$legacyTaskMigrationCommitted = $false
-$legacyTaskRestored = $false
+$taskUser = Get-CurrentTaskUser
+$effectivePrivilegeMode = $CorePrivilegeMode
+if ($effectivePrivilegeMode -eq 'elevated' -and -not $taskUser.CanElevate) {
+    Write-Warning 'The current Windows account is not a local administrator. AgentDock will use standard user mode.'
+    $effectivePrivilegeMode = 'standard'
+}
+$taskState = Get-AgentDockTaskState `
+    -AgentDockValueName $runValueName `
+    -CloudflaredValueName $cloudflaredRunValueName `
+    -TrayValueName $trayRunValueName
+if ($effectivePrivilegeMode -eq 'elevated' -and -not $taskState.Eligible) {
+    throw 'Elevated AgentDock mode requires the default Windows startup names.'
+}
+$taskBackupDirectory = Join-Path $tempRoot 'scheduled-task-backup'
+$taskTransactionPrepared = $false
+$taskTransactionCommitted = $false
+$taskRestored = $false
 $resolvedTunnelMode = Resolve-TunnelMode -RequestedMode $TunnelMode -ModePath $tunnelModePath -StartupRequested ([bool] $RegisterStartup) -PublicAccessRequested ([bool] $ConfigurePublicAccess)
 if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
     $RegisterStartup = $true
@@ -838,14 +1057,18 @@ try {
 
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $processWasRunning = @(Get-AgentDockProcesses -BinaryPath $destinationBinary).Count -gt 0
-    $legacyTaskState = Get-LegacyAgentDockTaskState `
-        -AgentDockValueName $runValueName `
-        -CloudflaredValueName $cloudflaredRunValueName `
-        -TrayValueName $trayRunValueName
-    if ($legacyTaskState.Exists) {
-        $legacyTaskSuspended = $true
-        Suspend-LegacyAgentDockTask -State $legacyTaskState
-        Write-Host 'Suspended legacy AgentDock scheduled task for migration.'
+    if ($effectivePrivilegeMode -eq 'elevated' -or $taskState.Exists) {
+        $taskAction = if ($effectivePrivilegeMode -eq 'elevated') { 'prepare-elevated' } else { 'prepare-standard' }
+        if (-not $taskUser.CanElevate) {
+            throw 'The existing AgentDock scheduled task requires administrator cleanup, but the current account cannot elevate.'
+        }
+        Start-ElevatedAgentDockTaskAction `
+            -Action $taskAction `
+            -BackupDirectory $taskBackupDirectory `
+            -LauncherPath $launcherPath `
+            -TaskUser $taskUser
+        $taskTransactionPrepared = $true
+        Write-Host "Prepared AgentDock scheduled task transaction: $taskAction"
     }
     $agentDockStopAttempted = $true
     [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
@@ -1003,13 +1226,18 @@ if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
         [IO.File]::WriteAllText($launcherPath, $launcher, $Utf8NoBom)
 
         New-Item -Path $runKey -Force | Out-Null
-        $startupCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
-        New-ItemProperty -Path $runKey -Name $runValueName -Value $startupCommand -PropertyType String -Force | Out-Null
+        if ($effectivePrivilegeMode -eq 'elevated') {
+            Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
+            Enable-And-StartAgentDockTask
+        } else {
+            $startupCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
+            New-ItemProperty -Path $runKey -Name $runValueName -Value $startupCommand -PropertyType String -Force | Out-Null
+            Start-AgentDockLauncher -LauncherPath $launcherPath
+        }
         $startupRegistrationChanged = $true
         $trayStartupCommand = "`"$destinationTrayBinary`""
         New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $trayStartupCommand -PropertyType String -Force | Out-Null
         $trayStartupRegistrationChanged = $true
-        Start-AgentDockLauncher -LauncherPath $launcherPath
         Wait-AgentDockHealth -HealthPort $Port
 
         if ($resolvedTunnelMode -ne 'none') {
@@ -1082,8 +1310,14 @@ exit `$process.ExitCode
             if ($resolvedTunnelMode -eq 'quick') {
                 $publicUrl = Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)
                 Write-TextFile -Path $serverUrlPath -Value $publicUrl
-                [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
-                Start-AgentDockLauncher -LauncherPath $launcherPath
+                if ($effectivePrivilegeMode -eq 'elevated') {
+                    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+                    Start-Sleep -Milliseconds 500
+                    Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+                } else {
+                    [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
+                    Start-AgentDockLauncher -LauncherPath $launcherPath
+                }
                 Wait-AgentDockHealth -HealthPort $Port
             } else {
                 $publicUrl = $ServerUrl
@@ -1121,6 +1355,8 @@ exit `$process.ExitCode
         -AgentDockBinary $destinationBinary `
         -TrayBinary $destinationTrayBinary `
         -AgentDockLauncher $launcherPath `
+        -AgentDockTaskName $(if ($effectivePrivilegeMode -eq 'elevated') { 'AgentDock' } else { '' }) `
+        -PrivilegeMode $effectivePrivilegeMode `
         -CloudflaredLauncher $cloudflaredLauncherPath `
         -RuntimePort $Port `
         -RuntimeTunnelMode $resolvedTunnelMode `
@@ -1150,17 +1386,10 @@ exit `$process.ExitCode
         -PublicMCPUrl $publicMCPUrl `
         -BearerToken $AuthToken `
         -OAuthLoginPassword $OAuthPassword `
-        -HealthStatus $healthStatus
+        -HealthStatus $healthStatus `
+        -PrivilegeMode $effectivePrivilegeMode
 
-    if ($legacyTaskSuspended) {
-        try {
-            Remove-LegacyAgentDockTask -State $legacyTaskState
-            $legacyTaskMigrationCommitted = $true
-            Write-Host 'Removed legacy AgentDock scheduled task after migration.'
-        } catch {
-            Write-Warning "The legacy AgentDock scheduled task remains disabled: $($_.Exception.Message)"
-        }
-    }
+    $taskTransactionCommitted = $taskTransactionPrepared
 
     Write-Host "AgentDock installed: $destinationBinary"
     Write-Host "Local MCP address: $localMCPUrl"
@@ -1195,6 +1424,10 @@ exit `$process.ExitCode
         }
         if ($cloudflaredStopAttempted -or $cloudflaredReplacementStarted -or $tunnelStartupRegistrationChanged) {
             [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
+        }
+        if ($effectivePrivilegeMode -eq 'elevated') {
+            Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
         }
         if ($agentDockStopAttempted -or $binaryReplacementStarted -or $startupRegistrationChanged) {
             [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
@@ -1260,13 +1493,17 @@ exit `$process.ExitCode
             }
         }
 
-        if ($legacyTaskSuspended -and -not $legacyTaskMigrationCommitted) {
-            Restore-LegacyAgentDockTask -State $legacyTaskState
-            $legacyTaskRestored = $true
+        if ($taskTransactionPrepared -and -not $taskTransactionCommitted) {
+            Start-ElevatedAgentDockTaskAction `
+                -Action restore `
+                -BackupDirectory $taskBackupDirectory `
+                -LauncherPath '' `
+                -TaskUser $taskUser
+            $taskRestored = $true
         }
 
-        $legacyTaskWillRestartAgentDock = $legacyTaskRestored -and $legacyTaskState.WasRunning
-        if ($processWasRunning -and -not $legacyTaskWillRestartAgentDock -and
+        $taskWillRestartAgentDock = $taskRestored -and $taskState.WasRunning
+        if ($processWasRunning -and -not $taskWillRestartAgentDock -and
             (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
             Start-AgentDockLauncher -LauncherPath $launcherPath
         }
@@ -1288,7 +1525,8 @@ exit `$process.ExitCode
         -PublicMCPUrl '' `
         -BearerToken '' `
         -OAuthLoginPassword '' `
-        -HealthStatus 'failed'
+        -HealthStatus 'failed' `
+        -PrivilegeMode $effectivePrivilegeMode
     throw $installError
 } finally {
     if ($DeleteTunnelTokenFile -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {

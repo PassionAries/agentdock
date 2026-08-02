@@ -49,3 +49,43 @@ func TestManifestRejectsPublicURLInLocalMode(t *testing.T) {
 		t.Fatal("expected local mode with public URL to fail")
 	}
 }
+
+func TestManifestElevatedModeRequiresScheduledTask(t *testing.T) {
+	manifest := Manifest{
+		SchemaVersion:   SchemaVersion,
+		AgentDockBinary: filepath.Join(t.TempDir(), "agentdock.exe"),
+		PrivilegeMode:   "elevated",
+		Host:            "127.0.0.1",
+		Port:            8765,
+		LocalMCPURL:     "http://127.0.0.1:8765/mcp",
+		TunnelMode:      "none",
+	}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("expected elevated mode without a scheduled task to fail")
+	}
+
+	manifest.AgentDockTaskName = "AgentDock"
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("elevated manifest should be valid: %v", err)
+	}
+	if !manifest.UsesScheduledTask() {
+		t.Fatal("elevated manifest should use Task Scheduler")
+	}
+}
+
+func TestManifestKeepsLegacyStandardModeCompatible(t *testing.T) {
+	manifest := Manifest{
+		SchemaVersion:   SchemaVersion,
+		AgentDockBinary: filepath.Join(t.TempDir(), "agentdock.exe"),
+		Host:            "127.0.0.1",
+		Port:            8765,
+		LocalMCPURL:     "http://127.0.0.1:8765/mcp",
+		TunnelMode:      "none",
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("legacy manifest without privilege fields should remain valid: %v", err)
+	}
+	if manifest.UsesScheduledTask() {
+		t.Fatal("legacy manifest must remain a standard launcher installation")
+	}
+}

@@ -42,8 +42,7 @@ foreach ($forbidden in @(
     'icacls.exe',
     '$icaclsArguments',
     '$AclSelfTest',
-    '$sddl',
-    'Register-ScheduledTask'
+    '$sddl'
 )) {
     if ($content.Contains($forbidden)) {
         throw "$InstallerPath still contains removed privileged startup or ACL code: $forbidden"
@@ -52,10 +51,13 @@ foreach ($forbidden in @(
 
 foreach ($required in @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
-    'Get-LegacyAgentDockTaskState',
-    'Suspend-LegacyAgentDockTask',
-    'Restore-LegacyAgentDockTask',
-    'Remove-LegacyAgentDockTask',
+    'Get-AgentDockTaskState',
+    'New-ElevatedAgentDockScheduledTask',
+    'New-ScheduledTaskPrincipal',
+    '-RunLevel Highest',
+    'Set-AgentDockTaskSecurity',
+    'Start-ElevatedAgentDockTaskAction',
+    'Restore-AgentDockTaskBackup',
     'New-ItemProperty -Path $runKey -Name $runValueName',
     'New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName',
     'Start-AgentDockLauncher -LauncherPath $launcherPath',
