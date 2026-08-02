@@ -21,6 +21,33 @@ function Get-FreeTcpPort {
     }
 }
 
+function Wait-ProcessOrThrow {
+    param(
+        [Diagnostics.Process] $Process,
+        [int] $TimeoutSeconds,
+        [string] $Description,
+        [string] $LogPath
+    )
+
+    if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+            Write-Host "----- $Description log -----"
+            Get-Content -LiteralPath $LogPath | Write-Host
+            Write-Host "----- end $Description log -----"
+        }
+        throw "$Description did not exit within $TimeoutSeconds seconds."
+    }
+    if ($Process.ExitCode -ne 0) {
+        if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+            Write-Host "----- $Description log -----"
+            Get-Content -LiteralPath $LogPath | Write-Host
+            Write-Host "----- end $Description log -----"
+        }
+        throw "$Description failed with exit code $($Process.ExitCode)."
+    }
+}
+
 function Stop-ProcessByPath {
     param([string] $ProcessName, [string] $BinaryPath)
 
@@ -53,6 +80,10 @@ $stateRoot = Join-Path $userHome '.agentdock'
 $stateMarker = Join-Path $stateRoot ('setup-e2e-preserve-' + [Guid]::NewGuid().ToString('N') + '.txt')
 $healthUrl = 'http://127.0.0.1:8765/healthz'
 $httpServer = $null
+$setupProcess = $null
+$uninstallProcess = $null
+$setupLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-install.log'
+$uninstallLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-uninstall.log'
 $oldReleaseBaseUrl = $env:AGENTDOCK_RELEASE_BASE_URL
 
 try {
@@ -85,6 +116,8 @@ try {
     }
 
     $env:AGENTDOCK_RELEASE_BASE_URL = $ReleaseBaseUrl.TrimEnd('/')
+    Remove-Item -LiteralPath $setupLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
+    Write-Host "Starting AgentDockSetup.exe: $resolvedSetup"
     $setupProcess = Start-Process `
         -FilePath $resolvedSetup `
         -ArgumentList @(
@@ -92,14 +125,17 @@ try {
             '/SUPPRESSMSGBOXES',
             '/NORESTART',
             "/DIR=$InstallRoot",
+            "/LOG=$setupLogPath",
             '/MODE=local',
             '/AUTOSTART=1'
         ) `
-        -Wait `
         -PassThru
-    if ($setupProcess.ExitCode -ne 0) {
-        throw "AgentDockSetup.exe failed with exit code $($setupProcess.ExitCode)."
-    }
+    Wait-ProcessOrThrow `
+        -Process $setupProcess `
+        -TimeoutSeconds 180 `
+        -Description 'AgentDock Setup installation' `
+        -LogPath $setupLogPath
+    Write-Host 'AgentDock Setup installation exited successfully.'
 
     foreach ($path in @($binaryPath, $trayPath, $trayIconPath, $manifestPath, $uninstallerPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -131,14 +167,22 @@ try {
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     [IO.File]::WriteAllText($stateMarker, 'preserve', [Text.UTF8Encoding]::new($false))
 
+    Write-Host "Starting AgentDock uninstaller: $uninstallerPath"
     $uninstallProcess = Start-Process `
         -FilePath $uninstallerPath `
-        -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') `
-        -Wait `
+        -ArgumentList @(
+            '/VERYSILENT',
+            '/SUPPRESSMSGBOXES',
+            '/NORESTART',
+            "/LOG=$uninstallLogPath"
+        ) `
         -PassThru
-    if ($uninstallProcess.ExitCode -ne 0) {
-        throw "AgentDock uninstaller failed with exit code $($uninstallProcess.ExitCode)."
-    }
+    Wait-ProcessOrThrow `
+        -Process $uninstallProcess `
+        -TimeoutSeconds 120 `
+        -Description 'AgentDock Setup uninstall' `
+        -LogPath $uninstallLogPath
+    Write-Host 'AgentDock Setup uninstall exited successfully.'
     if (Test-Path -LiteralPath $binaryPath -PathType Leaf) {
         throw 'AgentDock binary remained after Setup uninstall.'
     }
@@ -154,6 +198,11 @@ try {
     Write-Host 'AgentDock Setup install, health check, and uninstall passed.'
 } finally {
     $env:AGENTDOCK_RELEASE_BASE_URL = $oldReleaseBaseUrl
+    foreach ($process in @($setupProcess, $uninstallProcess)) {
+        if ($process -and -not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
     if ($httpServer -and -not $httpServer.HasExited) {
         Stop-Process -Id $httpServer.Id -Force -ErrorAction SilentlyContinue
     }
@@ -164,4 +213,5 @@ try {
     }
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stateMarker -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $setupLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
 }
