@@ -386,6 +386,14 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 	setup := string(data)
 	for _, want := range []string{
 		"PrivilegesRequired=lowest",
+		"DisableDirPage=yes",
+		"LanguageDetectionMethod=uilanguage",
+		"Name: \"chinesesimplified\"",
+		"DetectExistingInstallation",
+		"ExistingInstallSource := 'setup'",
+		"ExistingInstallSource := 'powershell'",
+		"LoadExistingSettings",
+		"cloudflared-token.dpapi",
 		"-TunnelMode ",
 		"-TunnelTokenFile ",
 		"-DeleteTunnelTokenFile",
@@ -409,6 +417,25 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 	}
 	if strings.Contains(setup, " -TunnelToken ") {
 		t.Fatal("Setup must pass the Cloudflare Tunnel Token through a temporary file, not process arguments")
+	}
+}
+
+func TestWindowsSetupIncludesSimplifiedChineseBaseMessages(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "languages", "ChineseSimplified.isl"))
+	if err != nil {
+		t.Fatalf("read ChineseSimplified.isl: %v", err)
+	}
+	language := string(data)
+	for _, want := range []string{
+		"LanguageID=$0804",
+		"ButtonNext=下一步",
+		"ButtonCancel=取消",
+		"WelcomeLabel1=欢迎使用",
+		"ConfirmUninstall=确实要完全删除",
+	} {
+		if !strings.Contains(language, want) {
+			t.Fatalf("ChineseSimplified.isl missing %q", want)
+		}
 	}
 }
 

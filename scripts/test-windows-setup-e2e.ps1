@@ -91,13 +91,21 @@ $stateMarker = Join-Path $stateRoot ('setup-e2e-preserve-' + [Guid]::NewGuid().T
 $healthUrl = 'http://127.0.0.1:8765/healthz'
 $httpServer = $null
 $setupProcess = $null
+$repairProcess = $null
 $uninstallProcess = $null
 $setupLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-install.log'
+$repairLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-repair.log'
 $uninstallLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-uninstall.log'
 $oldReleaseBaseUrl = $env:AGENTDOCK_RELEASE_BASE_URL
 
 try {
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $InstallRoot 'start-agentdock.ps1'),
+        '# legacy PowerShell install marker',
+        [Text.UTF8Encoding]::new($false)
+    )
 
     if ([string]::IsNullOrWhiteSpace($ReleaseBaseUrl)) {
         if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) {
@@ -126,13 +134,14 @@ try {
     }
 
     $env:AGENTDOCK_RELEASE_BASE_URL = $ReleaseBaseUrl.TrimEnd('/')
-    Remove-Item -LiteralPath $setupLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $setupLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
     Write-Host "Starting AgentDockSetup.exe: $resolvedSetup"
     $setupProcess = Start-Process `
         -FilePath $resolvedSetup `
         -ArgumentList @(
             '/VERYSILENT',
             '/SUPPRESSMSGBOXES',
+            '/LANG=chinesesimplified',
             '/NORESTART',
             "/DIR=$InstallRoot",
             "/LOG=$setupLogPath",
@@ -146,6 +155,13 @@ try {
         -Description 'AgentDock Setup installation' `
         -LogPath $setupLogPath
     Write-Host 'AgentDock Setup installation exited successfully.'
+    $initialLog = Get-Content -LiteralPath $setupLogPath -Raw
+    if ($initialLog -notmatch 'Using language: chinesesimplified') {
+        throw 'Setup did not use the Simplified Chinese language.'
+    }
+    if ($initialLog -notmatch 'existing installation detected: source=powershell') {
+        throw 'Setup did not recognize the legacy PowerShell installation.'
+    }
 
     foreach ($path in @($binaryPath, $trayPath, $trayIconPath, $manifestPath, $uninstallerPath)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -172,6 +188,31 @@ try {
         if ([string]::IsNullOrWhiteSpace($value)) {
             throw "Setup did not create HKCU startup value: $name"
         }
+    }
+
+    Write-Host 'Starting AgentDockSetup.exe again to verify Setup-managed repair detection.'
+    $repairProcess = Start-Process `
+        -FilePath $resolvedSetup `
+        -ArgumentList @(
+            '/VERYSILENT',
+            '/SUPPRESSMSGBOXES',
+            '/LANG=chinesesimplified',
+            '/NORESTART',
+            "/DIR=$InstallRoot",
+            "/LOG=$repairLogPath"
+        ) `
+        -PassThru
+    Wait-ProcessOrThrow `
+        -Process $repairProcess `
+        -TimeoutSeconds 180 `
+        -Description 'AgentDock Setup repair' `
+        -LogPath $repairLogPath
+    $repairLog = Get-Content -LiteralPath $repairLogPath -Raw
+    if ($repairLog -notmatch 'existing installation detected: source=setup') {
+        throw 'Setup did not recognize the existing Setup-managed installation.'
+    }
+    if ((Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).tunnel_mode -ne 'none') {
+        throw 'Setup repair did not preserve local-only connection mode.'
     }
 
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
@@ -207,7 +248,7 @@ try {
 
     Write-Host 'AgentDock Setup install, health check, and uninstall passed.'
 } catch {
-    foreach ($log in @($setupLogPath, $uninstallLogPath)) {
+    foreach ($log in @($setupLogPath, $repairLogPath, $uninstallLogPath)) {
         if (Test-Path -LiteralPath $log -PathType Leaf) {
             Write-Host "----- failure log: $log -----"
             Get-Content -LiteralPath $log | Write-Host
@@ -217,7 +258,7 @@ try {
     throw
 } finally {
     $env:AGENTDOCK_RELEASE_BASE_URL = $oldReleaseBaseUrl
-    foreach ($process in @($setupProcess, $uninstallProcess)) {
+    foreach ($process in @($setupProcess, $repairProcess, $uninstallProcess)) {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
@@ -232,5 +273,5 @@ try {
     }
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stateMarker -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $setupLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $setupLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
 }
