@@ -48,40 +48,14 @@ function Wait-ProcessOrThrow {
     }
 }
 
-function Write-AgentDockDiagnostics {
-    param([string] $Stage)
+function Get-RunValue {
+    param([string] $Name)
 
-    Write-Host "----- AgentDock diagnostics: $Stage -----"
-    Get-Process -Name 'agentdock', 'agentdock-tray' -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            try {
-                Write-Host "process id=$($_.Id) name=$($_.ProcessName) path=$($_.Path)"
-            } catch {
-                Write-Host "process id=$($_.Id) name=$($_.ProcessName) path=<unavailable>"
-            }
-        }
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.ExecutablePath -and
-            $_.ExecutablePath.StartsWith($InstallRoot, [StringComparison]::OrdinalIgnoreCase)
-        } |
-        ForEach-Object {
-            Write-Host "cim id=$($_.ProcessId) name=$($_.Name) path=$($_.ExecutablePath) command=$($_.CommandLine)"
-        }
-    foreach ($path in @($binaryPath, $trayPath)) {
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            Write-Host "file missing: $path"
-            continue
-        }
-        try {
-            $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-            $stream.Dispose()
-            Write-Host "file unlocked: $path"
-        } catch {
-            Write-Host "file locked: $path error=$($_.Exception.Message)"
-        }
+    try {
+        return Get-ItemPropertyValue -LiteralPath $runKey -Name $Name -ErrorAction Stop
+    } catch {
+        return $null
     }
-    Write-Host "----- end AgentDock diagnostics -----"
 }
 
 function Stop-ProcessByPath {
@@ -203,7 +177,6 @@ try {
     New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
     [IO.File]::WriteAllText($stateMarker, 'preserve', [Text.UTF8Encoding]::new($false))
 
-    Write-AgentDockDiagnostics -Stage 'before uninstall'
     Write-Host "Starting AgentDock uninstaller: $uninstallerPath"
     $uninstallProcess = Start-Process `
         -FilePath $uninstallerPath `
@@ -220,7 +193,6 @@ try {
         -Description 'AgentDock Setup uninstall' `
         -LogPath $uninstallLogPath
     Write-Host 'AgentDock Setup uninstall exited successfully.'
-    Write-AgentDockDiagnostics -Stage 'after uninstall'
     if (Test-Path -LiteralPath $binaryPath -PathType Leaf) {
         throw 'AgentDock binary remained after Setup uninstall.'
     }
@@ -228,7 +200,7 @@ try {
         throw 'Silent Setup uninstall unexpectedly deleted user state.'
     }
     foreach ($name in @('AgentDock', 'AgentDockTray', 'AgentDockCloudflared')) {
-        if ($null -ne (Get-ItemPropertyValue -LiteralPath $runKey -Name $name -ErrorAction SilentlyContinue)) {
+        if ($null -ne (Get-RunValue -Name $name)) {
             throw "HKCU startup value remained after Setup uninstall: $name"
         }
     }
