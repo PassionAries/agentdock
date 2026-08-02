@@ -1,7 +1,12 @@
 package mcp
 
 import (
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -145,4 +150,34 @@ func TestOfficialSDKServerListsAndCallsAgentDockTools(t *testing.T) {
 	if err := <-serverDone; err != nil {
 		t.Fatalf("Server.Run() error = %v", err)
 	}
+}
+
+func TestStreamableHTTPHandlerAllowsConfiguredPublicHost(t *testing.T) {
+	response := serveStreamableHTTPRequest(t, config.Config{
+		OAuthServerURL: "https://dockmini.example",
+	})
+	if response.Code == http.StatusForbidden {
+		t.Fatalf("configured public Host was rejected: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestStreamableHTTPHandlerKeepsLocalhostProtectionWithoutPublicURL(t *testing.T) {
+	response := serveStreamableHTTPRequest(t, config.Config{})
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("unconfigured public Host status=%d, want %d; body=%s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "invalid Host header") {
+		t.Fatalf("unexpected rejection body: %s", response.Body.String())
+	}
+}
+
+func serveStreamableHTTPRequest(t *testing.T, cfg config.Config) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "http://dockmini.example/mcp", nil)
+	request.Host = "dockmini.example"
+	localAddress := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 18766}
+	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, localAddress))
+	response := httptest.NewRecorder()
+	NewServer(nil, cfg).HTTPHandler().ServeHTTP(response, request)
+	return response
 }
