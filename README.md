@@ -144,9 +144,17 @@ docker compose down
 
 See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/docker) for configuration, persistence, and client setup.
 
+### Graphical macOS installation
+
+Regular macOS users can download `AgentDock-macos-universal.dmg` from GitHub Releases, open it, and drag `AgentDock.app` onto the Applications shortcut. This free build uses an ad-hoc signature and is not notarized by Apple, so the first launch requires right-clicking the app in Applications and choosing **Open**. No terminal or administrator privileges are needed after that.
+
+The first-launch interface offers local-only, temporary public access, and a fixed Cloudflare hostname. The hostname and Tunnel Token are entered in graphical fields. The token reaches the installer through a current-user-only temporary file and never appears in process arguments.
+
+After setup, the main control panel shows service health, version, local and public MCP URLs, plus masked Bearer and OAuth credentials with dedicated reveal and copy actions. It also provides start, stop, restart, update, and log access. Advanced settings manage the service port, log level, optional Nexus endpoint and token, browser automation, and separate login-startup switches for the AgentDock service and menu bar app. Enabling browser automation installs and verifies the required browser runner automatically; disabling it keeps the installed support files for later reuse.
+
 ### Public access with Cloudflare Tunnel
 
-The macOS, Linux, and Windows installers do not require regular users to understand internal `quick` or `named` modes. Public installation asks only whether a Cloudflare-managed domain is available:
+The macOS graphical app and the Linux and Windows installers do not require regular users to understand internal `quick` or `named` modes. Public setup asks only whether a Cloudflare-managed domain is available:
 
 - **Domain available:** use a fixed hostname for long-running access. The installer asks for the HTTPS public origin and Tunnel Token.
 - **No domain:** create a temporary `trycloudflare.com` URL for immediate testing. The URL may change after `cloudflared` restarts.
@@ -171,7 +179,7 @@ powershell -ExecutionPolicy Bypass -File $script -RegisterStartup -ConfigurePubl
 
 `-RegisterStartup` by itself configures local startup and does not expose AgentDock publicly. Automation may still set `AGENTDOCK_TUNNEL_MODE=quick|named`; fixed mode also requires `AGENTDOCK_SERVER_URL` and `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`. Windows protects the Bearer Token, OAuth password, OAuth signing secret, and Tunnel Token separately with current-user DPAPI.
 
-When a temporary URL changes, rerun the same installer. It writes the new URL back to AgentDock while preserving the Bearer Token, OAuth login password, and signing secret. Update the MCP URL in the client and complete OAuth authorization again.
+On macOS, Quick Tunnel obtains its new URL on every start, writes the OAuth origin back, and restarts and verifies AgentDock. The menu bar then exposes the latest URL while preserving the Bearer Token, OAuth login password, and signing secret. When the temporary URL changes, update the MCP URL in the client and complete OAuth authorization again.
 
 Docker Quick Tunnel:
 
@@ -253,6 +261,8 @@ agentdock update
 - Inspect state before a change and verify the resulting diff afterward
 
 ### Skills and dynamic MCP
+
+Official and community Skill sources live in [uvwt/agentdock-skills](https://github.com/uvwt/agentdock-skills). This repository only keeps the three bootstrap Skills that must ship with the AgentDock runtime.
 
 - Validate, install, activate, and roll back Skill packages
 - Stable, development, canary, and pinned release channels

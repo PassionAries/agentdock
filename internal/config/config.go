@@ -36,6 +36,7 @@ type Config struct {
 	NexusToken          string
 	BrowserEnabled      bool
 	BrowserRunnerDir    string
+	BrowserNodePath     string
 	Stdio               bool
 	TrustedProxyCIDRs   []string
 }
@@ -68,6 +69,7 @@ func FromEnv() (Config, error) {
 		NexusToken:        os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
 		BrowserEnabled:    browserEnabled,
 		BrowserRunnerDir:  os.Getenv("AGENTDOCK_BROWSER_RUNNER_DIR"),
+		BrowserNodePath:   os.Getenv("AGENTDOCK_BROWSER_NODE_PATH"),
 		Stdio:             stdio,
 		TrustedProxyCIDRs: splitCommaSeparated(os.Getenv("AGENTDOCK_TRUSTED_PROXY_CIDRS")),
 	}, nil
@@ -120,6 +122,13 @@ func (c *Config) Normalize() error {
 		c.BrowserRunnerDir = filepath.Clean(strings.TrimSpace(c.BrowserRunnerDir))
 		if !filepath.IsAbs(c.BrowserRunnerDir) {
 			return fmt.Errorf("BrowserRunnerDir must resolve to an absolute path: %s", c.BrowserRunnerDir)
+		}
+	}
+	c.BrowserNodePath = strings.TrimSpace(c.BrowserNodePath)
+	if c.BrowserNodePath != "" {
+		c.BrowserNodePath = filepath.Clean(c.BrowserNodePath)
+		if !filepath.IsAbs(c.BrowserNodePath) {
+			return fmt.Errorf("BrowserNodePath must resolve to an absolute path: %s", c.BrowserNodePath)
 		}
 	}
 	c.Host = strings.TrimSpace(c.Host)

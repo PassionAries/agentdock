@@ -40,7 +40,11 @@ func (s *Service) BrowserCall(ctx context.Context, operation string, args map[st
 	timeout := browserRunnerTimeout(args)
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, "node", runner.Abs)
+	nodePath := strings.TrimSpace(s.cfg.BrowserNodePath)
+	if nodePath == "" {
+		nodePath = "node"
+	}
+	cmd := exec.CommandContext(cmdCtx, nodePath, runner.Abs)
 	cmd.Dir = filepath.Dir(runner.Abs)
 	env := map[string]string{
 		"BROWSER_RUNNER_PAYLOAD": string(data),
@@ -199,7 +203,7 @@ func (s *Service) BrowserRunnerScript() (ControlPath, error) {
 	}
 	info, err := os.Lstat(runnerDir)
 	if err != nil || !info.IsDir() {
-		return ControlPath{}, toolErrorDetails("BROWSER_RUNNER_NOT_FOUND", "browser runner directory not found", "validation", map[string]any{"runner_dir": runnerDir, "suggestion": "copy examples/browser-runner to the configured runner directory and run npm install; on macOS prefer browser=chrome for system Chrome"})
+		return ControlPath{}, toolErrorDetails("BROWSER_RUNNER_NOT_FOUND", "browser runner directory not found", "validation", map[string]any{"runner_dir": runnerDir, "suggestion": "copy tools/browser-runner to the configured runner directory and run npm install; on macOS prefer browser=chrome for system Chrome"})
 	}
 	candidate := filepath.Join(runnerDir, "browser-runner.js")
 	info, err = os.Lstat(candidate)

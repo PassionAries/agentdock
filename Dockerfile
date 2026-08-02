@@ -51,7 +51,7 @@ RUN apt-get update \
 COPY --from=build --chmod=0755 /out/agentdock /usr/local/bin/agentdock
 COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/agentdock-entrypoint
 COPY --chmod=0755 scripts/docker-healthcheck.sh /usr/local/bin/agentdock-healthcheck
-COPY skill-sources /tmp/agentdock-bundle/skill-sources
+COPY core-skills /tmp/agentdock-bundle/core-skills
 COPY scripts/build-core-skill-bundle.py /tmp/agentdock-bundle/build-core-skill-bundle.py
 RUN python3 /tmp/agentdock-bundle/build-core-skill-bundle.py \
       --repo-root /tmp/agentdock-bundle \
@@ -96,11 +96,11 @@ RUN apt-get update \
       fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-COPY examples/browser-runner/package.json examples/browser-runner/package-lock.json /opt/agentdock/browser-runner/
+COPY tools/browser-runner/package.json tools/browser-runner/package-lock.json /opt/agentdock/browser-runner/
 RUN cd /opt/agentdock/browser-runner \
     && npm ci --omit=dev --ignore-scripts \
     && npm cache clean --force
-COPY --chmod=0644 examples/browser-runner/browser-runner.js /opt/agentdock/browser-runner/browser-runner.js
+COPY --chmod=0644 tools/browser-runner/browser-runner.js /opt/agentdock/browser-runner/browser-runner.js
 
 ENV AGENTDOCK_BROWSER_ENABLED=true \
     AGENTDOCK_BROWSER_RUNNER_DIR=/opt/agentdock/browser-runner \

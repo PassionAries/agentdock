@@ -120,6 +120,38 @@ jobs:
             agentdock_darwin_${{ matrix.goarch }}.tar.gz.sha256
           if-no-files-found: error
 
+  build-macos-app:
+    name: Build macOS menu app
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate menu app
+        run: |
+          zsh -n \
+            packaging/macos/build-app.sh \
+            scripts/install-browser-runner-macos.sh \
+            scripts/test-install-browser-runner-macos.sh \
+            scripts/test-macos-app.sh
+          ./scripts/test-install-browser-runner-macos.sh
+          ./scripts/test-macos-app.sh
+
+      - name: Build universal menu app
+        env:
+          AGENTDOCK_MACOS_ARCHES: arm64,x86_64
+          AGENTDOCK_MACOS_APP_OUTPUT_DIR: dist/macos-app
+        run: packaging/macos/build-app.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentdock-macos-dmg
+          path: |
+            dist/macos-app/AgentDock-macos-universal.dmg
+            dist/macos-app/AgentDock-macos-universal.dmg.sha256
+          if-no-files-found: error
+
   build-windows:
     name: Build Windows ${{ matrix.goarch }}
     runs-on: windows-latest
@@ -302,7 +334,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [build-linux, build-macos, build-windows, build-windows-setup]
+    needs: [build-linux, build-macos, build-macos-app, build-windows, build-windows-setup]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -332,7 +364,6 @@ jobs:
           python3 - <<'PY'
           import os
           import re
-          import zipfile
           from pathlib import Path
 
           tag = os.environ["RELEASE_TAG"]
@@ -360,12 +391,6 @@ jobs:
           browser = browser.replace("ghcr.io/uvwt/agentdock:browser-latest", f"ghcr.io/{repository}:browser-{tag}")
           Path("dist/docker-compose.yml").write_text(runtime)
           Path("dist/docker-compose.browser.yml").write_text(browser)
-
-          skill_root = Path("skill-sources/desktop")
-          with zipfile.ZipFile("dist/skill-desktop.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-              for path in sorted(skill_root.rglob("*")):
-                  if path.is_file():
-                      archive.write(path, path.relative_to(skill_root))
           PY
           (
             cd dist
@@ -377,11 +402,19 @@ jobs:
               install.ps1 \
               uninstall-windows.ps1 \
               AgentDockSetup-amd64.exe \
-              AgentDockSetup-arm64.exe \
-              skill-desktop.zip; do
+              AgentDockSetup-arm64.exe; do
               shasum -a 256 "$file" > "$file.sha256"
             done
           )
+
+      - name: Validate macOS release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/AgentDock-macos-universal.dmg
+          test -f dist/AgentDock-macos-universal.dmg.sha256
+          test ! -e dist/AgentDock-macos-universal.zip
+          test ! -e dist/AgentDock-macos-universal.zip.sha256
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -390,6 +423,8 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
+            dist/*.dmg
+            dist/*.dmg.sha256
             dist/*.zip
             dist/*.zip.sha256
             dist/*.sh
@@ -539,6 +574,38 @@ jobs:
           release_base="https://github.com/${{ github.repository }}/releases/download/$tag"
           installer="$RUNNER_TEMP/install.sh"
           uninstaller="$RUNNER_TEMP/uninstall-macos.sh"
+          dmg="$RUNNER_TEMP/AgentDock-macos-universal.dmg"
+          mount_dir="$RUNNER_TEMP/agentdock-dmg"
+          dmg_mounted=false
+          cleanup() {
+            if [[ "$dmg_mounted" == true ]]; then
+              hdiutil detach "$mount_dir" -force >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+
+          curl -fL "$release_base/AgentDock-macos-universal.dmg" -o "$dmg"
+          curl -fL "$release_base/AgentDock-macos-universal.dmg.sha256" -o "$dmg.sha256"
+          (
+            cd "$RUNNER_TEMP"
+            shasum -a 256 -c AgentDock-macos-universal.dmg.sha256
+          )
+          hdiutil verify "$dmg" >/dev/null
+          mkdir -p "$mount_dir"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg" >/dev/null
+          dmg_mounted=true
+          mounted_entries="$(find "$mount_dir" -mindepth 1 -maxdepth 1 -exec basename {} \; | LC_ALL=C sort)"
+          test "$mounted_entries" = $'AgentDock.app\nApplications'
+          test -L "$mount_dir/Applications"
+          test "$(readlink "$mount_dir/Applications")" = "/Applications"
+          codesign --verify --deep --strict --verbose=2 "$mount_dir/AgentDock.app"
+          app_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock")"
+          helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDockLoginHelper")"
+          [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
+          [[ "$helper_arches" == *arm64* && "$helper_arches" == *x86_64* ]]
+          hdiutil detach "$mount_dir" >/dev/null
+          dmg_mounted=false
+
           curl -fL "$release_base/install.sh" -o "$installer"
           curl -fL "$release_base/install.sh.sha256" -o "$installer.sha256"
           curl -fL "$release_base/uninstall-macos.sh" -o "$uninstaller"
@@ -611,26 +678,6 @@ jobs:
           & .\scripts\run-windows-installer-e2e-as-standard-user.ps1 `
             -InstallerPath $env:DOWNLOADED_INSTALLER `
             -Version $env:RELEASE_TAG
-
-  verify-desktop-skill-release:
-    name: Verify published Desktop Skill
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download and inspect published Skill package
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          base="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG"
-          curl -fL "$base/skill-desktop.zip" -o skill-desktop.zip
-          curl -fL "$base/skill-desktop.zip.sha256" -o skill-desktop.zip.sha256
-          sha256sum -c skill-desktop.zip.sha256
-          mapfile -t files < <(unzip -Z1 skill-desktop.zip | sort)
-          expected=(SKILL.md run.py)
-          test "${files[*]}" = "${expected[*]}"
-          unzip -p skill-desktop.zip SKILL.md | grep -q '^name: desktop$'
 
   verify-container:
     name: Verify published containers

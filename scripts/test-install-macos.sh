@@ -96,11 +96,15 @@ agentdock_env="$app_support/agentdock.env"
 start_script="$app_support/start-agentdock.sh"
 plist="$home_dir/Library/LaunchAgents/com.uvwt.agentdock.plist"
 log_dir="$home_dir/Library/Logs/AgentDock"
+result_file="$TMP_ROOT/install-result.json"
 
 # 全新安装使用 --no-start，只生成标准服务文件，不接触当前用户真实 LaunchAgent。
+# --register-service 默认仅本机运行，不能因为启用后台服务就隐式创建公网入口。
 run_installer \
   --version latest \
   --register-service \
+  --non-interactive \
+  --result-file "$result_file" \
   --no-start \
   --host 127.0.0.1 \
   --port 18766 \
@@ -110,7 +114,7 @@ test -x "$binary"
 "$binary" --help >/dev/null 2>&1
 test -d "$state_dir"
 test -f "$state_dir/skill-store/bundled-skills.json"
-test -f "$state_dir/skill-store/installed/skill-authoring/1.1.3/SKILL.md"
+test -f "$state_dir/skill-store/installed/skill-authoring/1.2.0/SKILL.md"
 test -f "$state_dir/skill-store/installed/skill-installation/1.2.0/SKILL.md"
 test -f "$state_dir/skill-store/installed/skill-vetter-runtime/0.1.5/SKILL.md"
 test -d "$backup_dir"
@@ -136,6 +140,15 @@ test "$(plutil -extract ProgramArguments.0 raw -o - "$plist")" = "$start_script"
 test "$(plutil -extract WorkingDirectory raw -o - "$plist")" = "$work_dir"
 test "$(plutil -extract StandardOutPath raw -o - "$plist")" = "$log_dir/agentdock.out.log"
 test "$(plutil -extract StandardErrorPath raw -o - "$plist")" = "$log_dir/agentdock.err.log"
+test ! -e "$home_dir/Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist"
+test "$(mode_of "$result_file")" = "600"
+test "$(plutil -extract schema_version raw -o - "$result_file")" = "1"
+test "$(plutil -extract ok raw -o - "$result_file")" = "true"
+test "$(plutil -extract healthy raw -o - "$result_file")" = "false"
+test "$(plutil -extract local_mcp_url raw -o - "$result_file")" = "http://127.0.0.1:18766/mcp"
+test "$(plutil -extract tunnel_mode raw -o - "$result_file")" = "none"
+test "$(plutil -extract public_mcp_url raw -o - "$result_file")" = ""
+test "$(plutil -extract auth_token raw -o - "$result_file")" = "initial token with spaces"
 
 # 模拟用户维护已有 Nexus 配置，重复安装不得覆盖它和既有 Token。
 python3 - "$agentdock_env" <<'PY'
@@ -202,16 +215,42 @@ cat > "$fake_cloudflared" <<'SCRIPT'
 SCRIPT
 chmod 0755 "$fake_cloudflared"
 ln -s ../fake-cloudflared-cellar/cloudflared "$fake_cloudflared_bin/cloudflared"
+
+# 图形安装器通过受限临时文件传递 Token。权限过宽时必须在任何安装动作前拒绝并删除文件。
+insecure_token_file="$TMP_ROOT/insecure-tunnel-token"
+print -rn -- 'must-not-be-used' > "$insecure_token_file"
+chmod 0644 "$insecure_token_file"
+if env -i \
+  HOME="$home_dir" \
+  PATH="$fake_cloudflared_bin:$TEST_PATH" \
+  TMPDIR="$TMP_ROOT" \
+  AGENTDOCK_RELEASE_BASE_URL="$release_url" \
+  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+    --non-interactive \
+    --tunnel named \
+    --server-url https://agent.example.test \
+    --tunnel-token-file "$insecure_token_file" \
+    --no-start >/dev/null 2>&1; then
+  print -u2 -- "installer accepted an insecure Tunnel Token file"
+  exit 1
+fi
+test ! -e "$insecure_token_file"
+
+tunnel_token_file="$TMP_ROOT/tunnel-token"
+print -rn -- 'named-token-value' > "$tunnel_token_file"
+chmod 0600 "$tunnel_token_file"
 env -i \
   HOME="$home_dir" \
   PATH="$fake_cloudflared_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='named-token-value' \
   zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+    --non-interactive \
     --tunnel named \
     --server-url https://agent.example.test \
+    --tunnel-token-file "$tunnel_token_file" \
     --no-start
+test ! -e "$tunnel_token_file"
 
 tunnel_env="$app_support/cloudflared.env"
 tunnel_start="$app_support/start-cloudflared.sh"
@@ -265,6 +304,95 @@ test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)" = "$named_oauth
 test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)" = "$named_oauth_secret"
 assert_file_not_contains "$tunnel_env" 'named-token-value'
 assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"'
+assert_file_contains "$tunnel_start" 'write_quick_public_auth "$public_url"'
+assert_file_contains "$tunnel_start" 'launchctl kickstart -k "$domain/$AGENTDOCK_LABEL"'
+assert_file_contains "$tunnel_start" 'QUICK_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"'
+assert_file_contains "$tunnel_start" 'QUICK_LOG="$LOG_DIR/cloudflared-quick-current.log"'
+
+# 真实执行登录后 Quick Tunnel 启动脚本：新地址必须原子回写、健康验证后发布，已有凭据不得轮换。
+quick_runtime_home="$TMP_ROOT/quick runtime home"
+quick_runtime_bin="$TMP_ROOT/quick runtime bin"
+quick_runtime_support="$quick_runtime_home/Library/Application Support/AgentDock"
+quick_runtime_logs="$quick_runtime_home/Library/Logs/AgentDock"
+quick_runtime_env="$quick_runtime_support/agentdock.env"
+quick_runtime_url_file="$quick_runtime_support/quick-tunnel-url.txt"
+mkdir -p "$quick_runtime_home/.local/bin" "$quick_runtime_bin" "$quick_runtime_support" "$quick_runtime_logs"
+quick_runtime_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+cat > "$quick_runtime_env" <<ENV
+AGENTDOCK_HOST=127.0.0.1
+AGENTDOCK_PORT=$quick_runtime_port
+AGENTDOCK_AUTH_TOKEN=stable-bearer-token
+AGENTDOCK_SERVER_URL=https://old.trycloudflare.com
+AGENTDOCK_OAUTH_ENABLED=true
+AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password
+AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef
+ENV
+cat > "$quick_runtime_support/cloudflared.env" <<'ENV'
+AGENTDOCK_TUNNEL_MODE=quick
+AGENTDOCK_TUNNEL_TARGET=http://127.0.0.1:18766
+TUNNEL_TOKEN=''
+ENV
+cp "$tunnel_start" "$quick_runtime_support/start-cloudflared.sh"
+chmod 0600 "$quick_runtime_env" "$quick_runtime_support/cloudflared.env"
+chmod 0700 "$quick_runtime_support/start-cloudflared.sh"
+cat > "$quick_runtime_home/.local/bin/cloudflared" <<'SCRIPT'
+#!/bin/zsh
+print -u2 -- 'INF Quick Tunnel available at https://rebooted.trycloudflare.com'
+sleep 2
+SCRIPT
+cat > "$quick_runtime_bin/launchctl" <<'SCRIPT'
+#!/bin/zsh
+exit 0
+SCRIPT
+chmod 0755 "$quick_runtime_home/.local/bin/cloudflared" "$quick_runtime_bin/launchctl"
+python3 - "$quick_runtime_port" <<'PY' &
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import sys
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/healthz":
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = json.dumps({"ok": True, "version": "v0.5.4"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+PY
+quick_health_pid=$!
+if ! env -i \
+  HOME="$quick_runtime_home" \
+  PATH="$quick_runtime_bin:$TEST_PATH" \
+  zsh "$quick_runtime_support/start-cloudflared.sh"; then
+  kill "$quick_health_pid" >/dev/null 2>&1 || true
+  wait "$quick_health_pid" 2>/dev/null || true
+  print -u2 -- "Quick Tunnel startup wrapper failed"
+  exit 1
+fi
+kill "$quick_health_pid" >/dev/null 2>&1 || true
+wait "$quick_health_pid" 2>/dev/null || true
+assert_file_contains "$quick_runtime_env" 'AGENTDOCK_SERVER_URL=https://rebooted.trycloudflare.com'
+assert_file_contains "$quick_runtime_env" 'AGENTDOCK_OAUTH_ENABLED=true'
+assert_file_contains "$quick_runtime_env" 'AGENTDOCK_AUTH_TOKEN=stable-bearer-token'
+assert_file_contains "$quick_runtime_env" 'AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password'
+assert_file_contains "$quick_runtime_env" 'AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef'
+test "$(cat "$quick_runtime_url_file")" = "https://rebooted.trycloudflare.com"
+test "$(mode_of "$quick_runtime_url_file")" = "600"
 
 # Tunnel 配置失败时必须恢复旧 Tunnel 文件与旧公网认证状态，不能留下半更新状态。
 old_tunnel_env_sha="$(sha256_of "$tunnel_env")"

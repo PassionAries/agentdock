@@ -25,6 +25,9 @@ SERVER_URL="${AGENTDOCK_SERVER_URL:-}"
 SERVER_URL_EXPLICIT=false
 [[ -z "${AGENTDOCK_SERVER_URL+x}" ]] || SERVER_URL_EXPLICIT=true
 TUNNEL_TOKEN="${AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN:-}"
+TUNNEL_TOKEN_FILE=""
+NON_INTERACTIVE=false
+RESULT_FILE=""
 CLOUDFLARED_RELEASE_BASE_URL="${AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download}"
 CLOUDFLARED_SOURCE_BINARY="${AGENTDOCK_CLOUDFLARED_BINARY:-}"
 
@@ -38,11 +41,13 @@ PLIST_PATH="$LAUNCH_AGENTS_DIR/$LABEL.plist"
 TUNNEL_ENV="$APP_SUPPORT_DIR/cloudflared.env"
 TUNNEL_START_SCRIPT="$APP_SUPPORT_DIR/start-cloudflared.sh"
 TUNNEL_PLIST_PATH="$LAUNCH_AGENTS_DIR/$TUNNEL_LABEL.plist"
+QUICK_TUNNEL_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"
 LOG_DIR="$HOME/Library/Logs/AgentDock"
 STDOUT_LOG="$LOG_DIR/agentdock.out.log"
 STDERR_LOG="$LOG_DIR/agentdock.err.log"
 TUNNEL_STDOUT_LOG="$LOG_DIR/cloudflared.out.log"
 TUNNEL_STDERR_LOG="$LOG_DIR/cloudflared.err.log"
+QUICK_TUNNEL_RUNTIME_LOG="$LOG_DIR/cloudflared-quick-current.log"
 WORK_DIR="$HOME/AgentDock"
 STATE_DIR="$HOME/.agentdock"
 TARGET="$INSTALL_DIR/agentdock"
@@ -75,8 +80,11 @@ AgentDock macOS 预编译版本安装脚本。
   --host HOST              服务监听地址，默认 127.0.0.1
   --port PORT              服务监听端口，默认 8765
   --auth-token TOKEN       首次创建 agentdock.env 时写入 Token；已有 Token 永不覆盖
-  --tunnel MODE            高级覆盖：none、quick 或 named；普通安装会直接询问是否有域名
+  --tunnel MODE            公网方式：none、quick 或 named；默认 none
   --server-url URL         固定域名模式的 HTTPS 公网 Origin，例如 https://agent.example.com
+  --tunnel-token-file PATH 从仅当前用户可读的文件读取 Named Tunnel Token，读取后删除
+  --non-interactive        禁止终端询问；缺少必需参数时直接失败
+  --result-file PATH       将安装结果以 JSON 写入指定文件，供图形界面读取
   --no-start               只生成服务文件和 plist，不加载或启动 LaunchAgent
   -h, --help               显示帮助
 
@@ -111,6 +119,72 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
+}
+
+cleanup_sensitive_input() {
+  if [[ -n "$TUNNEL_TOKEN_FILE" && -e "$TUNNEL_TOKEN_FILE" ]]; then
+    rm -f -- "$TUNNEL_TOKEN_FILE"
+  fi
+}
+
+read_tunnel_token_file() {
+  local file_path="$1"
+  [[ -f "$file_path" && ! -L "$file_path" ]] || die "Tunnel Token 文件必须是普通文件：$file_path"
+
+  local file_mode file_owner
+  file_mode="$(stat -f '%Lp' "$file_path")" || die "无法读取 Tunnel Token 文件权限：$file_path"
+  file_owner="$(stat -f '%u' "$file_path")" || die "无法读取 Tunnel Token 文件所有者：$file_path"
+  [[ "$file_owner" == "$(id -u)" ]] || die "Tunnel Token 文件必须属于当前用户：$file_path"
+  (( 8#$file_mode & 8#077 == 0 )) || die "Tunnel Token 文件不能允许组或其他用户访问：$file_path"
+
+  TUNNEL_TOKEN="$(cat -- "$file_path")"
+  rm -f -- "$file_path"
+  TUNNEL_TOKEN_FILE=""
+  [[ -n "$TUNNEL_TOKEN" ]] || die "Cloudflare Tunnel Token 不能为空"
+  [[ "$TUNNEL_TOKEN" != *$'\n'* && "$TUNNEL_TOKEN" != *$'\r'* ]] || die "Cloudflare Tunnel Token 必须是单行文本"
+}
+
+write_result_file() {
+  [[ -n "$RESULT_FILE" ]] || return 0
+
+  local result_dir result_tmp installed_version service_address final_host final_port
+  local local_mcp_url final_tunnel_mode public_url auth_token oauth_password
+  result_dir="${RESULT_FILE:h}"
+  [[ -n "$result_dir" ]] || result_dir="."
+  mkdir -p "$result_dir"
+  [[ ! -e "$RESULT_FILE" || ( -f "$RESULT_FILE" && ! -L "$RESULT_FILE" ) ]] || \
+    die "安装结果路径必须是普通文件：$RESULT_FILE"
+
+  installed_version="$("$TARGET" --version | sed -n '1s/^AgentDock[[:space:]][[:space:]]*//p')"
+  [[ -n "$installed_version" ]] || die "无法读取已安装版本"
+  service_address="$(read_service_address "$AGENTDOCK_ENV")" || die "无法读取最终服务地址"
+  final_host="${service_address%%$'\t'*}"
+  final_port="${service_address#*$'\t'}"
+  local_mcp_url="http://$(health_host "$final_host"):$final_port/mcp"
+  final_tunnel_mode="$TUNNEL_MODE"
+  public_url=""
+  if [[ "$final_tunnel_mode" != none ]]; then
+    public_url="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
+  fi
+  auth_token="$(read_agentdock_env_key AGENTDOCK_AUTH_TOKEN)"
+  oauth_password="$(read_agentdock_env_key AGENTDOCK_OAUTH_PASSWORD)"
+
+  result_tmp="$result_dir/.${RESULT_FILE:t}.tmp.$$"
+  rm -f -- "$result_tmp"
+  plutil -create xml1 "$result_tmp"
+  plutil -insert schema_version -integer 1 "$result_tmp"
+  plutil -insert ok -bool true "$result_tmp"
+  plutil -insert version -string "$installed_version" "$result_tmp"
+  plutil -insert healthy -bool "$([[ "$REGISTER_SERVICE" == true && "$NO_START" == false ]] && print true || print false)" "$result_tmp"
+  plutil -insert local_mcp_url -string "$local_mcp_url" "$result_tmp"
+  plutil -insert tunnel_mode -string "$final_tunnel_mode" "$result_tmp"
+  plutil -insert public_url -string "$public_url" "$result_tmp"
+  plutil -insert public_mcp_url -string "$([[ -n "$public_url" ]] && print "${public_url%/}/mcp" || print '')" "$result_tmp"
+  plutil -insert auth_token -string "$auth_token" "$result_tmp"
+  plutil -insert oauth_password -string "$oauth_password" "$result_tmp"
+  plutil -convert json "$result_tmp"
+  chmod 0600 "$result_tmp"
+  mv -f "$result_tmp" "$RESULT_FILE"
 }
 
 validate_port() {
@@ -266,30 +340,15 @@ ensure_public_auth() {
   (( ${#OAUTH_TOKEN_SECRET_VALUE} >= 32 )) || die "OAuth 签名密钥至少需要 32 个字节"
 }
 
-choose_tunnel_mode_interactively() {
-  print -- ""
-  print -- "请选择公网访问方式："
-  print -- "- 有自己的 Cloudflare 域名：使用固定地址，适合长期运行和 OAuth"
-  print -- "- 没有域名：自动生成临时地址，适合快速体验；重启后地址可能变化"
-  print -n -- "你是否有已接入 Cloudflare 的域名？ [y/N]: "
-  local answer=""
-  read -r answer
-  case "${answer:l}" in
-    y|yes) TUNNEL_MODE="named" ;;
-    *) TUNNEL_MODE="quick" ;;
-  esac
-  TUNNEL_MODE_EXPLICIT=true
-}
-
 prompt_named_server_url() {
-  [[ -t 0 ]] || die "固定域名模式需要设置 AGENTDOCK_SERVER_URL 或 --server-url"
+  [[ "$NON_INTERACTIVE" == false && -t 0 ]] || die "固定域名模式需要设置 AGENTDOCK_SERVER_URL 或 --server-url"
   print -n -- "固定 HTTPS 公网地址（例如 https://agent.example.com）: "
   read -r SERVER_URL
   [[ -n "$SERVER_URL" ]] || die "固定公网地址不能为空"
 }
 
 prompt_named_tunnel_token() {
-  [[ -t 0 ]] || die "Named Tunnel 需要设置 AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN"
+  [[ "$NON_INTERACTIVE" == false && -t 0 ]] || die "Named Tunnel 需要通过环境变量或 --tunnel-token-file 提供 Tunnel Token"
   print -n -- "Cloudflare Tunnel Token（输入不回显）: "
   read -rs TUNNEL_TOKEN
   print
@@ -653,8 +712,14 @@ set -euo pipefail
 
 USER_HOME="$HOME"
 APP_SUPPORT_DIR="$USER_HOME/Library/Application Support/AgentDock"
+LOG_DIR="$USER_HOME/Library/Logs/AgentDock"
+AGENTDOCK_ENV="$APP_SUPPORT_DIR/agentdock.env"
 TUNNEL_ENV="$APP_SUPPORT_DIR/cloudflared.env"
-[[ -r "$TUNNEL_ENV" ]] || { print -u2 -- "AgentDock cloudflared.env 不可读：$TUNNEL_ENV"; exit 1; }
+QUICK_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"
+QUICK_LOG="$LOG_DIR/cloudflared-quick-current.log"
+AGENTDOCK_LABEL="com.uvwt.agentdock"
+[[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || { print -u2 -- "AgentDock agentdock.env 不可用：$AGENTDOCK_ENV"; exit 1; }
+[[ -f "$TUNNEL_ENV" && ! -L "$TUNNEL_ENV" ]] || { print -u2 -- "AgentDock cloudflared.env 不可用：$TUNNEL_ENV"; exit 1; }
 
 unset AGENTDOCK_TUNNEL_MODE AGENTDOCK_TUNNEL_TARGET TUNNEL_TOKEN
 set -a
@@ -663,9 +728,114 @@ set +a
 
 export HOME="$USER_HOME"
 export PATH="$USER_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+read_agentdock_env_key() {
+  local key="$1"
+  [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || return 0
+  /bin/zsh -c '
+    source "$1" >/dev/null
+    print -r -- "${(P)2:-}"
+  ' _ "$AGENTDOCK_ENV" "$key"
+}
+
+write_quick_public_auth() {
+  local public_url="$1"
+  local url_quoted enabled_quoted tmp_file
+  printf -v url_quoted '%q' "$public_url"
+  printf -v enabled_quoted '%q' true
+  tmp_file="$AGENTDOCK_ENV.tmp.$$"
+
+  # Quick Tunnel 重启后地址会变化。一次性替换两个公开配置字段，
+  # 保留 Bearer、OAuth 密码和签名密钥，避免重启造成凭据轮换。
+  grep -Ev \
+    '^[[:space:]]*(export[[:space:]]+)?(AGENTDOCK_SERVER_URL|AGENTDOCK_OAUTH_ENABLED)[[:space:]]*=' \
+    "$AGENTDOCK_ENV" > "$tmp_file" || true
+  print -r -- "AGENTDOCK_SERVER_URL=$url_quoted" >> "$tmp_file"
+  print -r -- "AGENTDOCK_OAUTH_ENABLED=$enabled_quoted" >> "$tmp_file"
+  chmod 0600 "$tmp_file"
+  mv -f "$tmp_file" "$AGENTDOCK_ENV"
+}
+
+wait_for_agentdock() {
+  local host port health_url attempts=60
+  host="$(read_agentdock_env_key AGENTDOCK_HOST)"
+  port="$(read_agentdock_env_key AGENTDOCK_PORT)"
+  [[ -n "$host" ]] || host=127.0.0.1
+  [[ "$port" == <1-65535> ]] || port=8765
+  case "$host" in
+    0.0.0.0) host=127.0.0.1 ;;
+    ::|\[::\]) host='[::1]' ;;
+    *:*) host="[$host]" ;;
+  esac
+  health_url="http://$host:$port/healthz"
+  while (( attempts-- > 0 )); do
+    /usr/bin/curl -fsS --max-time 1 "$health_url" >/dev/null 2>&1 && return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+sync_quick_url() {
+  local public_url="$1"
+  local current_url="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
+  if [[ "$current_url" != "$public_url" ]]; then
+    write_quick_public_auth "$public_url"
+  fi
+
+  local domain="gui/$(id -u)"
+  local attempts=20
+  while (( attempts-- > 0 )); do
+    if launchctl kickstart -k "$domain/$AGENTDOCK_LABEL" >/dev/null 2>&1 && wait_for_agentdock; then
+      local tmp_file="$QUICK_URL_FILE.tmp.$$"
+      print -r -- "$public_url" > "$tmp_file"
+      chmod 0600 "$tmp_file"
+      mv -f "$tmp_file" "$QUICK_URL_FILE"
+      print -- "Quick Tunnel 地址已同步：$public_url/mcp"
+      return 0
+    fi
+    sleep 0.5
+  done
+  print -u2 -- "Quick Tunnel 地址已生成，但 AgentDock 重启验证失败"
+  return 1
+}
+
+start_quick_tunnel() {
+  mkdir -p "$LOG_DIR"
+  chmod 0700 "$LOG_DIR"
+  rm -f "$QUICK_URL_FILE"
+  : > "$QUICK_LOG"
+  chmod 0600 "$QUICK_LOG"
+
+  "$USER_HOME/.local/bin/cloudflared" tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET" \
+    > "$QUICK_LOG" 2>&1 &
+  local cloudflared_pid=$!
+  trap 'kill "$cloudflared_pid" >/dev/null 2>&1 || true' HUP INT TERM
+
+  local attempts=120 public_url=""
+  while (( attempts-- > 0 )); do
+    kill -0 "$cloudflared_pid" >/dev/null 2>&1 || break
+    public_url="$(grep -Eho 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$QUICK_LOG" 2>/dev/null | tail -n 1 || true)"
+    if [[ -n "$public_url" ]]; then
+      sync_quick_url "$public_url" || {
+        kill "$cloudflared_pid" >/dev/null 2>&1 || true
+        wait "$cloudflared_pid" || true
+        return 1
+      }
+      wait "$cloudflared_pid"
+      return $?
+    fi
+    sleep 0.5
+  done
+
+  print -u2 -- "未能从 cloudflared 输出中取得临时公网地址，请检查 $QUICK_LOG"
+  kill "$cloudflared_pid" >/dev/null 2>&1 || true
+  wait "$cloudflared_pid" || true
+  return 1
+}
+
 case "${AGENTDOCK_TUNNEL_MODE:-}" in
   quick)
-    exec "$USER_HOME/.local/bin/cloudflared" tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"
+    start_quick_tunnel
     ;;
   named)
     [[ -n "${TUNNEL_TOKEN:-}" ]] || { print -u2 -- "TUNNEL_TOKEN 未配置"; exit 1; }
@@ -786,7 +956,13 @@ stop_tunnel_if_loaded() {
 }
 
 quick_tunnel_url() {
-  grep -Eho 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG" 2>/dev/null | tail -n 1
+  if [[ -f "$QUICK_TUNNEL_URL_FILE" && ! -L "$QUICK_TUNNEL_URL_FILE" ]]; then
+    tail -n 1 "$QUICK_TUNNEL_URL_FILE"
+    return
+  fi
+  grep -Eho 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
+    "$QUICK_TUNNEL_RUNTIME_LOG" "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG" \
+    2>/dev/null | tail -n 1
 }
 
 wait_for_tunnel() {
@@ -799,19 +975,17 @@ wait_for_tunnel() {
     pid="$(tunnel_launchd_pid "$domain" || true)"
     if [[ -n "$pid" && "$pid" != "0" ]]; then
       local process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-      if [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* ]]; then
-        if [[ "$TUNNEL_MODE" == quick ]]; then
-          local public_url="$(quick_tunnel_url || true)"
-          if [[ -n "$public_url" ]]; then
-            print -r -- "$public_url"
-            return 0
-          fi
-        else
-          stable_checks=$(( stable_checks + 1 ))
-          if (( stable_checks >= 10 )); then
-            print -r -- "$pid"
-            return 0
-          fi
+      if [[ "$TUNNEL_MODE" == quick ]]; then
+        local public_url="$(quick_tunnel_url || true)"
+        if [[ -n "$public_url" ]]; then
+          print -r -- "$public_url"
+          return 0
+        fi
+      elif [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* ]]; then
+        stable_checks=$(( stable_checks + 1 ))
+        if (( stable_checks >= 10 )); then
+          print -r -- "$pid"
+          return 0
         fi
       fi
     else
@@ -831,7 +1005,8 @@ wait_for_tunnel_process() {
     local pid="$(tunnel_launchd_pid "$domain" || true)"
     if [[ -n "$pid" && "$pid" != "0" ]]; then
       local process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-      if [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* ]]; then
+      if [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* || \
+            "$process_command" == "$TUNNEL_START_SCRIPT" || "$process_command" == "$TUNNEL_START_SCRIPT "* ]]; then
         return 0
       fi
     fi
@@ -858,6 +1033,9 @@ register_and_start_tunnel() {
   fi
   : > "$TUNNEL_STDOUT_LOG"
   : > "$TUNNEL_STDERR_LOG"
+  if [[ "$TUNNEL_MODE" == quick ]]; then
+    rm -f "$QUICK_TUNNEL_URL_FILE" "$QUICK_TUNNEL_RUNTIME_LOG"
+  fi
   launchctl bootstrap "$domain" "$TUNNEL_PLIST_PATH" || return 1
   if ! launchctl kickstart -k "$domain/$TUNNEL_LABEL"; then
     stop_tunnel_if_loaded "$domain" || true
@@ -899,7 +1077,8 @@ remove_tunnel_service() {
   local domain="gui/$(id -u)"
   stop_tunnel_if_loaded "$domain" || die "无法停止现有 cloudflared LaunchAgent"
   rm -f "$TUNNEL_PLIST_PATH" "$TUNNEL_ENV" "$TUNNEL_START_SCRIPT" \
-    "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"
+    "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG" \
+    "$QUICK_TUNNEL_URL_FILE" "$QUICK_TUNNEL_RUNTIME_LOG"
   print -- "==> 已停用 Cloudflare Tunnel"
 }
 
@@ -933,13 +1112,17 @@ configure_tunnel() {
     SERVER_URL="$TUNNEL_PUBLIC_URL"
     SERVER_URL_EXPLICIT=true
     OAUTH_ENABLED_VALUE="true"
-    write_env_key AGENTDOCK_SERVER_URL "$SERVER_URL" true
-    write_env_key AGENTDOCK_OAUTH_ENABLED true true
-    chmod 0600 "$AGENTDOCK_ENV"
-    print -- "==> 已将临时公网地址写入 AgentDock OAuth 配置并重启服务"
-    if ! register_and_start_service; then
-      rollback_tunnel_start || die "OAuth 地址更新失败，且安装前 Tunnel 或认证配置恢复失败"
-      die "OAuth 地址更新失败；已恢复安装前 Tunnel 和公网认证配置"
+    if [[ "$(read_agentdock_env_key AGENTDOCK_SERVER_URL)" != "$SERVER_URL" ]]; then
+      write_env_key AGENTDOCK_SERVER_URL "$SERVER_URL" true
+      write_env_key AGENTDOCK_OAUTH_ENABLED true true
+      chmod 0600 "$AGENTDOCK_ENV"
+      print -- "==> 已将临时公网地址写入 AgentDock OAuth 配置并重启服务"
+      if ! register_and_start_service; then
+        rollback_tunnel_start || die "OAuth 地址更新失败，且安装前 Tunnel 或认证配置恢复失败"
+        die "OAuth 地址更新失败；已恢复安装前 Tunnel 和公网认证配置"
+      fi
+    else
+      print -- "==> Quick Tunnel 已同步临时公网地址并重启 AgentDock"
     fi
   fi
   if [[ "$TUNNEL_MODE" == named ]]; then
@@ -1174,6 +1357,21 @@ while (( $# > 0 )); do
       SERVER_URL_EXPLICIT=true
       shift 2
       ;;
+    --tunnel-token-file)
+      (( $# >= 2 )) || die "--tunnel-token-file 需要值"
+      [[ -z "$TUNNEL_TOKEN_FILE" ]] || die "--tunnel-token-file 只能指定一次"
+      TUNNEL_TOKEN_FILE="$2"
+      shift 2
+      ;;
+    --non-interactive)
+      NON_INTERACTIVE=true
+      shift
+      ;;
+    --result-file)
+      (( $# >= 2 )) || die "--result-file 需要值"
+      RESULT_FILE="$2"
+      shift 2
+      ;;
     --no-start)
       NO_START=true
       shift
@@ -1189,6 +1387,11 @@ while (( $# > 0 )); do
 done
 
 [[ "$(uname -s)" == "Darwin" ]] || die "此脚本只支持 macOS"
+trap 'cleanup_sensitive_input' EXIT
+if [[ -n "$TUNNEL_TOKEN_FILE" ]]; then
+  [[ -z "$TUNNEL_TOKEN" ]] || die "不能同时使用环境变量和 --tunnel-token-file 提供 Tunnel Token"
+  read_tunnel_token_file "$TUNNEL_TOKEN_FILE"
+fi
 if [[ "$REGISTER_SERVICE" == true && "$TUNNEL_MODE_EXPLICIT" == false ]]; then
   existing_tunnel_mode="$(read_existing_tunnel_mode)"
   case "$existing_tunnel_mode" in
@@ -1198,9 +1401,9 @@ if [[ "$REGISTER_SERVICE" == true && "$TUNNEL_MODE_EXPLICIT" == false ]]; then
       print -- "==> 沿用现有公网访问方式：$TUNNEL_MODE"
       ;;
     *)
-      if [[ -t 0 ]]; then
-        choose_tunnel_mode_interactively
-      fi
+      # 登录自启与公网访问是两个独立选择。首次注册服务默认仅本机使用，
+      # 只有调用方显式传入 --tunnel quick|named 才创建公网入口。
+      TUNNEL_MODE=none
       ;;
   esac
 fi
@@ -1286,6 +1489,7 @@ staged_target=""
 cleanup() {
   rm -rf "$tmp_dir"
   [[ -z "$staged_target" ]] || rm -f "$staged_target"
+  cleanup_sensitive_input
 }
 trap cleanup EXIT
 
@@ -1399,6 +1603,7 @@ if [[ "$TUNNEL_MODE_EXPLICIT" == true ]]; then
   fi
 fi
 
+write_result_file
 print -- "installed: $TARGET"
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
   print -- "PATH 尚未包含 $INSTALL_DIR，可执行："
