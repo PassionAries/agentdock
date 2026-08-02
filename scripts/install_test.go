@@ -141,6 +141,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Get-FileHash -LiteralPath $archivePath -Algorithm SHA256",
 		"Stop-AgentDockForUpgrade -BinaryPath $destinationBinary",
 		"Get-ProcessesByPath -ProcessName 'agentdock'",
+		"Get-CimInstance Win32_Process",
+		"ExecutablePath",
 		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
 		"Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force",
 		"Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary",

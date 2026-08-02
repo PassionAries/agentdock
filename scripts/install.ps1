@@ -307,18 +307,42 @@ function Get-ProcessesByPath {
     )
 
     $normalizedBinaryPath = [IO.Path]::GetFullPath($BinaryPath)
-    $matchingProcesses = @()
-    $processes = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
-    foreach ($process in $processes) {
-        try {
-            $processPath = [IO.Path]::GetFullPath($process.Path)
-            if ([string]::Equals($processPath, $normalizedBinaryPath, [StringComparison]::OrdinalIgnoreCase)) {
-                $matchingProcesses += $process
-            }
-        } catch {
-        }
+    $matchingProcessIds = @()
+
+    # Win32_Process exposes ExecutablePath reliably in installer contexts where
+    # Get-Process.Path may be empty even for a process owned by the current user.
+    try {
+        $matchingProcessIds = @(Get-CimInstance Win32_Process -Filter "Name = '$ProcessName.exe'" -ErrorAction Stop |
+            Where-Object {
+                $_.ExecutablePath -and
+                [string]::Equals(
+                    [IO.Path]::GetFullPath($_.ExecutablePath),
+                    $normalizedBinaryPath,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            } |
+            Select-Object -ExpandProperty ProcessId)
+    } catch {
+        $matchingProcessIds = @()
     }
-    return @($matchingProcesses)
+
+    if ($matchingProcessIds.Count -eq 0) {
+        $matchingProcessIds = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
+            try {
+                [string]::Equals(
+                    [IO.Path]::GetFullPath($_.Path),
+                    $normalizedBinaryPath,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            } catch {
+                $false
+            }
+        } | Select-Object -ExpandProperty Id)
+    }
+
+    return @($matchingProcessIds | Sort-Object -Unique | ForEach-Object {
+        [pscustomobject]@{ Id = [int] $_ }
+    })
 }
 
 function Get-AgentDockProcesses {
