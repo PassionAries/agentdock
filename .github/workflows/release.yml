@@ -230,12 +230,22 @@ jobs:
           if-no-files-found: error
 
   build-windows-setup:
-    name: Build signed Windows Setup
+    name: Build signed Windows offline Setup ${{ matrix.goarch }}
     needs: build-windows
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Windows payload
+        uses: actions/download-artifact@v4
+        with:
+          name: agentdock-windows-${{ matrix.goarch }}
+          path: payload
 
       - name: Require Authenticode configuration
         shell: pwsh
@@ -250,7 +260,21 @@ jobs:
             throw 'WINDOWS_SIGNING_CERT_PASSWORD is required for a formal release.'
           }
 
-      - name: Build and sign AgentDockSetup.exe
+      - name: Download and verify cloudflared
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path $PWD 'payload\cloudflared-windows-${{ matrix.goarch }}.exe'
+          Invoke-WebRequest `
+            -UseBasicParsing `
+            -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${{ matrix.goarch }}.exe' `
+            -OutFile $path
+          $signature = Get-AuthenticodeSignature -LiteralPath $path
+          if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
+            throw "cloudflared Authenticode signature is invalid: $($signature.StatusMessage)"
+          }
+
+      - name: Build and sign offline Setup
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
@@ -259,30 +283,21 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = '${{ github.event.inputs.tag || github.ref_name }}'
           $version = $tag.TrimStart('v')
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
-            throw "Inno Setup compiler was not found: $iscc"
-          }
           $outputDir = Join-Path $PWD 'dist'
-          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-          $signScript = Join-Path $PWD 'scripts\sign-windows.ps1'
-          $signCommand = "pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$signScript`$q -Path `$q`$f`$q"
-          & $iscc `
-            "/DAppVersion=$version" `
-            "/DOutputDir=$outputDir" `
-            '/DSignedBuild=1' `
-            "/Sagentdock-sign=$signCommand" `
-            '.\packaging\windows\AgentDock.iss'
-          if ($LASTEXITCODE -ne 0) {
-            throw "ISCC failed with exit code $LASTEXITCODE."
-          }
-          .\scripts\sign-windows.ps1 -Path '.\dist\AgentDockSetup.exe' -VerifyOnly
+          & .\scripts\build-windows-offline-setup.ps1 `
+            -Version $version `
+            -Architecture '${{ matrix.goarch }}' `
+            -AgentDockArchive '.\payload\agentdock_windows_${{ matrix.goarch }}.zip' `
+            -AgentDockChecksumFile '.\payload\agentdock_windows_${{ matrix.goarch }}.zip.sha256' `
+            -CloudflaredBinary '.\payload\cloudflared-windows-${{ matrix.goarch }}.exe' `
+            -OutputDirectory $outputDir `
+            -SignedBuild
 
       - name: Upload Setup artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agentdock-windows-setup
-          path: dist/AgentDockSetup.exe
+          name: agentdock-windows-setup-${{ matrix.goarch }}
+          path: dist/AgentDockSetup-${{ matrix.goarch }}.exe
           if-no-files-found: error
 
   publish:
@@ -361,7 +376,8 @@ jobs:
               uninstall-macos.sh \
               install.ps1 \
               uninstall-windows.ps1 \
-              AgentDockSetup.exe \
+              AgentDockSetup-amd64.exe \
+              AgentDockSetup-arm64.exe \
               skill-desktop.zip; do
               shasum -a 256 "$file" > "$file.sha256"
             done
@@ -565,10 +581,10 @@ jobs:
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-          $setup = Join-Path $env:RUNNER_TEMP 'AgentDockSetup.exe'
+          $setup = Join-Path $env:RUNNER_TEMP 'AgentDockSetup-amd64.exe'
           Invoke-WebRequest `
             -UseBasicParsing `
-            -Uri "https://github.com/${{ github.repository }}/releases/download/$tag/AgentDockSetup.exe" `
+            -Uri "https://github.com/${{ github.repository }}/releases/download/$tag/AgentDockSetup-amd64.exe" `
             -OutFile $setup
           "PUBLISHED_SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
@@ -586,7 +602,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\scripts\test-windows-setup-e2e.ps1 `
             -SetupPath $env:PUBLISHED_SETUP `
-            -ReleaseBaseUrl "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG"
+            -AllowLegacyTaskMutation
 
       - name: Install and upgrade published version as standard user
         shell: powershell

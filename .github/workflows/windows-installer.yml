@@ -8,6 +8,7 @@ on:
       - 'scripts/install.ps1'
       - 'scripts/uninstall-windows.ps1'
       - 'scripts/sign-windows.ps1'
+      - 'scripts/build-windows-offline-setup.ps1'
       - 'packaging/windows/**'
       - 'scripts/test-install-windows.ps1'
       - 'scripts/test-install-windows-download.ps1'
@@ -153,17 +154,46 @@ jobs:
           .\scripts\sign-windows.ps1 -Path $paths
           .\scripts\sign-windows.ps1 -Path $paths -VerifyOnly
 
-      - name: Compile Setup
+      - name: Prepare offline AMD64 payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $payloadRoot = Join-Path $env:RUNNER_TEMP 'agentdock-offline-amd64'
+          Remove-Item -LiteralPath $payloadRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
+
+          python .\scripts\build-core-skill-bundle.py --output .\dist\share\agentdock\core-skills
+          Copy-Item .\packaging\windows\assets\agentdock.ico .\dist\agentdock.ico -Force
+          $archivePath = Join-Path $payloadRoot 'agentdock_windows_amd64.zip'
+          Compress-Archive `
+            -Path .\dist\agentdock.exe, .\dist\agentdock-tray.exe, .\dist\agentdock.ico, .\dist\share `
+            -DestinationPath $archivePath `
+            -Force
+          $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = "$archivePath.sha256"
+          [IO.File]::WriteAllText($checksumPath, "$hash  agentdock_windows_amd64.zip`n", [Text.UTF8Encoding]::new($false))
+
+          $cloudflaredPath = Join-Path $payloadRoot 'cloudflared-windows-amd64.exe'
+          Invoke-WebRequest `
+            -UseBasicParsing `
+            -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' `
+            -OutFile $cloudflaredPath
+          $cloudflaredSignature = Get-AuthenticodeSignature -LiteralPath $cloudflaredPath
+          if ($cloudflaredSignature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
+            throw "cloudflared Authenticode signature is invalid: $($cloudflaredSignature.StatusMessage)"
+          }
+
+          "AMD64_ARCHIVE=$archivePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "AMD64_CHECKSUM=$checksumPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          "AMD64_CLOUDFLARED=$cloudflaredPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      - name: Compile offline AMD64 Setup
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
-            throw "Inno Setup compiler was not found: $iscc"
-          }
           $testTag = '${{ inputs.test_tag }}'
           if ([string]::IsNullOrWhiteSpace($testTag)) {
             $config = Get-Content -LiteralPath '.\internal\config\config.go' -Raw
@@ -176,37 +206,25 @@ jobs:
           }
 
           $outputDir = Join-Path $env:RUNNER_TEMP 'agentdock-setup'
-          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-          $arguments = @(
-            "/DAppVersion=$version",
-            "/DOutputDir=$outputDir"
-          )
-          if (-not [string]::IsNullOrWhiteSpace($testTag)) {
-            $signScript = Join-Path $PWD 'scripts\sign-windows.ps1'
-            $signCommand = "pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `$q$signScript`$q -Path `$q`$f`$q"
-            $arguments += '/DSignedBuild=1'
-            $arguments += "/Sagentdock-sign=$signCommand"
-          }
-          $arguments += '.\packaging\windows\AgentDock.iss'
-          & $iscc @arguments
-          if ($LASTEXITCODE -ne 0) {
-            throw "ISCC failed with exit code $LASTEXITCODE."
-          }
-          $setupPath = Join-Path $outputDir 'AgentDockSetup.exe'
-          if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
-            throw 'AgentDockSetup.exe was not produced.'
+          $parameters = @{
+            Version = $version
+            Architecture = 'amd64'
+            AgentDockArchive = $env:AMD64_ARCHIVE
+            AgentDockChecksumFile = $env:AMD64_CHECKSUM
+            CloudflaredBinary = $env:AMD64_CLOUDFLARED
+            OutputDirectory = $outputDir
           }
           if (-not [string]::IsNullOrWhiteSpace($testTag)) {
-            .\scripts\sign-windows.ps1 -Path $setupPath -VerifyOnly
+            $parameters.SignedBuild = $true
           }
+          & .\scripts\build-windows-offline-setup.ps1 @parameters
 
       - name: Run Setup install and uninstall E2E
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           & .\scripts\test-windows-setup-e2e.ps1 `
-            -SetupPath (Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup.exe') `
-            -ReleaseRoot (Join-Path $env:RUNNER_TEMP 'agentdock-current-release') `
+            -SetupPath (Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup-amd64.exe') `
             -AllowLegacyTaskMutation
 
       - name: Smoke test current binary as standard user
@@ -230,6 +248,8 @@ jobs:
           $releaseDir = Join-Path $env:RUNNER_TEMP 'agentdock-windows-test-release'
           Remove-Item -LiteralPath $releaseDir -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          Copy-Item -LiteralPath $env:AMD64_ARCHIVE -Destination $releaseDir -Force
+          Copy-Item -LiteralPath $env:AMD64_CHECKSUM -Destination $releaseDir -Force
 
           function New-WindowsAsset {
             param(
@@ -246,10 +266,6 @@ jobs:
             [IO.File]::WriteAllText("$assetPath.sha256", "$hash  $assetName`n", [Text.UTF8Encoding]::new($false))
           }
 
-          python .\scripts\build-core-skill-bundle.py --output .\dist\share\agentdock\core-skills
-          Copy-Item .\packaging\windows\assets\agentdock.ico .\dist\agentdock.ico -Force
-          New-WindowsAsset -Architecture 'amd64' -SourceDirectory (Join-Path $PWD 'dist')
-
           $arm64Dir = Join-Path $env:RUNNER_TEMP 'agentdock-windows-arm64'
           New-Item -ItemType Directory -Path $arm64Dir -Force | Out-Null
           $env:CGO_ENABLED = '0'
@@ -265,14 +281,37 @@ jobs:
           Copy-Item .\packaging\windows\assets\agentdock.ico (Join-Path $arm64Dir 'agentdock.ico') -Force
           New-WindowsAsset -Architecture 'arm64' -SourceDirectory $arm64Dir
 
-          $setupPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup.exe'
-          Copy-Item -LiteralPath $setupPath -Destination (Join-Path $releaseDir 'AgentDockSetup.exe') -Force
-          $setupHash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          [IO.File]::WriteAllText(
-            (Join-Path $releaseDir 'AgentDockSetup.exe.sha256'),
-            "$setupHash  AgentDockSetup.exe`n",
-            [Text.UTF8Encoding]::new($false)
-          )
+          $arm64Cloudflared = Join-Path $env:RUNNER_TEMP 'cloudflared-windows-arm64.exe'
+          Invoke-WebRequest `
+            -UseBasicParsing `
+            -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-arm64.exe' `
+            -OutFile $arm64Cloudflared
+          $arm64CloudflaredSignature = Get-AuthenticodeSignature -LiteralPath $arm64Cloudflared
+          if ($arm64CloudflaredSignature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
+            throw "ARM64 cloudflared Authenticode signature is invalid: $($arm64CloudflaredSignature.StatusMessage)"
+          }
+
+          $arm64Archive = Join-Path $releaseDir 'agentdock_windows_arm64.zip'
+          & .\scripts\build-windows-offline-setup.ps1 `
+            -Version ($env:TEST_TAG.TrimStart('v')) `
+            -Architecture arm64 `
+            -AgentDockArchive $arm64Archive `
+            -AgentDockChecksumFile "$arm64Archive.sha256" `
+            -CloudflaredBinary $arm64Cloudflared `
+            -OutputDirectory $releaseDir `
+            -SignedBuild
+
+          $amd64Setup = Join-Path $env:RUNNER_TEMP 'agentdock-setup\AgentDockSetup-amd64.exe'
+          Copy-Item -LiteralPath $amd64Setup -Destination $releaseDir -Force
+          foreach ($setupName in @('AgentDockSetup-amd64.exe', 'AgentDockSetup-arm64.exe')) {
+            $setupPath = Join-Path $releaseDir $setupName
+            $setupHash = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText(
+              "$setupPath.sha256",
+              "$setupHash  $setupName`n",
+              [Text.UTF8Encoding]::new($false)
+            )
+          }
 
           gh release delete $env:TEST_TAG --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes 2>$null
           gh release create $env:TEST_TAG `

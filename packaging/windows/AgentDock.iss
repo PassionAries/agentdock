@@ -8,6 +8,18 @@
 #define OutputDir "..\..\dist"
 #endif
 
+#ifndef OfflinePayloadDir
+#define OfflinePayloadDir "..\..\dist\windows-offline-payload"
+#endif
+
+#ifdef WindowsARM64
+#define PayloadArchitecture "arm64"
+#define SetupBaseFilename "AgentDockSetup-arm64"
+#else
+#define PayloadArchitecture "amd64"
+#define SetupBaseFilename "AgentDockSetup-amd64"
+#endif
+
 [Setup]
 AppId={{D6788C7A-4104-48D4-B5C3-F4858B5606EA}
 AppName=AgentDock
@@ -22,7 +34,7 @@ DisableProgramGroupPage=yes
 DisableDirPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OutputDir}
-OutputBaseFilename=AgentDockSetup
+OutputBaseFilename={#SetupBaseFilename}
 SetupIconFile=assets\agentdock.ico
 UninstallDisplayIcon={app}\installer\agentdock.ico
 Compression=lzma2/max
@@ -34,6 +46,11 @@ UsePreviousAppDir=yes
 UsePreviousLanguage=no
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=no
+#ifdef WindowsARM64
+ArchitecturesAllowed=arm64
+#else
+ArchitecturesAllowed=x64
+#endif
 #ifdef SignedBuild
 SignTool=agentdock-sign
 SignedUninstaller=yes
@@ -86,6 +103,11 @@ english.UpgradeTargetVersion=Target version:
 english.UpgradeSetupManaged=Setup will upgrade or repair AgentDock and preserve the current startup, connection, tasks, Skills, and configuration.
 english.UpgradeLegacyManaged=An existing PowerShell installation was found. Setup will migrate it to the graphical installer and preserve the current startup, connection, tasks, Skills, and configuration.
 english.ReadyUpgrade=Setup is ready to upgrade or repair AgentDock.
+english.OfflineProgressCaption=Installing AgentDock
+english.OfflineProgressDescription=All required components are included in this installer. No GitHub download is required.
+english.OfflineProgressPreparing=Preparing the bundled installation files...
+english.OfflineProgressApplying=Updating AgentDock and preserving the current configuration...
+english.OfflineProgressFinishing=Starting AgentDock and checking its status...
 
 chinesesimplified.DocsShortcut=AgentDock 使用文档
 chinesesimplified.UninstallShortcut=卸载 AgentDock
@@ -128,9 +150,17 @@ chinesesimplified.UpgradeTargetVersion=目标版本：
 chinesesimplified.UpgradeSetupManaged=安装程序将升级或修复 AgentDock，并保留当前启动方式、连接方式、任务、Skill 和配置。
 chinesesimplified.UpgradeLegacyManaged=检测到旧版 PowerShell 安装。安装程序将迁移为图形安装版，并保留当前启动方式、连接方式、任务、Skill 和配置。
 chinesesimplified.ReadyUpgrade=安装程序已准备好升级或修复 AgentDock。
+chinesesimplified.OfflineProgressCaption=正在安装 AgentDock
+chinesesimplified.OfflineProgressDescription=所需组件均已包含在安装包中，安装过程不会从 GitHub 下载文件。
+chinesesimplified.OfflineProgressPreparing=正在准备离线安装文件...
+chinesesimplified.OfflineProgressApplying=正在更新 AgentDock 并保留现有配置...
+chinesesimplified.OfflineProgressFinishing=正在启动 AgentDock 并检查运行状态...
 
 [Files]
 Source: "..\..\scripts\install.ps1"; Flags: dontcopy
+Source: "{#OfflinePayloadDir}\agentdock_windows_{#PayloadArchitecture}.zip"; Flags: dontcopy
+Source: "{#OfflinePayloadDir}\agentdock_windows_{#PayloadArchitecture}.zip.sha256"; Flags: dontcopy
+Source: "{#OfflinePayloadDir}\cloudflared-windows-{#PayloadArchitecture}.exe"; Flags: dontcopy
 Source: "..\..\scripts\install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "..\..\scripts\uninstall-windows.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "assets\agentdock.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
@@ -165,6 +195,7 @@ var
   ExistingInstallVersion: String;
   ExistingInstallSource: String;
   ResolvedInstallRoot: String;
+  InstallProgressPage: TOutputProgressWizardPage;
 
 function GetLocalizedMessage(Key: String): String;
 begin
@@ -433,6 +464,11 @@ begin
 
   ApplyExistingInstallPresentation();
 
+  InstallProgressPage := CreateOutputProgressPage(
+    GetLocalizedMessage('OfflineProgressCaption'),
+    GetLocalizedMessage('OfflineProgressDescription')
+  );
+
   ResultMemo := TNewMemo.Create(WizardForm);
   ResultMemo.Parent := WizardForm.FinishedPage;
   ResultMemo.Left := ScaleX(0);
@@ -516,6 +552,9 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   PowerShellPath: String;
   InstallScriptPath: String;
+  OfflineArchivePath: String;
+  OfflineChecksumPath: String;
+  OfflineCloudflaredPath: String;
   TokenFilePath: String;
   SilentTokenFile: String;
   Parameters: String;
@@ -525,60 +564,82 @@ var
   DeleteTokenFile: Boolean;
 begin
   Result := '';
-  ExtractTemporaryFile('install.ps1');
+  InstallProgressPage.Show;
+  try
+    InstallProgressPage.SetText(GetLocalizedMessage('OfflineProgressPreparing'), '');
+    InstallProgressPage.SetProgress(1, 4);
+    ExtractTemporaryFile('install.ps1');
+    ExtractTemporaryFile('agentdock_windows_{#PayloadArchitecture}.zip');
+    ExtractTemporaryFile('agentdock_windows_{#PayloadArchitecture}.zip.sha256');
+    ExtractTemporaryFile('cloudflared-windows-{#PayloadArchitecture}.exe');
 
-  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
-  InstallScriptPath := ExpandConstant('{tmp}\install.ps1');
-  ResultFilePath := ExpandConstant('{tmp}\agentdock-install-result.ini');
-  DeleteFile(ResultFilePath);
-  TunnelMode := SelectedTunnelMode();
-  DeleteTokenFile := False;
+    PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+    InstallScriptPath := ExpandConstant('{tmp}\install.ps1');
+    OfflineArchivePath := ExpandConstant('{tmp}\agentdock_windows_{#PayloadArchitecture}.zip');
+    OfflineChecksumPath := ExpandConstant('{tmp}\agentdock_windows_{#PayloadArchitecture}.zip.sha256');
+    OfflineCloudflaredPath := ExpandConstant('{tmp}\cloudflared-windows-{#PayloadArchitecture}.exe');
+    ResultFilePath := ExpandConstant('{tmp}\agentdock-install-result.ini');
+    DeleteFile(ResultFilePath);
+    TunnelMode := SelectedTunnelMode();
+    DeleteTokenFile := False;
 
-  Parameters :=
-    '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + QuoteArgument(InstallScriptPath) +
-    ' -Version ' + QuoteArgument('{#AppVersion}') +
-    ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}\bin')) +
-    ' -TunnelMode ' + TunnelMode +
-    ' -InstallChannel setup' +
-    ' -ResultFile ' + QuoteArgument(ResultFilePath);
+    InstallProgressPage.SetProgress(2, 4);
+    Parameters :=
+      '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + QuoteArgument(InstallScriptPath) +
+      ' -Version ' + QuoteArgument('{#AppVersion}') +
+      ' -OfflineArchive ' + QuoteArgument(OfflineArchivePath) +
+      ' -OfflineChecksumFile ' + QuoteArgument(OfflineChecksumPath) +
+      ' -OfflineCloudflaredBinary ' + QuoteArgument(OfflineCloudflaredPath) +
+      ' -InstallDir ' + QuoteArgument(ExpandConstant('{app}\bin')) +
+      ' -TunnelMode ' + TunnelMode +
+      ' -InstallChannel setup' +
+      ' -ResultFile ' + QuoteArgument(ResultFilePath);
 
-  if StartupPage.Values[0] or (TunnelMode <> 'none') then
-    Parameters := Parameters + ' -RegisterStartup';
+    if StartupPage.Values[0] or (TunnelMode <> 'none') then
+      Parameters := Parameters + ' -RegisterStartup';
 
-  if TunnelMode = 'named' then
-  begin
-    Parameters := Parameters + ' -ServerUrl ' + QuoteArgument(Trim(FixedTunnelPage.Values[0]));
-    SilentTokenFile := ExpandConstant('{param:TUNNELTOKENFILE|}');
-    if SilentTokenFile <> '' then
-      TokenFilePath := SilentTokenFile
-    else if Trim(FixedTunnelPage.Values[1]) <> '' then
+    if TunnelMode = 'named' then
     begin
-      TokenFilePath := ExpandConstant('{tmp}\agentdock-tunnel-token.txt');
-      TemporaryTokenFilePath := TokenFilePath;
-      DeleteTokenFile := True;
-      if not SaveStringToFile(TokenFilePath, Trim(FixedTunnelPage.Values[1]), False) then
+      Parameters := Parameters + ' -ServerUrl ' + QuoteArgument(Trim(FixedTunnelPage.Values[0]));
+      SilentTokenFile := ExpandConstant('{param:TUNNELTOKENFILE|}');
+      if SilentTokenFile <> '' then
+        TokenFilePath := SilentTokenFile
+      else if Trim(FixedTunnelPage.Values[1]) <> '' then
       begin
-        Result := GetLocalizedMessage('TokenFileFailed');
-        Exit;
+        TokenFilePath := ExpandConstant('{tmp}\agentdock-tunnel-token.txt');
+        TemporaryTokenFilePath := TokenFilePath;
+        DeleteTokenFile := True;
+        if not SaveStringToFile(TokenFilePath, Trim(FixedTunnelPage.Values[1]), False) then
+        begin
+          Result := GetLocalizedMessage('TokenFileFailed');
+          Exit;
+        end;
       end;
+      if TokenFilePath <> '' then
+        Parameters := Parameters + ' -TunnelTokenFile ' + QuoteArgument(TokenFilePath);
+      if DeleteTokenFile then
+        Parameters := Parameters + ' -DeleteTunnelTokenFile';
     end;
-    if TokenFilePath <> '' then
-      Parameters := Parameters + ' -TunnelTokenFile ' + QuoteArgument(TokenFilePath);
-    if DeleteTokenFile then
-      Parameters := Parameters + ' -DeleteTunnelTokenFile';
-  end;
 
-  if not Exec(PowerShellPath, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
-  begin
-    Result := GetLocalizedMessage('InstallerStartFailed');
-    Exit;
-  end;
-  if ExitCode <> 0 then
-  begin
-    ErrorMessage := GetIniString('AgentDock', 'Message', '', ResultFilePath);
-    if ErrorMessage = '' then
-      ErrorMessage := GetLocalizedMessage('InstallerExitCode') + ' ' + IntToStr(ExitCode);
-    Result := GetLocalizedMessage('InstallFailed') + ' ' + ErrorMessage;
+    InstallProgressPage.SetText(GetLocalizedMessage('OfflineProgressApplying'), '');
+    InstallProgressPage.SetProgress(3, 4);
+    if not Exec(PowerShellPath, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    begin
+      Result := GetLocalizedMessage('InstallerStartFailed');
+      Exit;
+    end;
+    if ExitCode <> 0 then
+    begin
+      ErrorMessage := GetIniString('AgentDock', 'Message', '', ResultFilePath);
+      if ErrorMessage = '' then
+        ErrorMessage := GetLocalizedMessage('InstallerExitCode') + ' ' + IntToStr(ExitCode);
+      Result := GetLocalizedMessage('InstallFailed') + ' ' + ErrorMessage;
+      Exit;
+    end;
+    InstallProgressPage.SetText(GetLocalizedMessage('OfflineProgressFinishing'), '');
+    InstallProgressPage.SetProgress(4, 4);
+  finally
+    InstallProgressPage.Hide;
   end;
 end;
 

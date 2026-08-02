@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
     [string] $Version = 'latest',
+    [string] $OfflineArchive = '',
+    [string] $OfflineChecksumFile = '',
+    [string] $OfflineCloudflaredBinary = '',
     [string] $InstallDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AgentDock\bin'),
     [switch] $RegisterStartup,
     [switch] $ConfigurePublicAccess,
@@ -297,7 +300,8 @@ function Write-InstallResult {
         "OAuthPassword=$OAuthLoginPassword",
         "Health=$HealthStatus"
     )
-    [IO.File]::WriteAllLines($Path, $lines, $Utf8NoBom)
+    # Windows INI APIs read BOM-prefixed UTF-16 reliably, including localized errors.
+    [IO.File]::WriteAllLines($Path, $lines, [Text.Encoding]::Unicode)
 }
 
 function Get-ProcessesByPath {
@@ -561,13 +565,17 @@ function Install-CloudflaredBinary {
     param(
         [string] $DestinationBinary,
         [string] $Architecture,
-        [string] $TempDirectory
+        [string] $TempDirectory,
+        [string] $SourceBinary = ''
     )
 
-    $sourceOverride = [Environment]::GetEnvironmentVariable('AGENTDOCK_CLOUDFLARED_BINARY')
+    $sourceOverride = $SourceBinary
+    if ([string]::IsNullOrWhiteSpace($sourceOverride)) {
+        $sourceOverride = [Environment]::GetEnvironmentVariable('AGENTDOCK_CLOUDFLARED_BINARY')
+    }
     if (-not [string]::IsNullOrWhiteSpace($sourceOverride)) {
         if (-not (Test-CloudflaredBinary -BinaryPath $sourceOverride)) {
-            throw "AGENTDOCK_CLOUDFLARED_BINARY is not a valid cloudflared executable: $sourceOverride"
+            throw "The supplied cloudflared binary is invalid: $sourceOverride"
         }
         $stagedPath = "$DestinationBinary.tmp.$PID"
         Copy-Item -LiteralPath $sourceOverride -Destination $stagedPath -Force
@@ -707,7 +715,7 @@ if ([string]::IsNullOrWhiteSpace($userHome)) {
 
 $architecture = Get-AgentDockArchitecture
 $assetName = "agentdock_windows_$architecture.zip"
-$releaseBaseUrl = Get-ReleaseBaseUrl -RequestedVersion $Version
+$releaseBaseUrl = ''
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("agentdock-install-" + [Guid]::NewGuid().ToString('N'))
 $archivePath = Join-Path $tempRoot $assetName
 $checksumPath = "$archivePath.sha256"
@@ -784,8 +792,22 @@ try {
     $previousTunnelRunValue = Get-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName
     $rollbackStateCaptured = $true
 
-    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBaseUrl/$assetName" -OutFile $archivePath
-    Invoke-WebRequest -UseBasicParsing -Uri "$releaseBaseUrl/$assetName.sha256" -OutFile $checksumPath
+    if (-not [string]::IsNullOrWhiteSpace($OfflineArchive)) {
+        if (-not (Test-Path -LiteralPath $OfflineArchive -PathType Leaf)) {
+            throw "Offline AgentDock archive was not found: $OfflineArchive"
+        }
+        if ([string]::IsNullOrWhiteSpace($OfflineChecksumFile) -or
+            -not (Test-Path -LiteralPath $OfflineChecksumFile -PathType Leaf)) {
+            throw "Offline AgentDock checksum file was not found: $OfflineChecksumFile"
+        }
+        Write-Host "Using bundled AgentDock payload: $OfflineArchive"
+        Copy-Item -LiteralPath $OfflineArchive -Destination $archivePath -Force
+        Copy-Item -LiteralPath $OfflineChecksumFile -Destination $checksumPath -Force
+    } else {
+        $releaseBaseUrl = Get-ReleaseBaseUrl -RequestedVersion $Version
+        Invoke-WebRequest -UseBasicParsing -Uri "$releaseBaseUrl/$assetName" -OutFile $archivePath
+        Invoke-WebRequest -UseBasicParsing -Uri "$releaseBaseUrl/$assetName.sha256" -OutFile $checksumPath
+    }
 
     $expectedHash = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
     $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -998,7 +1020,11 @@ if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
                 Copy-Item -LiteralPath $cloudflaredBinary -Destination $cloudflaredBackup -Force
             }
             $cloudflaredReplacementStarted = $true
-            Install-CloudflaredBinary -DestinationBinary $cloudflaredBinary -Architecture $architecture -TempDirectory $tempRoot
+            Install-CloudflaredBinary `
+                -DestinationBinary $cloudflaredBinary `
+                -Architecture $architecture `
+                -TempDirectory $tempRoot `
+                -SourceBinary $OfflineCloudflaredBinary
 
             $escapedCloudflaredPath = $cloudflaredBinary.Replace("'", "''")
             $escapedTunnelModePath = $tunnelModePath.Replace("'", "''")

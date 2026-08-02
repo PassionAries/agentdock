@@ -128,6 +128,11 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 
 	for _, want := range []string{
 		"agentdock_windows_$architecture.zip",
+		"[string] $OfflineArchive = ''",
+		"[string] $OfflineChecksumFile = ''",
+		"[string] $OfflineCloudflaredBinary = ''",
+		"Using bundled AgentDock payload",
+		"-SourceBinary $OfflineCloudflaredBinary",
 		"agentdock-tray.exe",
 		"agentdock.ico",
 		"[switch] $ConfigurePublicAccess",
@@ -416,6 +421,15 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"-KeepInstallDir",
 		"PurgeStateQuestion",
 		"Bearer Token：",
+		"AgentDockSetup-amd64",
+		"AgentDockSetup-arm64",
+		"agentdock_windows_{#PayloadArchitecture}.zip",
+		"cloudflared-windows-{#PayloadArchitecture}.exe",
+		"-OfflineArchive ",
+		"-OfflineChecksumFile ",
+		"-OfflineCloudflaredBinary ",
+		"CreateOutputProgressPage",
+		"OfflineProgressDescription",
 	} {
 		if !strings.Contains(setup, want) {
 			t.Fatalf("AgentDock.iss missing %q", want)
@@ -479,6 +493,10 @@ func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T
 	workflow := string(data)
 	for _, want := range []string{
 		"Test configured Authenticode certificate",
+		"Prepare offline AMD64 payload",
+		"build-windows-offline-setup.ps1",
+		"AgentDockSetup-amd64.exe",
+		"AgentDockSetup-arm64.exe",
 		"WINDOWS_SIGNING_CERT_BASE64",
 		"WINDOWS_SIGNING_CERT_PASSWORD",
 		"sign-windows.ps1 -Path $paths",
@@ -502,7 +520,10 @@ func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
 		"dist/agentdock-tray.exe",
 		"scripts\\sign-windows.ps1",
 		"build-windows-setup:",
-		"AgentDockSetup.exe",
+		"AgentDockSetup-amd64.exe",
+		"AgentDockSetup-arm64.exe",
+		"build-windows-offline-setup.ps1",
+		"cloudflared-windows-${{ matrix.goarch }}.exe",
 		"dist/*.exe.sha256",
 		"-VerifyOnly",
 	} {

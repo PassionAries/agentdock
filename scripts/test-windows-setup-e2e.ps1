@@ -2,8 +2,6 @@
 param(
     [Parameter(Mandatory = $true)]
     [string] $SetupPath,
-    [string] $ReleaseRoot = '',
-    [string] $ReleaseBaseUrl = '',
     [string] $InstallRoot = (Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e'),
     [switch] $AllowLegacyTaskMutation
 )
@@ -14,16 +12,6 @@ $ProgressPreference = 'SilentlyContinue'
 
 if (-not $AllowLegacyTaskMutation) {
     throw 'Legacy scheduled-task mutation is disabled. Pass -AllowLegacyTaskMutation only in an isolated Windows test environment.'
-}
-
-function Get-FreeTcpPort {
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    try {
-        return ([Net.IPEndPoint] $listener.LocalEndpoint).Port
-    } finally {
-        $listener.Stop()
-    }
 }
 
 function Wait-ProcessOrThrow {
@@ -95,7 +83,6 @@ $userHome = [Environment]::GetFolderPath('UserProfile')
 $stateRoot = Join-Path $userHome '.agentdock'
 $stateMarker = Join-Path $stateRoot ('setup-e2e-preserve-' + [Guid]::NewGuid().ToString('N') + '.txt')
 $healthUrl = 'http://127.0.0.1:8765/healthz'
-$httpServer = $null
 $setupProcess = $null
 $repairProcess = $null
 $uninstallProcess = $null
@@ -103,6 +90,7 @@ $setupLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-install.log'
 $repairLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-repair.log'
 $uninstallLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-uninstall.log'
 $oldReleaseBaseUrl = $env:AGENTDOCK_RELEASE_BASE_URL
+$oldCloudflaredReleaseBaseUrl = $env:AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL
 
 try {
     Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
@@ -114,33 +102,9 @@ try {
         [Text.UTF8Encoding]::new($false)
     )
 
-    if ([string]::IsNullOrWhiteSpace($ReleaseBaseUrl)) {
-        if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) {
-            throw 'ReleaseRoot or ReleaseBaseUrl is required.'
-        }
-        $resolvedReleaseRoot = (Resolve-Path -LiteralPath $ReleaseRoot).Path
-        $port = Get-FreeTcpPort
-        $ReleaseBaseUrl = "http://127.0.0.1:$port"
-        $httpServer = Start-Process `
-            -FilePath 'python' `
-            -ArgumentList @('-m', 'http.server', $port, '--bind', '127.0.0.1', '--directory', $resolvedReleaseRoot) `
-            -WindowStyle Hidden `
-            -PassThru
-        $deadline = [DateTime]::UtcNow.AddSeconds(15)
-        do {
-            Start-Sleep -Milliseconds 250
-            try {
-                Invoke-WebRequest -UseBasicParsing -Uri "$ReleaseBaseUrl/agentdock_windows_amd64.zip.sha256" -TimeoutSec 2 | Out-Null
-                break
-            } catch {
-                if ([DateTime]::UtcNow -ge $deadline) {
-                    throw
-                }
-            }
-        } while ($true)
-    }
-
-    $env:AGENTDOCK_RELEASE_BASE_URL = $ReleaseBaseUrl.TrimEnd('/')
+    # 指向必然失败的地址，确保 Setup 的核心载荷不会偷偷退回在线下载。
+    $env:AGENTDOCK_RELEASE_BASE_URL = 'http://127.0.0.1:1/agentdock-offline-e2e'
+    $env:AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL = 'http://127.0.0.1:1/cloudflared-offline-e2e'
     Remove-Item -LiteralPath $setupLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
     Write-Host "Starting AgentDockSetup.exe: $resolvedSetup"
     $setupProcess = Start-Process `
@@ -310,15 +274,13 @@ try {
     throw
 } finally {
     $env:AGENTDOCK_RELEASE_BASE_URL = $oldReleaseBaseUrl
+    $env:AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL = $oldCloudflaredReleaseBaseUrl
     Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue
     foreach ($process in @($setupProcess, $repairProcess, $uninstallProcess)) {
         if ($process -and -not $process.HasExited) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         }
-    }
-    if ($httpServer -and -not $httpServer.HasExited) {
-        Stop-Process -Id $httpServer.Id -Force -ErrorAction SilentlyContinue
     }
     Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath $trayPath
     Stop-ProcessByPath -ProcessName 'agentdock' -BinaryPath $binaryPath
