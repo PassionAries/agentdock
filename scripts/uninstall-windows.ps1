@@ -11,32 +11,37 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Stop-ProcessByPath {
+function Get-ProcessIdsByPath {
     param(
         [string] $ProcessName,
         [string] $BinaryPath
     )
 
     if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
-        return
+        return @()
     }
     $normalizedBinaryPath = [IO.Path]::GetFullPath($BinaryPath)
-    $matches = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
-        try {
-            [string]::Equals(
-                [IO.Path]::GetFullPath($_.Path),
-                $normalizedBinaryPath,
-                [StringComparison]::OrdinalIgnoreCase
-            )
-        } catch {
-            $false
-        }
-    })
-    $matches | Stop-Process -Force -ErrorAction SilentlyContinue
+    $processIds = @()
 
-    $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    do {
-        $remaining = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
+    # Win32_Process exposes the executable path reliably in uninstall contexts
+    # where Get-Process.Path may be empty or inaccessible.
+    try {
+        $processIds = @(Get-CimInstance Win32_Process -Filter "Name = '$ProcessName.exe'" -ErrorAction Stop |
+            Where-Object {
+                $_.ExecutablePath -and
+                [string]::Equals(
+                    [IO.Path]::GetFullPath($_.ExecutablePath),
+                    $normalizedBinaryPath,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            } |
+            Select-Object -ExpandProperty ProcessId)
+    } catch {
+        $processIds = @()
+    }
+
+    if ($processIds.Count -eq 0) {
+        $processIds = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
             try {
                 [string]::Equals(
                     [IO.Path]::GetFullPath($_.Path),
@@ -46,14 +51,32 @@ function Stop-ProcessByPath {
             } catch {
                 $false
             }
-        })
+        } | Select-Object -ExpandProperty Id)
+    }
+    return @($processIds | Sort-Object -Unique)
+}
+
+function Stop-ProcessByPath {
+    param(
+        [string] $ProcessName,
+        [string] $BinaryPath
+    )
+
+    $processIds = @(Get-ProcessIdsByPath -ProcessName $ProcessName -BinaryPath $BinaryPath)
+    foreach ($processId in $processIds) {
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $remaining = @(Get-ProcessIdsByPath -ProcessName $ProcessName -BinaryPath $BinaryPath)
         if ($remaining.Count -eq 0) {
             return
         }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
 
-    throw "Process did not stop within 15 seconds: $normalizedBinaryPath"
+    throw "Process did not stop within 15 seconds: $BinaryPath"
 }
 
 function Remove-DirectoryWithRetry {

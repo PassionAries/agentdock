@@ -225,6 +225,8 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 	}
 	script := string(data)
 	for _, want := range []string{
+		"Get-CimInstance Win32_Process",
+		"Get-ProcessIdsByPath",
 		"Stop-ProcessByPath -ProcessName 'agentdock-tray'",
 		"[switch] $KeepInstallDir",
 		"Remove-DirectoryWithRetry -Path $InstallDir",
