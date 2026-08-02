@@ -131,6 +131,7 @@ var
   CopyBearerButton: TNewButton;
   CopyOAuthButton: TNewButton;
   PurgeState: Boolean;
+  UninstallCleanupExecuted: Boolean;
   ResultFilePath: String;
   TemporaryTokenFilePath: String;
   LocalMCPURL: String;
@@ -451,6 +452,7 @@ end;
 function InitializeUninstall(): Boolean;
 begin
   PurgeState := False;
+  UninstallCleanupExecuted := False;
   if not UninstallSilent then
     PurgeState := MsgBox(
       GetLocalizedMessage('PurgeStateQuestion'),
@@ -475,9 +477,11 @@ var
   ScriptPath: String;
   ExitCode: Integer;
 begin
-  if CurUninstallStep <> usUninstall then
+  if (CurUninstallStep <> usAppMutexCheck) or UninstallCleanupExecuted then
     Exit;
 
+  UninstallCleanupExecuted := True;
+  Log('AgentDock: running managed cleanup before uninstall file removal.');
   ScriptPath := ExpandConstant('{app}\installer\uninstall-windows.ps1');
   if not FileExists(ScriptPath) then
     RaiseException(GetLocalizedMessage('UninstallScriptMissing'));
@@ -496,6 +500,7 @@ begin
     RaiseException(
       GetLocalizedMessage('UninstallScriptFailed') + ' ' + IntToStr(ExitCode)
     );
+  Log('AgentDock: managed cleanup completed successfully.');
 end;
 
 procedure DeinitializeSetup();

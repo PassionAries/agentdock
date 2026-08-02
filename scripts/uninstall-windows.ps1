@@ -20,7 +20,7 @@ function Stop-ProcessByPath {
         return
     }
     $normalizedBinaryPath = [IO.Path]::GetFullPath($BinaryPath)
-    Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
+    $matches = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
         try {
             [string]::Equals(
                 [IO.Path]::GetFullPath($_.Path),
@@ -30,7 +30,47 @@ function Stop-ProcessByPath {
         } catch {
             $false
         }
-    } | Stop-Process -Force -ErrorAction SilentlyContinue
+    })
+    $matches | Stop-Process -Force -ErrorAction SilentlyContinue
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $remaining = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Where-Object {
+            try {
+                [string]::Equals(
+                    [IO.Path]::GetFullPath($_.Path),
+                    $normalizedBinaryPath,
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            } catch {
+                $false
+            }
+        })
+        if ($remaining.Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Process did not stop within 15 seconds: $normalizedBinaryPath"
+}
+
+function Remove-DirectoryWithRetry {
+    param([string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Directory could not be removed within 15 seconds: $Path"
 }
 
 $runtimeDir = Split-Path -Parent $InstallDir
@@ -63,7 +103,7 @@ if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'Age
     }
 }
 
-Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-DirectoryWithRetry -Path $InstallDir
 foreach ($name in @(
     'start-agentdock.ps1',
     'start-cloudflared.ps1',
