@@ -160,7 +160,7 @@ chinesesimplified.OfflineProgressFinishing=正在启动 AgentDock 并检查运�
 Source: "..\..\scripts\install.ps1"; Flags: dontcopy
 Source: "{#OfflinePayloadDir}\agentdock_windows_{#PayloadArchitecture}.zip"; Flags: dontcopy
 Source: "{#OfflinePayloadDir}\agentdock_windows_{#PayloadArchitecture}.zip.sha256"; Flags: dontcopy
-Source: "{#OfflinePayloadDir}\cloudflared-windows-{#PayloadArchitecture}.exe"; Flags: dontcopy
+Source: "{#OfflinePayloadDir}\cloudflared.exe"; Flags: dontcopy
 Source: "..\..\scripts\install.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "..\..\scripts\uninstall-windows.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "assets\agentdock.ico"; DestDir: "{app}\installer"; Flags: ignoreversion
@@ -571,13 +571,13 @@ begin
     ExtractTemporaryFile('install.ps1');
     ExtractTemporaryFile('agentdock_windows_{#PayloadArchitecture}.zip');
     ExtractTemporaryFile('agentdock_windows_{#PayloadArchitecture}.zip.sha256');
-    ExtractTemporaryFile('cloudflared-windows-{#PayloadArchitecture}.exe');
+    ExtractTemporaryFile('cloudflared.exe');
 
     PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
     InstallScriptPath := ExpandConstant('{tmp}\install.ps1');
     OfflineArchivePath := ExpandConstant('{tmp}\agentdock_windows_{#PayloadArchitecture}.zip');
     OfflineChecksumPath := ExpandConstant('{tmp}\agentdock_windows_{#PayloadArchitecture}.zip.sha256');
-    OfflineCloudflaredPath := ExpandConstant('{tmp}\cloudflared-windows-{#PayloadArchitecture}.exe');
+    OfflineCloudflaredPath := ExpandConstant('{tmp}\cloudflared.exe');
     ResultFilePath := ExpandConstant('{tmp}\agentdock-install-result.ini');
     DeleteFile(ResultFilePath);
     TunnelMode := SelectedTunnelMode();

@@ -424,7 +424,7 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"AgentDockSetup-amd64",
 		"AgentDockSetup-arm64",
 		"agentdock_windows_{#PayloadArchitecture}.zip",
-		"cloudflared-windows-{#PayloadArchitecture}.exe",
+		"Source: \"{#OfflinePayloadDir}\\cloudflared.exe\"",
 		"-OfflineArchive ",
 		"-OfflineChecksumFile ",
 		"-OfflineCloudflaredBinary ",
@@ -523,7 +523,8 @@ func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
 		"AgentDockSetup-amd64.exe",
 		"AgentDockSetup-arm64.exe",
 		"build-windows-offline-setup.ps1",
-		"cloudflared-windows-${{ matrix.goarch }}.exe",
+		"cloudflared-windows-amd64.exe",
+		"payload\\cloudflared.exe",
 		"dist/*.exe.sha256",
 		"-VerifyOnly",
 	} {

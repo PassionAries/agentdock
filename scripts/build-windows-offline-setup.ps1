@@ -71,7 +71,8 @@ try {
     $assetName = "agentdock_windows_$Architecture.zip"
     Copy-Item -LiteralPath $archivePath -Destination (Join-Path $payloadRoot $assetName) -Force
     Copy-Item -LiteralPath $checksumPath -Destination (Join-Path $payloadRoot "$assetName.sha256") -Force
-    Copy-Item -LiteralPath $cloudflaredPath -Destination (Join-Path $payloadRoot "cloudflared-windows-$Architecture.exe") -Force
+    # cloudflared is an independent compatibility payload. Keep its internal name architecture-neutral.
+    Copy-Item -LiteralPath $cloudflaredPath -Destination (Join-Path $payloadRoot 'cloudflared.exe') -Force
 
     $arguments = @(
         "/DAppVersion=$Version",

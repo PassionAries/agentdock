@@ -260,14 +260,14 @@ jobs:
             throw 'WINDOWS_SIGNING_CERT_PASSWORD is required for a formal release.'
           }
 
-      - name: Download and verify cloudflared
+      - name: Download and verify cloudflared compatibility payload
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $path = Join-Path $PWD 'payload\cloudflared-windows-${{ matrix.goarch }}.exe'
+          $path = Join-Path $PWD 'payload\cloudflared.exe'
           Invoke-WebRequest `
             -UseBasicParsing `
-            -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${{ matrix.goarch }}.exe' `
+            -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' `
             -OutFile $path
           $signature = Get-AuthenticodeSignature -LiteralPath $path
           if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
@@ -289,7 +289,7 @@ jobs:
             -Architecture '${{ matrix.goarch }}' `
             -AgentDockArchive '.\payload\agentdock_windows_${{ matrix.goarch }}.zip' `
             -AgentDockChecksumFile '.\payload\agentdock_windows_${{ matrix.goarch }}.zip.sha256' `
-            -CloudflaredBinary '.\payload\cloudflared-windows-${{ matrix.goarch }}.exe' `
+            -CloudflaredBinary '.\payload\cloudflared.exe' `
             -OutputDirectory $outputDir `
             -SignedBuild
 

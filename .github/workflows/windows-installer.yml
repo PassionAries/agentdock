@@ -281,23 +281,13 @@ jobs:
           Copy-Item .\packaging\windows\assets\agentdock.ico (Join-Path $arm64Dir 'agentdock.ico') -Force
           New-WindowsAsset -Architecture 'arm64' -SourceDirectory $arm64Dir
 
-          $arm64Cloudflared = Join-Path $env:RUNNER_TEMP 'cloudflared-windows-arm64.exe'
-          Invoke-WebRequest `
-            -UseBasicParsing `
-            -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-arm64.exe' `
-            -OutFile $arm64Cloudflared
-          $arm64CloudflaredSignature = Get-AuthenticodeSignature -LiteralPath $arm64Cloudflared
-          if ($arm64CloudflaredSignature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
-            throw "ARM64 cloudflared Authenticode signature is invalid: $($arm64CloudflaredSignature.StatusMessage)"
-          }
-
           $arm64Archive = Join-Path $releaseDir 'agentdock_windows_arm64.zip'
           & .\scripts\build-windows-offline-setup.ps1 `
             -Version ($env:TEST_TAG.TrimStart('v')) `
             -Architecture arm64 `
             -AgentDockArchive $arm64Archive `
             -AgentDockChecksumFile "$arm64Archive.sha256" `
-            -CloudflaredBinary $arm64Cloudflared `
+            -CloudflaredBinary $env:AMD64_CLOUDFLARED `
             -OutputDirectory $releaseDir `
             -SignedBuild
 
