@@ -49,7 +49,8 @@ ShowLanguageDialog=no
 #ifdef WindowsARM64
 ArchitecturesAllowed=arm64
 #else
-ArchitecturesAllowed=x64
+; x64compatible uses the native OS architecture instead of the 32-bit Setup process view.
+ArchitecturesAllowed=x64compatible
 #endif
 #ifdef SignedBuild
 SignTool=agentdock-sign
