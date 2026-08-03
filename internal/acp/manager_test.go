@@ -237,7 +237,7 @@ func TestCapabilityInspectionUsesInitializeContract(t *testing.T) {
 func TestManagerRecoveryMarksRunningSessionInterrupted(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()
-	store, err := newSessionStore(home)
+	store, err := newSessionStore(home, "helper")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +685,7 @@ func TestACPHelperProcess(t *testing.T) {
 		}
 		switch message.Method {
 		case "initialize":
-			writeHelperResult(encoder, message.ID, map[string]any{
+			result := map[string]any{
 				"protocolVersion": ProtocolVersion,
 				"agentCapabilities": map[string]any{
 					"loadSession": true,
@@ -694,10 +694,13 @@ func TestACPHelperProcess(t *testing.T) {
 						"fork": map[string]any{}, "additionalDirectories": map[string]any{},
 					},
 				},
-				"agentInfo":   map[string]any{"name": agentInfoName, "title": "Helper ACP", "version": agentVersion},
 				"authMethods": []map[string]any{{"id": "test-auth", "name": "Test auth"}},
 				"_meta":       map[string]any{"steering": map[string]any{"supported": true}},
-			})
+			}
+			if os.Getenv("GO_ACP_HELPER_OMIT_AGENT_INFO") != "1" {
+				result["agentInfo"] = map[string]any{"name": agentInfoName, "title": "Helper ACP", "version": agentVersion}
+			}
+			writeHelperResult(encoder, message.ID, result)
 		case "authenticate":
 			writeHelperResult(encoder, message.ID, map[string]any{})
 		case "session/new":

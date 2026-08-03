@@ -88,10 +88,6 @@ func startAgentProcess(ctx context.Context, spec AgentSpec, requestHandler Reque
 			nil,
 		)
 	}
-	if initialized.AgentInfo.Name == "" {
-		_ = process.Close()
-		return nil, newError("ACP_INVALID_RESPONSE", "ACP initialize response omitted agentInfo.name", false, map[string]any{"agent": spec.Name}, nil)
-	}
 	process.initialize = initialized
 	return process, nil
 }

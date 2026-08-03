@@ -1,6 +1,7 @@
 package acp
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,22 +19,27 @@ import (
 const sessionSchemaVersion = 1
 
 type sessionStore struct {
-	root string
-	mu   sync.Mutex
+	root  string
+	agent string
+	mu    sync.Mutex
 }
 
-func newSessionStore(home string) (*sessionStore, error) {
+func newSessionStore(home, agent string) (*sessionStore, error) {
 	if strings.TrimSpace(home) == "" {
 		return nil, errors.New("ACP home is required")
 	}
-	root := filepath.Join(home, "acp", "sessions")
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return nil, errors.New("ACP agent identity is required")
+	}
+	root := sessionStoreRoot(home, agent)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("create ACP session store: %w", err)
 	}
 	if err := securepath.EnsurePrivate(root); err != nil {
 		return nil, fmt.Errorf("secure ACP session store: %w", err)
 	}
-	store := &sessionStore{root: root}
+	store := &sessionStore{root: root, agent: agent}
 	if err := store.markInterrupted(); err != nil {
 		return nil, err
 	}
@@ -122,6 +128,9 @@ func (s *sessionStore) saveLocked(record SessionRecord) error {
 	if record.ID == "" || record.RemoteSessionID == "" || record.CWD == "" {
 		return errors.New("ACP session id, remote session id, and cwd are required")
 	}
+	if record.Agent != s.agent {
+		return fmt.Errorf("ACP session agent mismatch: expected %q, got %q", s.agent, record.Agent)
+	}
 	path, err := s.path(record.ID)
 	if err != nil {
 		return err
@@ -172,7 +181,17 @@ func (s *sessionStore) loadLocked(id string) (SessionRecord, error) {
 	if err := validateSessionRecord(id, record); err != nil {
 		return SessionRecord{}, err
 	}
+	if record.Agent != s.agent {
+		return SessionRecord{}, fmt.Errorf("ACP session agent mismatch: expected %q, got %q", s.agent, record.Agent)
+	}
 	return record, nil
+}
+
+func sessionStoreRoot(home, agent string) string {
+	// Agent 名称是持久会话的身份边界。目录使用稳定哈希，避免用户配置的
+	// 名称成为路径片段，同时让不同 adapter 的状态、恢复和远程 ID 完全隔离。
+	identity := sha256.Sum256([]byte(strings.TrimSpace(agent)))
+	return filepath.Join(home, "acp", "sessions", fmt.Sprintf("%x", identity[:16]))
 }
 
 func validateSessionRecord(expectedID string, record SessionRecord) error {

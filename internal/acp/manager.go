@@ -47,7 +47,7 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.InteractionTimeout <= 0 {
 		opts.InteractionTimeout = 5 * time.Minute
 	}
-	store, err := newSessionStore(opts.Home)
+	store, err := newSessionStore(opts.Home, opts.Agent.Name)
 	if err != nil {
 		return nil, err
 	}

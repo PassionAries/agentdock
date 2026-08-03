@@ -249,10 +249,12 @@ These guards do not patch adapter packages or inspect private transcript files. 
 Session records live under:
 
 ```text
-~/.agentdock/acp/sessions/<acps_id>.json
+~/.agentdock/acp/sessions/<adapter_identity>/<acps_id>.json
 ```
 
-They are written atomically with private permissions and contain only:
+`<adapter_identity>` is a stable hash of the configured adapter name. Each adapter therefore has an isolated recovery and remote-session namespace, while the configured name never becomes a filesystem path segment.
+
+Records are written atomically with private permissions and contain only:
 
 - local and remote session identifiers;
 - profile name;

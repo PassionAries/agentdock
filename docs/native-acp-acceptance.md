@@ -80,7 +80,7 @@ Run the repository's normal format, test, race, vet, and build gates. Run the op
 Acceptance requires:
 
 - ACP wire version `1` is negotiated;
-- `agentInfo.name` is present;
+- optional `agentInfo`, when present, is recorded exactly as advertised, and omission does not fail initialization;
 - optional capabilities are recorded exactly as advertised;
 - no adapter-name-based capability assumptions occur;
 - the adapter process and descendants are reclaimed when AgentDock stops.

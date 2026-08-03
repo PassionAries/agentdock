@@ -8,21 +8,21 @@ import (
 
 func TestSessionStoreFailsClosedOnCorruptState(t *testing.T) {
 	home := t.TempDir()
-	root := filepath.Join(home, "acp", "sessions")
+	root := sessionStoreRoot(home, "helper")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "acps_corrupt.json"), []byte(`{"schema_version":1`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newSessionStore(home); err == nil {
+	if _, err := newSessionStore(home, "helper"); err == nil {
 		t.Fatal("corrupt ACP state was silently ignored")
 	}
 }
 
 func TestSessionStoreRejectsSymlinkState(t *testing.T) {
 	home := t.TempDir()
-	root := filepath.Join(home, "acp", "sessions")
+	root := sessionStoreRoot(home, "helper")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestSessionStoreRejectsSymlinkState(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink creation is unavailable: %v", err)
 	}
-	if _, err := newSessionStore(home); err == nil {
+	if _, err := newSessionStore(home, "helper"); err == nil {
 		t.Fatal("symlink ACP state was silently followed")
 	}
 }
