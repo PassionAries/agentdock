@@ -855,6 +855,27 @@ func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T
 	}
 }
 
+func TestMacOSReleaseChecksCloudflaredFromPayloadDirectory(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(data)
+	for _, want := range []string{
+		"cd payload",
+		`shasum -a 256 "cloudflared_darwin_$architecture" > "cloudflared_darwin_$architecture.sha256"`,
+		"shasum -a 256 -c cloudflared_darwin_amd64.sha256",
+		"shasum -a 256 -c cloudflared_darwin_arm64.sha256",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release.yml missing macOS cloudflared checksum behavior %q", want)
+		}
+	}
+	if strings.Contains(workflow, `shasum -a 256 "$output" > "$output.sha256"`) {
+		t.Fatal("macOS cloudflared checksum must not record the payload directory before validation inside payload")
+	}
+}
+
 func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
 	if err != nil {

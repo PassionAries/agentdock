@@ -164,7 +164,10 @@ jobs:
               amd64) file "$output" | grep -q 'x86_64' ;;
             esac
             codesign --verify --deep --strict --verbose=2 "$output"
-            shasum -a 256 "$output" > "$output.sha256"
+            (
+              cd payload
+              shasum -a 256 "cloudflared_darwin_$architecture" > "cloudflared_darwin_$architecture.sha256"
+            )
           done
 
           (
