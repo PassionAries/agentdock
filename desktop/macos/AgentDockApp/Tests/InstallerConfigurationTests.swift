@@ -102,13 +102,12 @@ struct InstallerConfigurationTests {
         expectFailure("不能使用 localhost 或 IP") {
             _ = try InstallRequest(mode: .named, serverURL: "https://127.0.0.1", tunnelToken: "x").validatedServerURL()
         }
-        precondition(
-            try InstallRequest(
-                mode: .named,
-                serverURL: "https://mini.example.com",
-                tunnelToken: " "
-            ).validatedTunnelToken() == nil
-        )
+        let blankTunnelToken = try InstallRequest(
+            mode: .named,
+            serverURL: "https://mini.example.com",
+            tunnelToken: " "
+        ).validatedTunnelToken()
+        precondition(blankTunnelToken == nil)
         try ServicePortValidation.validate(1024)
         try ServicePortValidation.validate(65535)
         expectFailure("1024 到 65535") {
@@ -140,7 +139,8 @@ struct InstallerConfigurationTests {
 
         let store = TunnelTokenStore(paths: paths)
         try store.captureExistingTokenIfPresent()
-        precondition(try store.storedToken() == "saved-token")
+        let migratedToken = try store.storedToken()
+        precondition(migratedToken == "saved-token")
 
         let quickEnvironment = """
         AGENTDOCK_TUNNEL_MODE='quick'
@@ -149,16 +149,20 @@ struct InstallerConfigurationTests {
         """
         try Data(quickEnvironment.utf8).write(to: paths.tunnelEnvironment)
         try store.captureExistingTokenIfPresent()
-        precondition(try store.storedToken() == "saved-token")
-        precondition(try store.tokenForNamedTunnel(providedToken: nil) == "saved-token")
-        precondition(try store.tokenForNamedTunnel(providedToken: " replacement-token ") == "replacement-token")
+        let tokenAfterQuickSwitch = try store.storedToken()
+        let reusedStoredToken = try store.tokenForNamedTunnel(providedToken: nil)
+        let replacementToken = try store.tokenForNamedTunnel(providedToken: " replacement-token ")
+        precondition(tokenAfterQuickSwitch == "saved-token")
+        precondition(reusedStoredToken == "saved-token")
+        precondition(replacementToken == "replacement-token")
 
         let attributes = try FileManager.default.attributesOfItem(atPath: paths.tunnelTokenStore.path)
         let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
         precondition(permissions & 0o077 == 0)
 
         try store.persist("new-token")
-        precondition(try store.storedToken() == "new-token")
+        let updatedToken = try store.storedToken()
+        precondition(updatedToken == "new-token")
         expectFailure("单行文本") {
             try store.persist("line-one\nline-two")
         }
