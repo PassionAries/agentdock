@@ -6,10 +6,12 @@ on:
       - main
     paths:
       - 'scripts/install.ps1'
+      - 'scripts/manage-windows.ps1'
       - 'scripts/uninstall-windows.ps1'
       - 'scripts/sign-windows.ps1'
       - 'scripts/build-windows-offline-setup.ps1'
       - 'packaging/windows/**'
+      - 'desktop/windows/control-panel/**'
       - 'scripts/test-install-windows.ps1'
       - 'scripts/test-install-windows-download.ps1'
       - 'scripts/test-install-windows-e2e.ps1'
@@ -47,6 +49,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
       - name: Test Windows private storage
         shell: powershell
         run: |
@@ -78,14 +85,21 @@ jobs:
           $env:GOOS = 'windows'
           $env:GOARCH = 'amd64'
           go build -trimpath -o (Join-Path $distRoot 'agentdock.exe') .\cmd\agentdock
-          go build -trimpath -ldflags '-H=windowsgui' -o (Join-Path $distRoot 'agentdock-tray.exe') .\cmd\agentdock-tray
+          $controlPanelOutput = Join-Path $distRoot 'control-panel'
+          dotnet publish .\desktop\windows\control-panel\AgentDock.ControlPanel.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -o $controlPanelOutput
+          Copy-Item (Join-Path $controlPanelOutput 'agentdock-tray.exe') (Join-Path $distRoot 'agentdock-tray.exe') -Force
           Copy-Item .\packaging\windows\assets\agentdock.ico (Join-Path $distRoot 'agentdock.ico') -Force
+          Copy-Item .\scripts\manage-windows.ps1 (Join-Path $distRoot 'manage-windows.ps1') -Force
           python .\scripts\build-core-skill-bundle.py --output $bundleRoot
 
           $assetName = 'agentdock_windows_amd64.zip'
           $archivePath = Join-Path $releaseRoot $assetName
           Compress-Archive `
-            -Path (Join-Path $distRoot 'agentdock.exe'), (Join-Path $distRoot 'agentdock-tray.exe'), (Join-Path $distRoot 'agentdock.ico'), (Join-Path $distRoot 'share') `
+            -Path (Join-Path $distRoot 'agentdock.exe'), (Join-Path $distRoot 'agentdock-tray.exe'), (Join-Path $distRoot 'agentdock.ico'), (Join-Path $distRoot 'manage-windows.ps1'), (Join-Path $distRoot 'share') `
             -DestinationPath $archivePath `
             -Force
           $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -134,7 +148,13 @@ jobs:
           $env:GOOS = 'windows'
           $env:GOARCH = 'amd64'
           go build -trimpath -o dist\agentdock.exe .\cmd\agentdock
-          go build -trimpath -ldflags '-H=windowsgui' -o dist\agentdock-tray.exe .\cmd\agentdock-tray
+          dotnet publish .\desktop\windows\control-panel\AgentDock.ControlPanel.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -o dist\control-panel
+          Copy-Item .\dist\control-panel\agentdock-tray.exe .\dist\agentdock-tray.exe -Force
+          Copy-Item .\scripts\manage-windows.ps1 .\dist\manage-windows.ps1 -Force
 
       - name: Test configured Authenticode certificate
         shell: pwsh
@@ -168,7 +188,7 @@ jobs:
           Copy-Item .\packaging\windows\assets\agentdock.ico .\dist\agentdock.ico -Force
           $archivePath = Join-Path $payloadRoot 'agentdock_windows_amd64.zip'
           Compress-Archive `
-            -Path .\dist\agentdock.exe, .\dist\agentdock-tray.exe, .\dist\agentdock.ico, .\dist\share `
+            -Path .\dist\agentdock.exe, .\dist\agentdock-tray.exe, .\dist\agentdock.ico, .\dist\manage-windows.ps1, .\dist\share `
             -DestinationPath $archivePath `
             -Force
           $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -277,7 +297,7 @@ jobs:
             $assetName = "agentdock_windows_$Architecture.zip"
             $assetPath = Join-Path $releaseDir $assetName
             Compress-Archive `
-              -Path (Join-Path $SourceDirectory 'agentdock.exe'), (Join-Path $SourceDirectory 'agentdock-tray.exe'), (Join-Path $SourceDirectory 'agentdock.ico'), (Join-Path $SourceDirectory 'share') `
+              -Path (Join-Path $SourceDirectory 'agentdock.exe'), (Join-Path $SourceDirectory 'agentdock-tray.exe'), (Join-Path $SourceDirectory 'agentdock.ico'), (Join-Path $SourceDirectory 'manage-windows.ps1'), (Join-Path $SourceDirectory 'share') `
               -DestinationPath $assetPath `
               -Force
             $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -290,7 +310,14 @@ jobs:
           $env:GOOS = 'windows'
           $env:GOARCH = 'arm64'
           go build -trimpath -o (Join-Path $arm64Dir 'agentdock.exe') .\cmd\agentdock
-          go build -trimpath -ldflags '-H=windowsgui' -o (Join-Path $arm64Dir 'agentdock-tray.exe') .\cmd\agentdock-tray
+          $arm64ControlPanelOutput = Join-Path $arm64Dir 'control-panel'
+          dotnet publish .\desktop\windows\control-panel\AgentDock.ControlPanel.csproj `
+            -c Release `
+            -r win-arm64 `
+            --self-contained true `
+            -o $arm64ControlPanelOutput
+          Copy-Item (Join-Path $arm64ControlPanelOutput 'agentdock-tray.exe') (Join-Path $arm64Dir 'agentdock-tray.exe') -Force
+          Copy-Item .\scripts\manage-windows.ps1 (Join-Path $arm64Dir 'manage-windows.ps1') -Force
           .\scripts\sign-windows.ps1 -Path @(
             (Join-Path $arm64Dir 'agentdock.exe'),
             (Join-Path $arm64Dir 'agentdock-tray.exe')

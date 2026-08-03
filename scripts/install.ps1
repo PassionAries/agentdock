@@ -247,15 +247,71 @@ function Read-SecretFile {
     return $value
 }
 
+function Initialize-OAuthCredentials {
+    param(
+        [string] $PasswordPath,
+        [string] $TokenSecretPath,
+        [string] $RequestedPassword,
+        [string] $RequestedTokenSecret
+    )
+
+    $existingPassword = Read-ProtectedText -Path $PasswordPath -Entropy 'agentdock.oauth.password.v1'
+    $password = $RequestedPassword
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        $password = [Environment]::GetEnvironmentVariable('AGENTDOCK_OAUTH_PASSWORD')
+    }
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        $password = $existingPassword
+    }
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        $password = New-AgentDockSecret -ByteCount 12
+    }
+    if ($password.Length -lt 12) {
+        throw 'OAuth password must contain at least 12 characters.'
+    }
+    if (-not [string]::Equals($password, $existingPassword, [StringComparison]::Ordinal)) {
+        Write-ProtectedText -Path $PasswordPath -Value $password -Entropy 'agentdock.oauth.password.v1'
+    }
+
+    $existingTokenSecret = Read-ProtectedText -Path $TokenSecretPath -Entropy 'agentdock.oauth.secret.v1'
+    $tokenSecret = $RequestedTokenSecret
+    if ([string]::IsNullOrWhiteSpace($tokenSecret)) {
+        $tokenSecret = [Environment]::GetEnvironmentVariable('AGENTDOCK_OAUTH_TOKEN_SECRET')
+    }
+    if ([string]::IsNullOrWhiteSpace($tokenSecret)) {
+        $tokenSecret = $existingTokenSecret
+    }
+    if ([string]::IsNullOrWhiteSpace($tokenSecret)) {
+        $tokenSecret = New-AgentDockSecret -ByteCount 32
+    }
+    if ([Text.Encoding]::UTF8.GetByteCount($tokenSecret) -lt 32) {
+        throw 'OAuth token secret must contain at least 32 bytes.'
+    }
+    if (-not [string]::Equals($tokenSecret, $existingTokenSecret, [StringComparison]::Ordinal)) {
+        Write-ProtectedText -Path $TokenSecretPath -Value $tokenSecret -Entropy 'agentdock.oauth.secret.v1'
+    }
+
+    return [pscustomobject]@{
+        Password = $password
+        TokenSecret = $tokenSecret
+    }
+}
+
 function Write-RuntimeManifest {
     param(
         [string] $Path,
+        [string] $RuntimeVersion,
+        [string] $InstallRoot,
         [string] $AgentDockBinary,
         [string] $TrayBinary,
         [string] $AgentDockLauncher,
         [string] $AgentDockTaskName,
         [string] $PrivilegeMode,
+        [string] $CloudflaredBinary,
         [string] $CloudflaredLauncher,
+        [string] $CoreStartupValueName,
+        [string] $TrayStartupValueName,
+        [string] $TunnelStartupValueName,
         [int] $RuntimePort,
         [string] $RuntimeTunnelMode,
         [string] $RuntimePublicUrl,
@@ -264,12 +320,18 @@ function Write-RuntimeManifest {
 
     $manifest = [ordered]@{
         schema_version = 1
+        version = $RuntimeVersion
+        install_root = $InstallRoot
         agentdock_binary = $AgentDockBinary
         tray_binary = $TrayBinary
         agentdock_launcher = $AgentDockLauncher
         agentdock_task_name = $AgentDockTaskName
         privilege_mode = $PrivilegeMode
+        cloudflared_binary = $CloudflaredBinary
         cloudflared_launcher = $CloudflaredLauncher
+        startup_value_name = $CoreStartupValueName
+        tray_startup_value_name = $TrayStartupValueName
+        cloudflared_startup_value_name = $TunnelStartupValueName
         host = '127.0.0.1'
         port = $RuntimePort
         local_mcp_url = "http://127.0.0.1:$RuntimePort/mcp"
@@ -740,7 +802,7 @@ function Start-AgentDockTray {
     if (-not (Test-Path -LiteralPath $BinaryPath -PathType Leaf)) {
         throw "AgentDock tray was not found: $BinaryPath"
     }
-    Start-Process -FilePath $BinaryPath -WindowStyle Hidden | Out-Null
+    Start-Process -FilePath $BinaryPath -ArgumentList '--background' -WindowStyle Hidden | Out-Null
 }
 
 function Install-AgentDockBinary {
@@ -820,7 +882,7 @@ function Wait-AgentDockHealth {
     param([int] $HealthPort)
 
     $healthUrl = "http://127.0.0.1:$HealthPort/healthz"
-    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
     do {
         Start-Sleep -Milliseconds 500
         try {
@@ -978,12 +1040,16 @@ $trayBackup = Join-Path $tempRoot 'agentdock-tray.exe.previous'
 $trayIconBackup = Join-Path $tempRoot 'agentdock.ico.previous'
 $cloudflaredBackup = Join-Path $tempRoot 'cloudflared.exe.previous'
 $runtimeDir = Split-Path -Parent $InstallDir
+$installerDir = Join-Path $runtimeDir 'installer'
+$managerScriptPath = Join-Path $installerDir 'manage-windows.ps1'
 $launcherPath = Join-Path $runtimeDir 'start-agentdock.ps1'
 $cloudflaredLauncherPath = Join-Path $runtimeDir 'start-cloudflared.ps1'
 $tokenPath = Join-Path $runtimeDir 'auth-token.dpapi'
 $oauthPasswordPath = Join-Path $runtimeDir 'oauth-password.dpapi'
 $oauthTokenSecretPath = Join-Path $runtimeDir 'oauth-token-secret.dpapi'
 $serverUrlPath = Join-Path $runtimeDir 'server-url.txt'
+$namedServerUrlPath = Join-Path $runtimeDir 'named-server-url.txt'
+$controlPanelSettingsPath = Join-Path $runtimeDir 'control-panel-settings.json'
 $tunnelModePath = Join-Path $runtimeDir 'cloudflared-mode.txt'
 $tunnelTokenPath = Join-Path $runtimeDir 'cloudflared-token.dpapi'
 $runtimeManifestPath = Join-Path $runtimeDir 'runtime.json'
@@ -1030,17 +1096,25 @@ $taskTransactionCommitted = $false
 $taskRestored = $false
 $installErrorCode = ''
 $resolvedTunnelMode = Resolve-TunnelMode -RequestedMode $TunnelMode -ModePath $tunnelModePath -StartupRequested ([bool] $RegisterStartup) -PublicAccessRequested ([bool] $ConfigurePublicAccess)
+$existingTunnelMode = (Read-TextFile -Path $tunnelModePath).ToLowerInvariant()
+$existingActiveServerUrl = Read-TextFile -Path $serverUrlPath
+if ($existingTunnelMode -eq 'named' -and -not [string]::IsNullOrWhiteSpace($existingActiveServerUrl)) {
+    Write-TextFile -Path $namedServerUrlPath -Value $existingActiveServerUrl
+}
 if ($resolvedTunnelMode -ne 'none' -or (Test-Path -LiteralPath $tunnelModePath -PathType Leaf)) {
     $RegisterStartup = $true
 }
 
 $managedRuntimeFiles = @(
+    @{ Path = $managerScriptPath; Name = 'manage-windows.ps1' },
     @{ Path = $launcherPath; Name = 'start-agentdock.ps1' },
     @{ Path = $cloudflaredLauncherPath; Name = 'start-cloudflared.ps1' },
     @{ Path = $tokenPath; Name = 'auth-token.dpapi' },
     @{ Path = $oauthPasswordPath; Name = 'oauth-password.dpapi' },
     @{ Path = $oauthTokenSecretPath; Name = 'oauth-token-secret.dpapi' },
     @{ Path = $serverUrlPath; Name = 'server-url.txt' },
+    @{ Path = $namedServerUrlPath; Name = 'named-server-url.txt' },
+    @{ Path = $controlPanelSettingsPath; Name = 'control-panel-settings.json' },
     @{ Path = $tunnelModePath; Name = 'cloudflared-mode.txt' },
     @{ Path = $tunnelTokenPath; Name = 'cloudflared-token.dpapi' },
     @{ Path = $runtimeManifestPath; Name = 'runtime.json' },
@@ -1104,11 +1178,15 @@ try {
     }
     $sourceTrayBinary = Join-Path $extractDir 'agentdock-tray.exe'
     $sourceTrayIcon = Join-Path $extractDir 'agentdock.ico'
+    $sourceManagerScript = Join-Path $extractDir 'manage-windows.ps1'
     if (-not (Test-Path -LiteralPath $sourceTrayBinary -PathType Leaf)) {
         throw "Release archive does not contain agentdock-tray.exe: $assetName"
     }
     if (-not (Test-Path -LiteralPath $sourceTrayIcon -PathType Leaf)) {
         throw "Release archive does not contain agentdock.ico: $assetName"
+    }
+    if (-not (Test-Path -LiteralPath $sourceManagerScript -PathType Leaf)) {
+        throw "Release archive does not contain manage-windows.ps1: $assetName"
     }
     $coreSkillBundle = Join-Path $extractDir 'share\agentdock\core-skills'
     $coreSkillManifest = Join-Path $coreSkillBundle 'manifest.json'
@@ -1150,6 +1228,8 @@ try {
     $trayReplacementStarted = $true
     Install-AgentDockBinary -SourceBinary $sourceTrayBinary -DestinationBinary $destinationTrayBinary
     Copy-Item -LiteralPath $sourceTrayIcon -Destination $destinationTrayIcon -Force
+    New-Item -ItemType Directory -Path $installerDir -Force | Out-Null
+    Copy-Item -LiteralPath $sourceManagerScript -Destination $managerScriptPath -Force
     Add-UserPath -Directory $InstallDir
 
     $agentDockHome = Join-Path $userHome '.agentdock'
@@ -1157,6 +1237,19 @@ try {
     foreach ($directory in @($agentDockHome, $workspace)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
+
+    $cloudflaredProcessWasRunning = @(Get-CloudflaredProcesses -BinaryPath $cloudflaredBinary).Count -gt 0
+    $cloudflaredStopAttempted = $true
+    [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
+    if (Test-Path -LiteralPath $cloudflaredBinary -PathType Leaf) {
+        Copy-Item -LiteralPath $cloudflaredBinary -Destination $cloudflaredBackup -Force
+    }
+    $cloudflaredReplacementStarted = $true
+    Install-CloudflaredBinary `
+        -DestinationBinary $cloudflaredBinary `
+        -Architecture $architecture `
+        -TempDirectory $tempRoot `
+        -SourceBinary $OfflineCloudflaredBinary
 
     $publicUrl = ''
     if ($RegisterStartup) {
@@ -1173,41 +1266,15 @@ try {
             Write-ProtectedText -Path $tokenPath -Value $AuthToken -Entropy 'agentdock.startup.v1'
         }
 
+        $oauthCredentials = Initialize-OAuthCredentials `
+            -PasswordPath $oauthPasswordPath `
+            -TokenSecretPath $oauthTokenSecretPath `
+            -RequestedPassword $OAuthPassword `
+            -RequestedTokenSecret $OAuthTokenSecret
+        $OAuthPassword = $oauthCredentials.Password
+        $OAuthTokenSecret = $oauthCredentials.TokenSecret
+
         if ($resolvedTunnelMode -ne 'none') {
-            $existingOAuthPassword = Read-ProtectedText -Path $oauthPasswordPath -Entropy 'agentdock.oauth.password.v1'
-            if ([string]::IsNullOrWhiteSpace($OAuthPassword)) {
-                $OAuthPassword = [Environment]::GetEnvironmentVariable('AGENTDOCK_OAUTH_PASSWORD')
-            }
-            if ([string]::IsNullOrWhiteSpace($OAuthPassword)) {
-                $OAuthPassword = $existingOAuthPassword
-            }
-            if ([string]::IsNullOrWhiteSpace($OAuthPassword)) {
-                $OAuthPassword = New-AgentDockSecret -ByteCount 12
-            }
-            if ($OAuthPassword.Length -lt 12) {
-                throw 'OAuth password must contain at least 12 characters.'
-            }
-            if (-not [string]::Equals($OAuthPassword, $existingOAuthPassword, [StringComparison]::Ordinal)) {
-                Write-ProtectedText -Path $oauthPasswordPath -Value $OAuthPassword -Entropy 'agentdock.oauth.password.v1'
-            }
-
-            $existingOAuthTokenSecret = Read-ProtectedText -Path $oauthTokenSecretPath -Entropy 'agentdock.oauth.secret.v1'
-            if ([string]::IsNullOrWhiteSpace($OAuthTokenSecret)) {
-                $OAuthTokenSecret = [Environment]::GetEnvironmentVariable('AGENTDOCK_OAUTH_TOKEN_SECRET')
-            }
-            if ([string]::IsNullOrWhiteSpace($OAuthTokenSecret)) {
-                $OAuthTokenSecret = $existingOAuthTokenSecret
-            }
-            if ([string]::IsNullOrWhiteSpace($OAuthTokenSecret)) {
-                $OAuthTokenSecret = New-AgentDockSecret -ByteCount 32
-            }
-            if ([Text.Encoding]::UTF8.GetByteCount($OAuthTokenSecret) -lt 32) {
-                throw 'OAuth token secret must contain at least 32 bytes.'
-            }
-            if (-not [string]::Equals($OAuthTokenSecret, $existingOAuthTokenSecret, [StringComparison]::Ordinal)) {
-                Write-ProtectedText -Path $oauthTokenSecretPath -Value $OAuthTokenSecret -Entropy 'agentdock.oauth.secret.v1'
-            }
-
             $existingServerUrl = Read-TextFile -Path $serverUrlPath
             if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
                 $ServerUrl = [Environment]::GetEnvironmentVariable('AGENTDOCK_SERVER_URL')
@@ -1215,11 +1282,18 @@ try {
             if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
                 $ServerUrl = $existingServerUrl
             }
+            if ($resolvedTunnelMode -eq 'named' -and [string]::IsNullOrWhiteSpace($ServerUrl)) {
+                $ServerUrl = Read-TextFile -Path $namedServerUrlPath
+            }
+            if ($resolvedTunnelMode -eq 'quick') {
+                $ServerUrl = ''
+            }
             if ($resolvedTunnelMode -eq 'named') {
                 if ([string]::IsNullOrWhiteSpace($ServerUrl)) {
                     $ServerUrl = Read-Host 'Fixed HTTPS public origin, for example https://agent.example.com'
                 }
                 $ServerUrl = Normalize-ServerUrl -Value $ServerUrl
+                Write-TextFile -Path $namedServerUrlPath -Value $ServerUrl
 
                 $existingTunnelToken = Read-ProtectedText -Path $tunnelTokenPath -Entropy 'agentdock.cloudflare.tunnel.v1'
                 if ([string]::IsNullOrWhiteSpace($TunnelToken) -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {
@@ -1245,6 +1319,10 @@ try {
             }
             Write-TextFile -Path $serverUrlPath -Value $ServerUrl
             Write-TextFile -Path $tunnelModePath -Value $resolvedTunnelMode
+        } else {
+            Write-TextFile -Path $serverUrlPath -Value ''
+            Write-TextFile -Path $tunnelModePath -Value 'none'
+            Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
         }
 
         $escapedTokenPath = $tokenPath.Replace("'", "''")
@@ -1294,25 +1372,12 @@ if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
             Start-AgentDockLauncher -LauncherPath $launcherPath
         }
         $startupRegistrationChanged = $true
-        $trayStartupCommand = "`"$destinationTrayBinary`""
+        $trayStartupCommand = "`"$destinationTrayBinary`" --background"
         New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $trayStartupCommand -PropertyType String -Force | Out-Null
         $trayStartupRegistrationChanged = $true
         Wait-AgentDockHealth -HealthPort $Port
 
         if ($resolvedTunnelMode -ne 'none') {
-            $cloudflaredProcessWasRunning = @(Get-CloudflaredProcesses -BinaryPath $cloudflaredBinary).Count -gt 0
-            $cloudflaredStopAttempted = $true
-            [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
-            if (Test-Path -LiteralPath $cloudflaredBinary -PathType Leaf) {
-                Copy-Item -LiteralPath $cloudflaredBinary -Destination $cloudflaredBackup -Force
-            }
-            $cloudflaredReplacementStarted = $true
-            Install-CloudflaredBinary `
-                -DestinationBinary $cloudflaredBinary `
-                -Architecture $architecture `
-                -TempDirectory $tempRoot `
-                -SourceBinary $OfflineCloudflaredBinary
-
             $escapedCloudflaredPath = $cloudflaredBinary.Replace("'", "''")
             $escapedTunnelModePath = $tunnelModePath.Replace("'", "''")
             $escapedTunnelTokenPath = $tunnelTokenPath.Replace("'", "''")
@@ -1390,7 +1455,7 @@ function Stop-AgentDockByPath {
 }
 
 function Wait-AgentDockHealth {
-    `$deadline = [DateTime]::UtcNow.AddSeconds(25)
+    `$deadline = [DateTime]::UtcNow.AddSeconds(45)
     do {
         Start-Sleep -Milliseconds 500
         try {
@@ -1519,14 +1584,11 @@ exit `$process.ExitCode
                 Wait-CloudflaredRunning -BinaryPath $cloudflaredBinary
             }
         } else {
-            $cloudflaredProcessWasRunning = @(Get-CloudflaredProcesses -BinaryPath $cloudflaredBinary).Count -gt 0
-            $cloudflaredStopAttempted = $true
-            [void] (Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary)
             Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
             $tunnelStartupRegistrationChanged = $true
-            foreach ($path in @($cloudflaredLauncherPath, $tunnelModePath, $tunnelTokenPath, $serverUrlPath, $quickTunnelUrlPath, $oauthPasswordPath, $oauthTokenSecretPath)) {
-                Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-            }
+            Write-TextFile -Path $tunnelModePath -Value 'none'
+            Write-TextFile -Path $serverUrlPath -Value ''
+            Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -1547,12 +1609,18 @@ exit `$process.ExitCode
     }
     Write-RuntimeManifest `
         -Path $runtimeManifestPath `
+        -RuntimeVersion $Version `
+        -InstallRoot $runtimeDir `
         -AgentDockBinary $destinationBinary `
         -TrayBinary $destinationTrayBinary `
         -AgentDockLauncher $launcherPath `
         -AgentDockTaskName $(if ($effectivePrivilegeMode -eq 'elevated') { 'AgentDock' } else { '' }) `
         -PrivilegeMode $effectivePrivilegeMode `
+        -CloudflaredBinary $cloudflaredBinary `
         -CloudflaredLauncher $cloudflaredLauncherPath `
+        -CoreStartupValueName $runValueName `
+        -TrayStartupValueName $trayRunValueName `
+        -TunnelStartupValueName $cloudflaredRunValueName `
         -RuntimePort $Port `
         -RuntimeTunnelMode $resolvedTunnelMode `
         -RuntimePublicUrl $publicUrl `

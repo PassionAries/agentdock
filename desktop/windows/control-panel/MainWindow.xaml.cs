@@ -1,0 +1,431 @@
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using Application = System.Windows.Application;
+using Clipboard = System.Windows.Clipboard;
+using Color = System.Windows.Media.Color;
+using MessageBox = System.Windows.MessageBox;
+
+namespace AgentDock.ControlPanel;
+
+public partial class MainWindow : Window
+{
+    private readonly RuntimeService _runtime;
+    private readonly DispatcherTimer _refreshTimer;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly Dictionary<PasswordBox, Stack<string>> _passwordHistory = new();
+    private RuntimeSnapshot? _snapshot;
+    private string _bearerToken = "";
+    private string _oauthPassword = "";
+    private bool _showBearer;
+    private bool _showOAuth;
+    private bool _updatingUi;
+    private bool _settingsLoaded;
+    private string _lastAutoTestOrigin = "";
+    private DateTimeOffset _lastAutoTestAt = DateTimeOffset.MinValue;
+
+    public MainWindow(RuntimeService runtime)
+    {
+        _runtime = runtime;
+        InitializeComponent();
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _refreshTimer.Tick += async (_, _) => await RefreshAsync();
+        Loaded += async (_, _) =>
+        {
+            _refreshTimer.Start();
+            await RefreshAsync();
+        };
+        Closing += MainWindow_Closing;
+    }
+
+    public async Task RefreshAsync()
+    {
+        if (!await _refreshGate.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            FooterStatusText.Text = "正在刷新…";
+            var snapshot = await _runtime.GetSnapshotAsync();
+            _snapshot = snapshot;
+            _bearerToken = _runtime.ReadBearerToken();
+            _oauthPassword = _runtime.ReadOAuthPassword();
+            ApplySnapshot(snapshot);
+            FooterStatusText.Text = $"上次刷新：{snapshot.CheckedAt:HH:mm:ss}";
+            await AutoTestPublicAsync(snapshot);
+        }
+        catch (Exception ex)
+        {
+            FooterStatusText.Text = ex.Message;
+            HeaderStatusText.Text = "状态读取失败";
+            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 45, 32));
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
+    private void ApplySnapshot(RuntimeSnapshot snapshot)
+    {
+        _updatingUi = true;
+        try
+        {
+            HeaderStatusText.Text = snapshot.Healthy ? "运行正常" : snapshot.CoreRunning ? "运行但健康检查失败" : "已停止";
+            StatusDot.Fill = new SolidColorBrush(snapshot.Healthy
+                ? Color.FromRgb(18, 183, 106)
+                : snapshot.CoreRunning ? Color.FromRgb(247, 144, 9) : Color.FromRgb(152, 162, 179));
+            ServiceStatusText.Text = snapshot.CoreRunning ? "正在运行" : "已停止";
+            HealthStatusText.Text = snapshot.Healthy ? "正常" : "不可用";
+            VersionText.Text = string.IsNullOrWhiteSpace(snapshot.Manifest.Version) ? "未知" : snapshot.Manifest.Version;
+            LocalMcpTextBox.Text = snapshot.LocalMcpUrl;
+            PublicMcpTextBox.Text = snapshot.PublicMcpUrl;
+            UpdateCredentialText();
+
+            LocalModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "none", StringComparison.OrdinalIgnoreCase);
+            QuickModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "quick", StringComparison.OrdinalIgnoreCase);
+            NamedModeRadio.IsChecked = string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase);
+            if (!ServerUrlTextBox.IsKeyboardFocusWithin &&
+                (string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(ServerUrlTextBox.Text)))
+            {
+                ServerUrlTextBox.Text = string.Equals(snapshot.TunnelMode, "named", StringComparison.OrdinalIgnoreCase)
+                    ? snapshot.PublicOrigin
+                    : snapshot.SavedNamedOrigin;
+            }
+            TunnelTokenStoredText.Text = snapshot.TunnelTokenStored ? "已使用当前 Windows 用户 DPAPI 保存" : "未保存";
+            CoreStartupCheckBox.IsChecked = snapshot.CoreStartupEnabled;
+            TrayStartupCheckBox.IsChecked = snapshot.TrayStartupEnabled;
+
+            if (!_settingsLoaded)
+            {
+                PortTextBox.Text = snapshot.Settings.Port.ToString();
+                SelectLogLevel(snapshot.Settings.LogLevel);
+                NexusEndpointTextBox.Text = snapshot.Settings.NexusEndpoint;
+                BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
+                BrowserRunnerDirTextBox.Text = snapshot.Settings.BrowserRunnerDir;
+                BrowserNodePathTextBox.Text = snapshot.Settings.BrowserNodePath;
+                _settingsLoaded = true;
+            }
+
+            UpdateTunnelModeUi();
+        }
+        finally
+        {
+            _updatingUi = false;
+        }
+    }
+
+    private async Task AutoTestPublicAsync(RuntimeSnapshot snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.PublicOrigin))
+        {
+            PublicTestStatusText.Text = snapshot.TunnelMode == "quick" ? "正在等待新的临时地址…" : "未配置公网地址";
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(snapshot.PublicOrigin, _lastAutoTestOrigin, StringComparison.OrdinalIgnoreCase) &&
+            now - _lastAutoTestAt < TimeSpan.FromSeconds(15))
+        {
+            return;
+        }
+
+        _lastAutoTestOrigin = snapshot.PublicOrigin;
+        _lastAutoTestAt = now;
+        PublicTestStatusText.Text = "正在自动检测公网地址…";
+        var result = await _runtime.TestUrlAsync(snapshot.PublicOrigin);
+        PublicTestStatusText.Text = result.Message;
+    }
+
+    private async Task ExecuteActionAsync(string pendingText, Func<Task> action, TextBlock? statusTarget = null)
+    {
+        statusTarget ??= FooterStatusText;
+        statusTarget.Text = pendingText;
+        try
+        {
+            await action();
+            statusTarget.Text = "操作完成";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            statusTarget.Text = ex.Message;
+            MessageBox.Show(this, ex.Message, "AgentDock", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private Task RunCoreActionAsync(string action, string pendingText) =>
+        ExecuteActionAsync(pendingText, () => _runtime.RunActionAsync(action));
+
+    private async void StartButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("start", "正在启动…");
+    private async void StopButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("stop", "正在停止…");
+    private async void RestartButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("restart", "正在重启…");
+    private async void UpdateButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("update", "正在检查并更新…");
+    private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
+
+    private void CopyLocalMcpButton_Click(object sender, RoutedEventArgs e) => CopyText(LocalMcpTextBox.Text, "本地 MCP 地址已复制");
+    private void CopyPublicMcpButton_Click(object sender, RoutedEventArgs e) => CopyText(PublicMcpTextBox.Text, "公网 MCP 地址已复制");
+    private void CopyBearerButton_Click(object sender, RoutedEventArgs e) => CopyText(_bearerToken, "Bearer Token 已复制");
+    private void CopyOAuthButton_Click(object sender, RoutedEventArgs e) => CopyText(_oauthPassword, "OAuth 密码已复制");
+
+    private void ToggleBearerButton_Click(object sender, RoutedEventArgs e)
+    {
+        _showBearer = !_showBearer;
+        UpdateCredentialText();
+    }
+
+    private void ToggleOAuthButton_Click(object sender, RoutedEventArgs e)
+    {
+        _showOAuth = !_showOAuth;
+        UpdateCredentialText();
+    }
+
+    private void UpdateCredentialText()
+    {
+        BearerTokenTextBox.Text = _showBearer ? _bearerToken : MaskSecret(_bearerToken);
+        OAuthPasswordTextBox.Text = _showOAuth ? _oauthPassword : MaskSecret(_oauthPassword);
+        ToggleBearerButton.Content = _showBearer ? "隐藏" : "显示";
+        ToggleOAuthButton.Content = _showOAuth ? "隐藏" : "显示";
+    }
+
+    private static string MaskSecret(string value) => string.IsNullOrEmpty(value) ? "未配置" : new string('●', Math.Clamp(value.Length, 8, 32));
+
+    private void CopyText(string value, string successMessage)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            FooterStatusText.Text = "没有可复制的内容";
+            return;
+        }
+        Clipboard.SetText(value);
+        FooterStatusText.Text = successMessage;
+    }
+
+    private async void TestPublicButton_Click(object sender, RoutedEventArgs e)
+    {
+        var origin = _snapshot?.PublicOrigin ?? "";
+        if (string.IsNullOrWhiteSpace(origin))
+        {
+            PublicTestStatusText.Text = "当前没有公网地址";
+            return;
+        }
+        PublicTestStatusText.Text = "正在测试…";
+        var result = await _runtime.TestUrlAsync(origin);
+        PublicTestStatusText.Text = result.Message;
+    }
+
+    private void TunnelModeRadio_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_updatingUi)
+        {
+            UpdateTunnelModeUi();
+        }
+    }
+
+    private void UpdateTunnelModeUi()
+    {
+        var named = NamedModeRadio.IsChecked == true;
+        var quick = QuickModeRadio.IsChecked == true;
+        NamedTunnelGroup.IsEnabled = named;
+        RegenerateQuickButton.IsEnabled = quick;
+    }
+
+    private string SelectedTunnelMode()
+    {
+        if (QuickModeRadio.IsChecked == true)
+        {
+            return "quick";
+        }
+        if (NamedModeRadio.IsChecked == true)
+        {
+            return "named";
+        }
+        return "none";
+    }
+
+    private async void ApplyTunnelModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        var mode = SelectedTunnelMode();
+        if (mode == "quick")
+        {
+            PublicMcpTextBox.Text = "";
+            PublicTestStatusText.Text = "正在生成新的临时地址…";
+            _lastAutoTestOrigin = "";
+        }
+        await ExecuteActionAsync(
+            "正在切换公网访问模式…",
+            () => _runtime.SetTunnelModeAsync(mode, ServerUrlTextBox.Text.Trim(), TunnelTokenPasswordBox.Password),
+            TunnelActionStatusText);
+        TunnelTokenPasswordBox.Clear();
+    }
+
+    private async void RegenerateQuickButton_Click(object sender, RoutedEventArgs e)
+    {
+        PublicMcpTextBox.Text = "";
+        PublicTestStatusText.Text = "正在生成新的临时地址…";
+        TunnelActionStatusText.Text = "旧地址已隐藏，正在启动新的 Quick Tunnel…";
+        _lastAutoTestOrigin = "";
+        await ExecuteActionAsync(
+            "旧地址已隐藏，正在启动新的 Quick Tunnel…",
+            () => _runtime.RegenerateQuickTunnelAsync(),
+            TunnelActionStatusText);
+    }
+
+    private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(PortTextBox.Text.Trim(), out var port) || port is < 1 or > 65535)
+        {
+            MessageBox.Show(this, "端口必须是 1 到 65535 之间的整数。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var settings = new ControlPanelSettings
+        {
+            Port = port,
+            LogLevel = SelectedLogLevel(),
+            NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
+            BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
+            BrowserRunnerDir = BrowserRunnerDirTextBox.Text.Trim(),
+            BrowserNodePath = BrowserNodePathTextBox.Text.Trim()
+        };
+        await ExecuteActionAsync(
+            "正在保存设置并重启…",
+            () => _runtime.SaveSettingsAsync(settings, NexusTokenPasswordBox.Password),
+            SettingsStatusText);
+        NexusTokenPasswordBox.Clear();
+    }
+
+    private async void CoreStartupCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingUi)
+        {
+            return;
+        }
+        await ExecuteActionAsync(
+            "正在更新核心开机启动…",
+            () => _runtime.SetStartupAsync("core", CoreStartupCheckBox.IsChecked == true),
+            SettingsStatusText);
+    }
+
+    private async void TrayStartupCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingUi)
+        {
+            return;
+        }
+        await ExecuteActionAsync(
+            "正在更新托盘开机启动…",
+            () => _runtime.SetStartupAsync("tray", TrayStartupCheckBox.IsChecked == true),
+            SettingsStatusText);
+    }
+
+    private void SelectLogLevel(string value)
+    {
+        foreach (var item in LogLevelComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Content?.ToString(), value, StringComparison.OrdinalIgnoreCase))
+            {
+                LogLevelComboBox.SelectedItem = item;
+                return;
+            }
+        }
+        LogLevelComboBox.SelectedIndex = 1;
+    }
+
+    private string SelectedLogLevel() =>
+        (LogLevelComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "info";
+
+    private void OpenLogsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _runtime.OpenLogsDirectory();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "AgentDock", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void OpenConfigButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _runtime.OpenConfigDirectory();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "AgentDock", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void PasswordBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not PasswordBox passwordBox || (Keyboard.Modifiers & ModifierKeys.Control) == 0)
+        {
+            return;
+        }
+
+        if (!_passwordHistory.TryGetValue(passwordBox, out var history))
+        {
+            history = new Stack<string>();
+            _passwordHistory[passwordBox] = history;
+        }
+
+        switch (e.Key)
+        {
+            case Key.A:
+                passwordBox.SelectAll();
+                e.Handled = true;
+                break;
+            case Key.C:
+                if (!string.IsNullOrEmpty(passwordBox.Password))
+                {
+                    Clipboard.SetText(passwordBox.Password);
+                }
+                e.Handled = true;
+                break;
+            case Key.X:
+                history.Push(passwordBox.Password);
+                if (!string.IsNullOrEmpty(passwordBox.Password))
+                {
+                    Clipboard.SetText(passwordBox.Password);
+                }
+                passwordBox.Clear();
+                e.Handled = true;
+                break;
+            case Key.V:
+                history.Push(passwordBox.Password);
+                if (Clipboard.ContainsText())
+                {
+                    passwordBox.Password = Clipboard.GetText();
+                    passwordBox.SelectAll();
+                }
+                e.Handled = true;
+                break;
+            case Key.Z:
+                if (history.Count > 0)
+                {
+                    passwordBox.Password = history.Pop();
+                    passwordBox.SelectAll();
+                }
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (Application.Current is App app && !app.ExitRequested)
+        {
+            e.Cancel = true;
+            Hide();
+            FooterStatusText.Text = "控制面板已最小化到系统托盘";
+        }
+    }
+}

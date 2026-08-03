@@ -112,6 +112,7 @@ $agentDockBinary = Join-Path $installDir 'agentdock.exe'
 $trayBinary = Join-Path $installDir 'agentdock-tray.exe'
 $cloudflaredBinary = Join-Path $installDir 'cloudflared.exe'
 $cloudflaredLauncher = Join-Path $runtimeDir 'start-cloudflared.ps1'
+$managerPath = Join-Path $runtimeDir 'installer\manage-windows.ps1'
 $urlSourcePath = Join-Path $installDir 'quick-url-source.txt'
 $quickUrlPath = Join-Path $runtimeDir 'quick-tunnel-url.txt'
 $serverUrlPath = Join-Path $runtimeDir 'server-url.txt'
@@ -127,6 +128,7 @@ $port = Get-FreeTcpPort
 $healthUrl = "http://127.0.0.1:$port/healthz"
 $firstUrl = 'https://first-agentdock-test.trycloudflare.com'
 $secondUrl = 'https://second-agentdock-test.trycloudflare.com'
+$thirdUrl = 'https://third-agentdock-test.trycloudflare.com'
 $oldUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $refreshLauncher = $null
 
@@ -156,6 +158,7 @@ try {
         $trayBinary,
         $cloudflaredBinary,
         $cloudflaredLauncher,
+        $managerPath,
         $quickUrlPath,
         $serverUrlPath,
         $manifestPath,
@@ -222,7 +225,41 @@ try {
         throw 'Quick Tunnel refresh unexpectedly rotated existing credentials.'
     }
 
-    Write-Host "Windows Quick Tunnel lifecycle passed: $firstUrl -> $secondUrl"
+    & $managerPath -Action set-mode -RuntimeRoot $runtimeDir -Mode none
+    Wait-Healthy -Url $healthUrl
+    Wait-TextFileValue -Path $serverUrlPath -ExpectedValue ''
+    if (Test-Path -LiteralPath $quickUrlPath -PathType Leaf) {
+        throw 'Switching to local-only mode did not remove the active Quick Tunnel URL.'
+    }
+    $noneManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($noneManifest.tunnel_mode -ne 'none' -or -not [string]::IsNullOrWhiteSpace($noneManifest.public_url)) {
+        throw "Local-only runtime manifest is invalid: $($noneManifest | ConvertTo-Json -Compress)"
+    }
+    if (@(Get-ProcessIdsByPath -ProcessName 'cloudflared' -BinaryPath $cloudflaredBinary).Count -ne 0) {
+        throw 'Switching to local-only mode did not stop cloudflared.'
+    }
+    if ((Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash -ne $authHash -or
+        (Get-FileHash -LiteralPath $oauthPasswordPath -Algorithm SHA256).Hash -ne $oauthPasswordHash -or
+        (Get-FileHash -LiteralPath $oauthSecretPath -Algorithm SHA256).Hash -ne $oauthSecretHash) {
+        throw 'Switching to local-only mode unexpectedly changed existing credentials.'
+    }
+
+    [IO.File]::WriteAllText($urlSourcePath, $thirdUrl, [Text.UTF8Encoding]::new($false))
+    & $managerPath -Action set-mode -RuntimeRoot $runtimeDir -Mode quick
+    Wait-TextFileValue -Path $quickUrlPath -ExpectedValue $thirdUrl
+    Wait-TextFileValue -Path $serverUrlPath -ExpectedValue $thirdUrl
+    Wait-Healthy -Url $healthUrl
+    $thirdManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($thirdManifest.tunnel_mode -ne 'quick' -or $thirdManifest.public_url -ne $thirdUrl) {
+        throw "Quick Tunnel mode was not restored: $($thirdManifest | ConvertTo-Json -Compress)"
+    }
+    if ((Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash -ne $authHash -or
+        (Get-FileHash -LiteralPath $oauthPasswordPath -Algorithm SHA256).Hash -ne $oauthPasswordHash -or
+        (Get-FileHash -LiteralPath $oauthSecretPath -Algorithm SHA256).Hash -ne $oauthSecretHash) {
+        throw 'Restoring Quick Tunnel mode unexpectedly changed existing credentials.'
+    }
+
+    Write-Host "Windows Quick Tunnel lifecycle passed: $firstUrl -> $secondUrl -> local-only -> $thirdUrl"
 
     & $UninstallerPath `
         -InstallDir $installDir `

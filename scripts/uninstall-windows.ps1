@@ -164,10 +164,13 @@ if (-not $KeepInstallDir) {
 foreach ($name in @(
     'start-agentdock.ps1',
     'start-cloudflared.ps1',
+    'installer\manage-windows.ps1',
     'auth-token.dpapi',
     'oauth-password.dpapi',
     'oauth-token-secret.dpapi',
     'server-url.txt',
+    'named-server-url.txt',
+    'control-panel-settings.json',
     'cloudflared-mode.txt',
     'cloudflared-token.dpapi',
     'cloudflared.out.log',

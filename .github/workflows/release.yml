@@ -218,6 +218,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
       - name: Test Windows private storage
         shell: powershell
         run: |
@@ -265,9 +270,15 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $buildDate = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
           $ldflags = "-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=$env:GITHUB_SHA -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=$buildDate"
+          $runtimeIdentifier = if ($env:GOARCH -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           go build -trimpath -ldflags $ldflags -o dist/agentdock.exe ./cmd/agentdock
-          go build -trimpath -ldflags '-s -w -H=windowsgui' -o dist/agentdock-tray.exe ./cmd/agentdock-tray
+          dotnet publish .\desktop\windows\control-panel\AgentDock.ControlPanel.csproj `
+            -c Release `
+            -r $runtimeIdentifier `
+            --self-contained true `
+            -o dist\control-panel
+          Copy-Item .\dist\control-panel\agentdock-tray.exe .\dist\agentdock-tray.exe -Force
 
       - name: Smoke test current binary as standard user
         if: matrix.goarch == 'amd64'
@@ -297,7 +308,8 @@ jobs:
           $asset = "agentdock_windows_$env:GOARCH.zip"
           python .\scripts\build-core-skill-bundle.py --output dist\share\agentdock\core-skills
           Copy-Item .\packaging\windows\assets\agentdock.ico dist\agentdock.ico -Force
-          Compress-Archive -Path dist\agentdock.exe, dist\agentdock-tray.exe, dist\agentdock.ico, dist\share -DestinationPath $asset -Force
+          Copy-Item .\scripts\manage-windows.ps1 dist\manage-windows.ps1 -Force
+          Compress-Archive -Path dist\agentdock.exe, dist\agentdock-tray.exe, dist\agentdock.ico, dist\manage-windows.ps1, dist\share -DestinationPath $asset -Force
           $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText("$asset.sha256", "$hash  $asset`n", [Text.UTF8Encoding]::new($false))
 

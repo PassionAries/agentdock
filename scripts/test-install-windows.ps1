@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string] $InstallerPath = (Join-Path $PSScriptRoot 'install.ps1')
+    [string] $InstallerPath = (Join-Path $PSScriptRoot 'install.ps1'),
+    [string] $ManagerPath = (Join-Path $PSScriptRoot 'manage-windows.ps1')
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +18,26 @@ $errors = $null
 if ($errors.Count -gt 0) {
     $errors | ForEach-Object { Write-Error $_.Message }
     throw "$InstallerPath contains PowerShell syntax errors"
+}
+
+$resolvedManager = Resolve-Path -LiteralPath $ManagerPath
+$managerTokens = $null
+$managerErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    $resolvedManager,
+    [ref] $managerTokens,
+    [ref] $managerErrors
+) | Out-Null
+if ($managerErrors.Count -gt 0) {
+    $managerErrors | ForEach-Object { Write-Error $_.Message }
+    throw "$ManagerPath contains PowerShell syntax errors"
+}
+$managerBytes = [IO.File]::ReadAllBytes($resolvedManager)
+if ($managerBytes.Length -lt 3 -or
+    $managerBytes[0] -ne 0xEF -or
+    $managerBytes[1] -ne 0xBB -or
+    $managerBytes[2] -ne 0xBF) {
+    throw "$ManagerPath must use UTF-8 with BOM for Windows PowerShell 5.1"
 }
 
 $content = Get-Content -LiteralPath $resolvedInstaller -Raw
@@ -68,6 +89,9 @@ foreach ($required in @(
     'New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName',
     'Start-AgentDockLauncher -LauncherPath $launcherPath',
     'Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath',
+    'Release archive does not contain manage-windows.ps1',
+    'Initialize-OAuthCredentials',
+    'named-server-url.txt',
     'cloudflared-windows-$Architecture.exe',
     'Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)',
     'Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl',
@@ -78,8 +102,8 @@ foreach ($required in @(
     'Write-TextAtomically -Path ''$escapedQuickTunnelUrlPath'' -Value `$publicUrl',
     'RedirectStandardOutput = ''$escapedCloudflaredStdoutLogPath''',
     'RedirectStandardError = ''$escapedCloudflaredStderrLogPath''',
-    'Write-ProtectedText -Path $oauthPasswordPath',
-    'Write-ProtectedText -Path $oauthTokenSecretPath',
+    'Write-ProtectedText -Path $PasswordPath',
+    'Write-ProtectedText -Path $TokenSecretPath',
     'Write-ProtectedText -Path $tunnelTokenPath',
     'Authentication: Bearer Token and OAuth are both enabled.',
     '$coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)',

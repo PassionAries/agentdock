@@ -135,6 +135,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"-SourceBinary $OfflineCloudflaredBinary",
 		"agentdock-tray.exe",
 		"agentdock.ico",
+		"manage-windows.ps1",
+		"Initialize-OAuthCredentials",
+		"named-server-url.txt",
 		"[switch] $ConfigurePublicAccess",
 		"[string] $TunnelTokenFile = ''",
 		"[switch] $DeleteTunnelTokenFile",
@@ -163,8 +166,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force",
 		"Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary",
 		"Write-ProtectedText -Path $tokenPath",
-		"Write-ProtectedText -Path $oauthPasswordPath",
-		"Write-ProtectedText -Path $oauthTokenSecretPath",
+		"Write-ProtectedText -Path $PasswordPath",
+		"Write-ProtectedText -Path $TokenSecretPath",
 		"Write-ProtectedText -Path $tunnelTokenPath",
 		"Copy-Item -LiteralPath $binaryBackup -Destination $destinationBinary -Force",
 		"DataProtectionScope]::CurrentUser",
@@ -247,6 +250,37 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 }
 
+func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.T) {
+	data, err := os.ReadFile("manage-windows.ps1")
+	if err != nil {
+		t.Fatalf("read manage-windows.ps1: %v", err)
+	}
+	if len(data) < 3 || data[0] != 0xef || data[1] != 0xbb || data[2] != 0xbf {
+		t.Fatal("manage-windows.ps1 must use UTF-8 with BOM for Windows PowerShell 5.1")
+	}
+
+	script := string(data)
+	for _, want := range []string{
+		"function Start-TaskPreservingStartupState",
+		"Enable-ScheduledTask -TaskName $TaskName",
+		"Disable-ScheduledTask -TaskName $TaskName",
+		"Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'none' -PublicUrl ''",
+		"named-server-url.txt",
+		"quick-tunnel-url.txt",
+		"agentdock.nexus.token.v1",
+		"'regenerate-quick'",
+		"'save-settings'",
+		"'set-startup'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("manage-windows.ps1 missing %q", want)
+		}
+	}
+	if strings.Contains(script, "RuntimeMode 'quick' -PublicUrl ''") {
+		t.Fatal("Quick Tunnel transition must not write an invalid quick manifest without public_url")
+	}
+}
+
 func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 	data, err := os.ReadFile("uninstall-windows.ps1")
 	if err != nil {
@@ -264,6 +298,9 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'runtime.json'",
 		"Remove-ItemProperty -LiteralPath $runKey -Name $CloudflaredStartupValueName",
 		"'start-cloudflared.ps1'",
+		"'installer\\manage-windows.ps1'",
+		"'named-server-url.txt'",
+		"'control-panel-settings.json'",
 		"'oauth-password.dpapi'",
 		"'oauth-token-secret.dpapi'",
 		"'cloudflared-token.dpapi'",
@@ -283,11 +320,11 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 
 func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
 	checks := map[string][]string{
-		filepath.Join("..", "desktop", "windows", "tray", "app_windows.go"): {
-			"menuRefreshQuickURL",
-			"重新生成临时公网地址",
-			"regenerateQuickTunnel",
-			"manifest.CloudflaredLauncher",
+		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
+			"RegenerateQuickButton_Click",
+			"RegenerateQuickTunnelAsync",
+			"旧地址已隐藏，正在启动新的 Quick Tunnel",
+			"PublicMcpTextBox.Text = \"\"",
 		},
 		filepath.Join("..", "desktop", "macos", "AgentDockApp", "Sources", "SetupWindowController.swift"): {
 			"refreshingQuickTunnel",
@@ -572,6 +609,8 @@ func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T
 		"WINDOWS_SIGNING_CERT_PASSWORD",
 		"sign-windows.ps1 -Path $paths",
 		"sign-windows.ps1 -Path $paths -VerifyOnly",
+		"dotnet publish .\\desktop\\windows\\control-panel\\AgentDock.ControlPanel.csproj",
+		"manage-windows.ps1",
 		"-AllowLegacyTaskMutation",
 	} {
 		if !strings.Contains(workflow, want) {
@@ -588,7 +627,8 @@ func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
 	workflow := string(data)
 	for _, want := range []string{
 		"WINDOWS_SIGNING_CERT_BASE64 is required for a formal release",
-		"dist/agentdock-tray.exe",
+		"dotnet publish .\\desktop\\windows\\control-panel\\AgentDock.ControlPanel.csproj",
+		"dist\\manage-windows.ps1",
 		"scripts\\sign-windows.ps1",
 		"build-windows-setup:",
 		"AgentDockSetup-amd64.exe",
