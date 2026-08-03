@@ -95,109 +95,73 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 ## 快速开始
 
-普通用户不需要下载源码、安装 Go 或自行构建镜像。
+普通用户直接使用正式安装包即可，不需要下载源码、安装 Go 或自己构建 AgentDock。
 
-完整安装入口：[安装 AgentDock](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/install)
+完整步骤见 [安装 AgentDock](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/install)。
 
-### Windows 安装
+| 平台 | 推荐安装方式 |
+| --- | --- |
+| Windows 11 | 签名离线 Setup.exe |
+| macOS 13 或更高版本 | 通用 DMG 图形应用 |
+| Linux | 官方自动安装脚本 |
+| 已安装 Docker | Docker Compose |
 
-Windows 普通用户从 Release 下载与系统架构匹配的签名离线安装包：常见 Intel/AMD 电脑使用 `AgentDockSetup-amd64.exe`，Windows ARM 设备使用 `AgentDockSetup-arm64.exe`。安装包已经包含 AgentDock 核心、托盘、内置 Skill 和 cloudflared，安装及升级过程中不会再从 GitHub 下载组件。安装向导默认只允许本机访问、登录后自动启动，并默认开启“管理员增强模式”。Setup 本身和系统托盘仍使用当前普通用户身份；安装时只通过一次 UAC 为 AgentDock 核心创建“最高权限”计划任务，DPAPI 凭据、Skill、任务和工作目录仍绑定当前登录用户。无法提权的账号会明确降级为普通用户模式。只有用户明确选择时才会配置临时或固定的 Cloudflare Tunnel 公网入口；检测到已有安装时默认直接升级并保留全部设置，只有主动选择“修改设置”才会展开配置页面。
+### Windows
 
-PowerShell 安装脚本继续保留给自动化和高级用户使用。
+1. 打开 [最新 Release](https://github.com/uvwt/agentdock/releases/latest)。
+2. 大多数 Intel/AMD 电脑下载 `AgentDockSetup-amd64.exe`；Windows ARM 设备下载 `AgentDockSetup-arm64.exe`。
+3. 正常双击安装，不要选择“以管理员身份运行”。
+4. 第一次使用建议保留默认启动设置，并选择“仅本机使用”。
+5. 点击“完成”后会打开控制面板；“添加桌面快捷方式”默认已勾选。
 
-### Docker 部署
+安装包已经包含 AgentDock 核心、控制面板、核心 Skill 和 Cloudflare 组件。升级时重新运行最新版 Setup，默认会保留任务、Skill、配置、连接方式和工作目录。
 
-正式镜像同步发布到 GitHub Container Registry 和 Docker Hub。Release 附带的 Compose 文件默认使用 GHCR，正式镜像以非 root 用户运行。
+详细说明见 [Windows 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows)。
+
+### macOS
+
+1. 从 [最新 Release](https://github.com/uvwt/agentdock/releases/latest) 下载 `AgentDock-macos-universal.dmg`。
+2. 打开 DMG，把 `AgentDock.app` 拖到“应用程序”。
+3. 第一次启动时，在“应用程序”中右键 AgentDock 并选择“打开”。
+4. 在图形界面中选择“仅本机”“临时地址”或“固定域名”，然后点击“安装并启动”。
+
+同一个 DMG 支持 Apple 芯片和 Intel Mac。当前免费版本尚未经过 Apple 公证，因此第一次启动需要手动确认一次，不需要关闭 Gatekeeper。
+
+详细说明见 [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos)。
+
+### Linux
+
+在终端运行：
 
 ```bash
-mkdir agentdock
-cd agentdock
+curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh \
+  -o /tmp/install-agentdock.sh
+sudo env AGENTDOCK_NONINTERACTIVE=true sh /tmp/install-agentdock.sh
+```
 
+安装器会使用安全默认值完成安装、启动和健康检查。详细说明见 [Linux 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/linux)。
+
+### Docker
+
+```bash
+mkdir agentdock && cd agentdock
 curl -fL \
   https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.yml \
   -o docker-compose.yml
-
 export AGENTDOCK_AUTH_TOKEN="$(openssl rand -hex 32)"
-
 docker compose pull
 docker compose up -d
 ```
 
-查看运行状态：
+默认 MCP 地址是 `http://127.0.0.1:18766/mcp`。数据持久化和公网访问见 [Docker 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
 
-```bash
-docker compose ps
-docker compose logs -f
-```
+### 连接方式如何选择
 
-默认 MCP 地址：
+- **仅本机**：客户端和 AgentDock 在同一台电脑上。第一次安装推荐选择这一项。
+- **临时公网地址**：没有域名，但需要从 ChatGPT、手机或其他设备连接。地址可能在 Tunnel 重启后变化。
+- **固定域名**：长期使用稳定公网地址，需要已接入 Cloudflare 的域名和 Tunnel Token。
 
-```text
-http://127.0.0.1:18766/mcp
-```
-
-停止服务：
-
-```bash
-docker compose down
-```
-
-完整配置、数据持久化和客户端接入方式见 [Docker 快速部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
-
-### macOS 图形安装
-
-普通 macOS 用户可以从 GitHub Release 下载 `AgentDock-macos-universal.dmg`，打开后把 `AgentDock.app` 拖到“应用程序”快捷入口。DMG 已内置 Apple Silicon 与 Intel 两种架构的 AgentDock 核心、核心 Skill 和 Cloudflare `cloudflared`，安装、升级和修复组件时不再联网下载；实际创建 Quick Tunnel 或认证 Named Tunnel 时仍需要网络。当前免费版本使用 ad-hoc 签名、未经过 Apple 公证，因此首次启动需要在“应用程序”中右键 AgentDock 并选择“打开”；之后不需要终端或管理员权限。
-
-首次启动的图形界面可以直接选择仅本机、临时公网或固定 Cloudflare 域名。固定域名和 Tunnel Token 都在图形表单中填写，Token 通过仅当前用户可读的临时文件交给安装器，不会进入进程命令行。
-
-安装完成后，主控制面板会显示服务状态、版本、本地与公网 MCP 地址，以及默认遮罩的 Bearer Token 和 OAuth 登录密码；两项凭据都支持独立显示和复制。公网地址会自动通过 `/healthz` 检测可达性，“公网 MCP”一行也提供手动“测试”按钮，并显示延迟或失败原因。重新生成临时地址时，旧地址会立即隐藏，只有取得新地址后才重新显示，避免把旧地址误认为新结果。窗口内还可以启动、停止、重启、更新和打开日志。高级设置支持服务端口、日志级别、可选的 Nexus Endpoint 与 Token、浏览器工具，以及 AgentDock 服务和菜单栏应用两个独立的登录自启开关。首次勾选浏览器工具时会自动安装并验证 Browser Runner；取消勾选只停用功能，保留运行文件供下次复用。
-
-### Cloudflare Tunnel 公网访问
-
-macOS 图形应用以及 Linux、Windows 安装器不会要求普通用户理解 `quick`、`named` 等内部模式。公网安装只需要确认是否有已接入 Cloudflare 的域名：
-
-- **有域名**：使用固定地址，适合长期运行；安装器会询问 HTTPS 公网地址和 Tunnel Token。
-- **没有域名**：自动生成临时 `trycloudflare.com` 地址，适合快速体验；Tunnel 重启后地址可能变化。
-
-两种方式都会自动生成或复用 **Bearer Token** 与 **OAuth** 配置。安装完成框会显示公网地址、MCP 地址、Bearer Token 和 OAuth 登录密码；OAuth 签名密钥与 Tunnel Token 只保存在受限配置文件中，不会显示或传给无关进程。
-
-Linux 与 macOS 使用同一个入口；macOS 需要 `--register-service` 才会注册后台服务：
-
-```bash
-curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh -o /tmp/agentdock-install.sh
-sh /tmp/agentdock-install.sh                 # Linux
-sh /tmp/agentdock-install.sh --register-service  # macOS
-```
-
-Windows 普通用户直接运行 Release 中与系统架构匹配的签名离线安装包，在“连接方式”页面选择临时或固定公网入口。离线安装包内已包含 cloudflared，但固定公网模式仍需要有效的 Cloudflare Tunnel Token；离线安装只消除组件下载，不会绕过 Cloudflare 身份验证。高级用户使用 PowerShell 时，需要显式请求公网配置：
-
-```powershell
-$script = Join-Path $env:TEMP 'install-agentdock.ps1'
-Invoke-WebRequest https://github.com/uvwt/agentdock/releases/latest/download/install.ps1 -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script -RegisterStartup -ConfigurePublicAccess
-```
-
-仅使用 `-RegisterStartup` 只会配置本机启动，不会默认开放公网。自动化仍可通过 `AGENTDOCK_TUNNEL_MODE=quick|named` 直接指定模式；固定模式还需要 `AGENTDOCK_SERVER_URL` 和 `AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN`。Windows 会把 Bearer Token、OAuth 密码、OAuth 签名密钥和 Tunnel Token 分别使用当前用户 DPAPI 加密保存。
-
-macOS 和 Windows 的 Quick Tunnel 每次启动都会自动取得新地址、回写 OAuth Origin 与运行 manifest，并重启验证 AgentDock；Bearer Token、OAuth 登录密码和签名密钥保持不变。macOS 控制面板提供“重新生成临时地址”，Windows 托盘提供“重新生成临时公网地址”，可以随时手动刷新。临时地址变化后，用户仍需在客户端替换 MCP URL，并重新完成 OAuth 授权。
-
-Docker Quick Tunnel：
-
-```bash
-curl -fL \
-  https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.cloudflare-tunnel.yml \
-  -o docker-compose.cloudflare-tunnel.yml
-
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.cloudflare-tunnel.yml \
-  --profile cloudflare-quick up -d
-
-docker compose -f docker-compose.yml -f docker-compose.cloudflare-tunnel.yml \
-  logs -f cloudflared-quick
-```
-
-Named Tunnel 使用 `cloudflare-named` profile，并在部署目录的 `.env` 中设置 `TUNNEL_TOKEN` 与 `AGENTDOCK_SERVER_URL`。公网模式下必须保留 AgentDock Bearer Token 或 OAuth 认证。
+安装完成后，从控制面板或终端取得 MCP 地址，以及 Bearer Token 或 OAuth 登录信息，再填入客户端的 MCP、Tools 或 Connectors 设置。公网访问必须保留认证，不要把凭据放进截图、Issue 或公开聊天。
 
 ## 接入 AI 客户端
 
