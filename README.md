@@ -101,7 +101,7 @@ See [Install AgentDock](https://uvwt.github.io/agentdock-docs/docs/getting-start
 
 | Platform | Recommended installation |
 | --- | --- |
-| Windows 11 | Signed offline Setup.exe |
+| Windows 11 | Graphical Windows installer (.exe) |
 | macOS 13 or later | Universal graphical DMG |
 | Linux | Official automated installer |
 | Docker already installed | Docker Compose |
@@ -110,11 +110,11 @@ See [Install AgentDock](https://uvwt.github.io/agentdock-docs/docs/getting-start
 
 1. Open the [latest release](https://github.com/uvwt/agentdock/releases/latest).
 2. Download `AgentDockSetup-amd64.exe` for most Intel/AMD PCs, or `AgentDockSetup-arm64.exe` for Windows on ARM.
-3. Double-click Setup normally. Do not choose **Run as administrator**.
-4. For a first installation, keep the default startup settings and choose **Local access only**.
+3. Double-click the installer and follow the on-screen instructions.
+4. Choose a connection option based on where the MCP client runs and how you plan to use AgentDock.
 5. Clicking **Finish** opens the control panel. **Create a desktop shortcut** is selected by default.
 
-The offline installer includes the AgentDock core, control panel, core Skills, and Cloudflare component. Running the latest Setup again upgrades AgentDock while preserving tasks, Skills, configuration, connection settings, and the working directory by default.
+The installer includes the AgentDock core, control panel, core Skills, and Cloudflare component. Running the latest Setup again upgrades AgentDock while preserving tasks, Skills, configuration, connection settings, and the working directory by default.
 
 See [Windows installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/windows).
 
@@ -125,7 +125,7 @@ See [Windows installation](https://uvwt.github.io/agentdock-docs/docs/getting-st
 3. On the first launch, right-click AgentDock in Applications and choose **Open**.
 4. Choose local-only, temporary public, or fixed-domain access in the graphical app, then select **Install and Start**.
 
-The same DMG supports Apple Silicon and Intel Macs. The current free build is not notarized by Apple, so the first launch needs one manual confirmation. You do not need to disable Gatekeeper.
+The same DMG supports Apple Silicon and Intel Macs. The current version is not notarized by Apple, so the first launch needs one manual confirmation. You do not need to disable Gatekeeper.
 
 See [macOS installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/macos).
 
@@ -157,7 +157,7 @@ The default MCP URL is `http://127.0.0.1:18766/mcp`. See [Docker installation](h
 
 ### Choose a connection option
 
-- **Local only:** the client and AgentDock run on the same computer. Recommended for the first installation.
+- **Local only:** the client and AgentDock run on the same computer.
 - **Temporary public address:** ChatGPT, a phone, or another remote device needs access and no domain is ready. The address may change after the Tunnel restarts.
 - **Fixed domain:** a stable address for long-term use. Requires a Cloudflare-managed domain and Tunnel Token.
 
@@ -190,9 +190,9 @@ You may omit the `Authorization` header only when AgentDock listens exclusively 
 | Linux | [Automated Linux installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/linux) |
 | Linux / VPS | [Manual systemd deployment](https://uvwt.github.io/agentdock-docs/docs/getting-started/vps) |
 | macOS | [macOS installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/macos) |
-| Windows | [Native Windows installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/windows) |
+| Windows | [Graphical Windows installer](https://uvwt.github.io/agentdock-docs/docs/getting-started/windows) |
 
-Each guide includes installation commands, startup checks, the MCP URL, and authentication details. Advanced documentation covers browser automation, macOS desktop control, Windows and WSL, reverse proxies, and data migration.
+Each guide includes installation steps, startup checks, the MCP URL, and authentication details. Advanced documentation covers browser automation, macOS desktop control, Windows and WSL, reverse proxies, and data migration.
 
 ## Updates
 

@@ -48,7 +48,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
           ▼             ▼             ▼
    ┌───────────┐ ┌───────────┐ ┌───────────┐
    │ AgentDock │ │ AgentDock │ │ AgentDock │
-   │  本机电脑  │ │  内网机器  │ │  云服务器  │
+   │  本机电脑 │ │  内网机器 │ │  云服务器 │
    └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
          │             │             │
          ▼             ▼             ▼
@@ -101,7 +101,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 | 平台 | 推荐安装方式 |
 | --- | --- |
-| Windows 11 | 签名离线 Setup.exe |
+| Windows 11 | Windows 图形安装程序（.exe） |
 | macOS 13 或更高版本 | 通用 DMG 图形应用 |
 | Linux | 官方自动安装脚本 |
 | 已安装 Docker | Docker Compose |
@@ -110,8 +110,8 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 1. 打开 [最新 Release](https://github.com/uvwt/agentdock/releases/latest)。
 2. 大多数 Intel/AMD 电脑下载 `AgentDockSetup-amd64.exe`；Windows ARM 设备下载 `AgentDockSetup-arm64.exe`。
-3. 正常双击安装，不要选择“以管理员身份运行”。
-4. 第一次使用建议保留默认启动设置，并选择“仅本机使用”。
+3. 双击安装程序，并按界面提示继续。
+4. 根据 MCP 客户端所在位置和实际使用方式选择连接方式。
 5. 点击“完成”后会打开控制面板；“添加桌面快捷方式”默认已勾选。
 
 安装包已经包含 AgentDock 核心、控制面板、核心 Skill 和 Cloudflare 组件。升级时重新运行最新版 Setup，默认会保留任务、Skill、配置、连接方式和工作目录。
@@ -125,7 +125,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 3. 第一次启动时，在“应用程序”中右键 AgentDock 并选择“打开”。
 4. 在图形界面中选择“仅本机”“临时地址”或“固定域名”，然后点击“安装并启动”。
 
-同一个 DMG 支持 Apple 芯片和 Intel Mac。当前免费版本尚未经过 Apple 公证，因此第一次启动需要手动确认一次，不需要关闭 Gatekeeper。
+同一个 DMG 支持 Apple 芯片和 Intel Mac。当前版本尚未经过 Apple 公证，因此第一次启动需要手动确认一次，不需要关闭 Gatekeeper。
 
 详细说明见 [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos)。
 
@@ -157,7 +157,7 @@ docker compose up -d
 
 ### 连接方式如何选择
 
-- **仅本机**：客户端和 AgentDock 在同一台电脑上。第一次安装推荐选择这一项。
+- **仅本机**：客户端和 AgentDock 在同一台电脑上。
 - **临时公网地址**：没有域名，但需要从 ChatGPT、手机或其他设备连接。地址可能在 Tunnel 重启后变化。
 - **固定域名**：长期使用稳定公网地址，需要已接入 Cloudflare 的域名和 Tunnel Token。
 
@@ -190,9 +190,9 @@ AgentDock 通过 MCP Streamable HTTP 提供工具能力。下面是一个通用�
 | Linux | [Linux 自动安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/linux) |
 | Linux / VPS | [systemd 部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/vps) |
 | macOS | [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos) |
-| Windows | [签名 Setup.exe 与原生安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows) |
+| Windows | [Windows 图形安装程序](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows) |
 
-每个平台文档均包含安装命令、启动检查、MCP 地址和认证方式。浏览器自动化、macOS 桌面操作、Windows / WSL、反向代理和数据迁移等内容位于对应进阶文档。
+每个平台文档均包含安装步骤、启动检查、MCP 地址和认证方式。浏览器自动化、macOS 桌面操作、Windows / WSL、反向代理和数据迁移等内容位于对应进阶文档。
 
 ## 版本更新
 
