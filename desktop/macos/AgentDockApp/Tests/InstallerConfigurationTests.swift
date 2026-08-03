@@ -102,17 +102,66 @@ struct InstallerConfigurationTests {
         expectFailure("不能使用 localhost 或 IP") {
             _ = try InstallRequest(mode: .named, serverURL: "https://127.0.0.1", tunnelToken: "x").validatedServerURL()
         }
-        expectFailure("请填写 Cloudflare Tunnel Token") {
-            _ = try InstallRequest(mode: .named, serverURL: "https://mini.example.com", tunnelToken: " ").validatedTunnelToken()
-        }
+        precondition(
+            try InstallRequest(
+                mode: .named,
+                serverURL: "https://mini.example.com",
+                tunnelToken: " "
+            ).validatedTunnelToken() == nil
+        )
         try ServicePortValidation.validate(1024)
         try ServicePortValidation.validate(65535)
         expectFailure("1024 到 65535") {
             try ServicePortValidation.validate(8)
         }
 
+        try testTunnelTokenStore()
         try await testPublicEndpointChecker()
         print("installer configuration tests passed")
+    }
+
+    private static func testTunnelTokenStore() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentDockTunnelTokenStoreTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let paths = AppPaths(home: root)
+        try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
+        let namedEnvironment = """
+        AGENTDOCK_TUNNEL_MODE='named'
+        AGENTDOCK_TUNNEL_TARGET='http://127.0.0.1:8765'
+        TUNNEL_TOKEN='saved-token'
+        """
+        try Data(namedEnvironment.utf8).write(to: paths.tunnelEnvironment)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: paths.tunnelEnvironment.path
+        )
+
+        let store = TunnelTokenStore(paths: paths)
+        try store.captureExistingTokenIfPresent()
+        precondition(try store.storedToken() == "saved-token")
+
+        let quickEnvironment = """
+        AGENTDOCK_TUNNEL_MODE='quick'
+        AGENTDOCK_TUNNEL_TARGET='http://127.0.0.1:8765'
+        TUNNEL_TOKEN=''
+        """
+        try Data(quickEnvironment.utf8).write(to: paths.tunnelEnvironment)
+        try store.captureExistingTokenIfPresent()
+        precondition(try store.storedToken() == "saved-token")
+        precondition(try store.tokenForNamedTunnel(providedToken: nil) == "saved-token")
+        precondition(try store.tokenForNamedTunnel(providedToken: " replacement-token ") == "replacement-token")
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: paths.tunnelTokenStore.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
+        precondition(permissions & 0o077 == 0)
+
+        try store.persist("new-token")
+        precondition(try store.storedToken() == "new-token")
+        expectFailure("单行文本") {
+            try store.persist("line-one\nline-two")
+        }
     }
 
     private static func testPublicEndpointChecker() async throws {
