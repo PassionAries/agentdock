@@ -12,6 +12,7 @@ struct AppPaths {
     var environment: URL { appSupport.appendingPathComponent("agentdock.env") }
     var launchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.plist") }
     var tunnelEnvironment: URL { appSupport.appendingPathComponent("cloudflared.env") }
+    var tunnelTokenStore: URL { appSupport.appendingPathComponent("cloudflare-tunnel-token") }
     var tunnelLaunchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist") }
     var quickTunnelURL: URL { appSupport.appendingPathComponent("quick-tunnel-url.txt") }
     var menuLaunchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.menu.plist") }
