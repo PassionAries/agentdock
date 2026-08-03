@@ -4,19 +4,10 @@ var
   StartupPage: TInputOptionWizardPage;
   ConnectionPage: TInputOptionWizardPage;
   FixedTunnelPage: TInputQueryWizardPage;
-  ResultMemo: TNewMemo;
-  CopyLocalButton: TNewButton;
-  CopyPublicButton: TNewButton;
-  CopyBearerButton: TNewButton;
-  CopyOAuthButton: TNewButton;
   PurgeState: Boolean;
   UninstallCleanupExecuted: Boolean;
   ResultFilePath: String;
   TemporaryTokenFilePath: String;
-  LocalMCPURL: String;
-  PublicMCPURL: String;
-  BearerToken: String;
-  OAuthPassword: String;
   ExistingInstallDetected: Boolean;
   ExistingInstallVersion: String;
   ExistingInstallSource: String;
@@ -199,54 +190,6 @@ begin
   end;
 end;
 
-procedure CopyTextToClipboard(Value: String);
-var
-  ValueFile: String;
-  PowerShellPath: String;
-  Parameters: String;
-  ExitCode: Integer;
-begin
-  if Value = '' then
-    Exit;
-  ValueFile := ExpandConstant('{tmp}\agentdock-clipboard.txt');
-  if not SaveStringToFile(ValueFile, Value, False) then
-    Exit;
-  try
-    PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
-    Parameters :=
-      '-NoLogo -NoProfile -NonInteractive -Command ' +
-      QuoteArgument('$value=[IO.File]::ReadAllText($args[0]); Set-Clipboard -Value $value') +
-      ' ' + QuoteArgument(ValueFile);
-    Exec(PowerShellPath, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-  finally
-    DeleteFile(ValueFile);
-  end;
-end;
-
-procedure CopyLocalClick(Sender: TObject);
-begin
-  if LocalMCPURL <> '' then
-    CopyTextToClipboard(LocalMCPURL);
-end;
-
-procedure CopyPublicClick(Sender: TObject);
-begin
-  if PublicMCPURL <> '' then
-    CopyTextToClipboard(PublicMCPURL);
-end;
-
-procedure CopyBearerClick(Sender: TObject);
-begin
-  if BearerToken <> '' then
-    CopyTextToClipboard(BearerToken);
-end;
-
-procedure CopyOAuthClick(Sender: TObject);
-begin
-  if OAuthPassword <> '' then
-    CopyTextToClipboard(OAuthPassword);
-end;
-
 procedure InitializeWizard();
 var
   ModeParam: String;
@@ -334,52 +277,6 @@ begin
     GetLocalizedMessage('OfflineProgressCaption'),
     GetLocalizedMessage('OfflineProgressDescription')
   );
-
-  ResultMemo := TNewMemo.Create(WizardForm);
-  ResultMemo.Parent := WizardForm.FinishedPage;
-  ResultMemo.Left := ScaleX(0);
-  ResultMemo.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(12);
-  ResultMemo.Width := WizardForm.FinishedPage.ClientWidth;
-  ResultMemo.Height := ScaleY(96);
-  ResultMemo.ReadOnly := True;
-  ResultMemo.ScrollBars := ssVertical;
-  ResultMemo.Visible := False;
-
-  CopyLocalButton := TNewButton.Create(WizardForm);
-  CopyLocalButton.Parent := WizardForm.FinishedPage;
-  CopyLocalButton.Left := ScaleX(0);
-  CopyLocalButton.Top := ResultMemo.Top + ResultMemo.Height + ScaleY(8);
-  CopyLocalButton.Width := ScaleX(130);
-  CopyLocalButton.Caption := GetLocalizedMessage('CopyLocal');
-  CopyLocalButton.OnClick := @CopyLocalClick;
-  CopyLocalButton.Visible := False;
-
-  CopyPublicButton := TNewButton.Create(WizardForm);
-  CopyPublicButton.Parent := WizardForm.FinishedPage;
-  CopyPublicButton.Left := CopyLocalButton.Left + CopyLocalButton.Width + ScaleX(8);
-  CopyPublicButton.Top := CopyLocalButton.Top;
-  CopyPublicButton.Width := ScaleX(130);
-  CopyPublicButton.Caption := GetLocalizedMessage('CopyPublic');
-  CopyPublicButton.OnClick := @CopyPublicClick;
-  CopyPublicButton.Visible := False;
-
-  CopyBearerButton := TNewButton.Create(WizardForm);
-  CopyBearerButton.Parent := WizardForm.FinishedPage;
-  CopyBearerButton.Left := ScaleX(0);
-  CopyBearerButton.Top := CopyLocalButton.Top + CopyLocalButton.Height + ScaleY(8);
-  CopyBearerButton.Width := ScaleX(130);
-  CopyBearerButton.Caption := GetLocalizedMessage('CopyBearer');
-  CopyBearerButton.OnClick := @CopyBearerClick;
-  CopyBearerButton.Visible := False;
-
-  CopyOAuthButton := TNewButton.Create(WizardForm);
-  CopyOAuthButton.Parent := WizardForm.FinishedPage;
-  CopyOAuthButton.Left := CopyBearerButton.Left + CopyBearerButton.Width + ScaleX(8);
-  CopyOAuthButton.Top := CopyBearerButton.Top;
-  CopyOAuthButton.Width := ScaleX(130);
-  CopyOAuthButton.Caption := GetLocalizedMessage('CopyOAuth');
-  CopyOAuthButton.OnClick := @CopyOAuthClick;
-  CopyOAuthButton.Visible := False;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -397,8 +294,21 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   URL: String;
+  ExitCode: Integer;
 begin
   Result := True;
+  if CurPageID = wpFinished then
+  begin
+    if not Exec(
+      ExpandConstant('{app}\bin\agentdock-tray.exe'),
+      '',
+      '',
+      SW_SHOWNORMAL,
+      ewNoWait,
+      ExitCode) then
+      Log('AgentDock control panel could not be opened from the Finish button.');
+    Exit;
+  end;
   if (CurPageID = StartupPage.ID) and StartupPage.Values[1] then
     StartupPage.Values[0] := True;
   if (CurPageID = ConnectionPage.ID) and (SelectedTunnelMode() <> 'none') then
@@ -529,43 +439,11 @@ begin
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
-var
-  Summary: String;
-  InstalledPrivilegeMode: String;
 begin
   if (CurPageID = wpReady) and ExistingInstallDetected then
     WizardForm.ReadyLabel.Caption := GetLocalizedMessage('ReadyUpgrade');
-  if CurPageID <> wpFinished then
-    Exit;
-
-  LocalMCPURL := GetIniString('AgentDock', 'LocalMCPUrl', '', ResultFilePath);
-  PublicMCPURL := GetIniString('AgentDock', 'PublicMCPUrl', '', ResultFilePath);
-  BearerToken := GetIniString('AgentDock', 'BearerToken', '', ResultFilePath);
-  OAuthPassword := GetIniString('AgentDock', 'OAuthPassword', '', ResultFilePath);
-  InstalledPrivilegeMode := GetIniString('AgentDock', 'PrivilegeMode', 'standard', ResultFilePath);
-  if InstalledPrivilegeMode = 'elevated' then
-    InstalledPrivilegeMode := GetLocalizedMessage('PrivilegeElevated')
-  else
-    InstalledPrivilegeMode := GetLocalizedMessage('PrivilegeStandard');
-  Summary := GetLocalizedMessage('Health') + ' ' +
-    GetIniString('AgentDock', 'Health', 'unknown', ResultFilePath) + #13#10 +
-    GetLocalizedMessage('PrivilegeMode') + ' ' + InstalledPrivilegeMode + #13#10 +
-    GetLocalizedMessage('LocalMCP') + ' ' + LocalMCPURL;
-  if PublicMCPURL <> '' then
-    Summary := Summary + #13#10 + GetLocalizedMessage('PublicMCP') + ' ' + PublicMCPURL;
-  if SelectedTunnelMode() = 'quick' then
-    Summary := Summary + #13#10#13#10 + GetLocalizedMessage('QuickLifecycleNote');
-  if BearerToken <> '' then
-    Summary := Summary + #13#10 + GetLocalizedMessage('BearerToken') + ' ' + BearerToken;
-  if OAuthPassword <> '' then
-    Summary := Summary + #13#10 + GetLocalizedMessage('OAuthPassword') + ' ' + OAuthPassword;
-
-  ResultMemo.Text := Summary;
-  ResultMemo.Visible := True;
-  CopyLocalButton.Visible := LocalMCPURL <> '';
-  CopyPublicButton.Visible := PublicMCPURL <> '';
-  CopyBearerButton.Visible := BearerToken <> '';
-  CopyOAuthButton.Visible := OAuthPassword <> '';
+  if CurPageID = wpFinished then
+    WizardForm.FinishedLabel.Caption := GetLocalizedMessage('FinishedControlPanel');
 end;
 
 function InitializeUninstall(): Boolean;

@@ -538,6 +538,9 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"-OfflineCloudflaredBinary ",
 		"CreateOutputProgressPage",
 		"OfflineProgressDescription",
+		"FinishedControlPanel",
+		"if CurPageID = wpFinished then",
+		"{app}\\bin\\agentdock-tray.exe",
 	} {
 		if !strings.Contains(setup, want) {
 			t.Fatalf("AgentDock.iss missing %q", want)
@@ -545,6 +548,37 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 	}
 	if strings.Contains(setup, " -TunnelToken ") {
 		t.Fatal("Setup must pass the Cloudflare Tunnel Token through a temporary file, not process arguments")
+	}
+	for _, forbidden := range []string{
+		"ResultMemo",
+		"CopyLocalButton",
+		"GetIniString('AgentDock', 'BearerToken'",
+		"GetIniString('AgentDock', 'OAuthPassword'",
+		"完成后会自动打开控制面板",
+	} {
+		if strings.Contains(setup, forbidden) {
+			t.Fatalf("Setup completion page must not expose connection details or credentials: %q", forbidden)
+		}
+	}
+}
+
+func TestWindowsControlPanelResolvesRuntimeRootFromExecutableDirectory(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	if err != nil {
+		t.Fatalf("read RuntimeService.cs: %v", err)
+	}
+	service := string(data)
+	for _, want := range []string{
+		"new DirectoryInfo(AppContext.BaseDirectory)",
+		"executableDirectory.Parent?.FullName",
+		"string.Equals(executableDirectory.Name, \"bin\"",
+	} {
+		if !strings.Contains(service, want) {
+			t.Fatalf("RuntimeService.cs missing installed runtime root behavior %q", want)
+		}
+	}
+	if strings.Contains(service, "Directory.GetParent(baseDirectory)?.FullName") {
+		t.Fatal("RuntimeService must not resolve the parent from a trailing AppContext.BaseDirectory string")
 	}
 }
 
@@ -559,6 +593,7 @@ func TestWindowsSetupIncludesSimplifiedChineseBaseMessages(t *testing.T) {
 		"ButtonNext=下一步",
 		"ButtonCancel=取消",
 		"WelcomeLabel1=欢迎使用",
+		"FinishedHeadingLabel=[name] 安装完成",
 		"ConfirmUninstall=确实要完全删除",
 	} {
 		if !strings.Contains(language, want) {

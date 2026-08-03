@@ -206,12 +206,16 @@
               </StackPanel>
             </GroupBox>
 
+            <TextBlock x:Name="SettingsStatusText"
+                       Foreground="#475467"
+                       TextWrapping="Wrap"
+                       MinHeight="22"
+                       Margin="0,0,0,8" />
             <StackPanel Orientation="Horizontal">
               <Button Content="保存并重启" Click="SaveSettingsButton_Click" />
               <Button Content="打开日志目录" Click="OpenLogsButton_Click" />
               <Button Content="打开配置目录" Click="OpenConfigButton_Click" />
             </StackPanel>
-            <TextBlock x:Name="SettingsStatusText" Foreground="#475467" TextWrapping="Wrap" Margin="0,6,0,0" />
           </StackPanel>
         </ScrollViewer>
       </TabItem>

@@ -286,21 +286,22 @@ public sealed class RuntimeService : IDisposable
             return Path.GetFullPath(configured);
         }
 
-        var baseDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+        var executableDirectory = new DirectoryInfo(AppContext.BaseDirectory);
+        var baseDirectory = executableDirectory.FullName;
         if (File.Exists(Path.Combine(baseDirectory, "runtime.json")))
         {
             return baseDirectory;
         }
 
-        var parent = Directory.GetParent(baseDirectory)?.FullName;
+        var parent = executableDirectory.Parent?.FullName;
         if (!string.IsNullOrWhiteSpace(parent) && File.Exists(Path.Combine(parent, "runtime.json")))
         {
             return parent;
         }
 
-        // 安装器会先启动 bin 中的托盘，再写入 runtime.json；此时必须仍绑定当前安装目录。
+        // 安装器会先启动 bin 中的托盘，再写入 runtime.json；此时仍应绑定当前安装目录。
         if (!string.IsNullOrWhiteSpace(parent) &&
-            string.Equals(Path.GetFileName(baseDirectory.TrimEnd(Path.DirectorySeparatorChar)), "bin", StringComparison.OrdinalIgnoreCase))
+            string.Equals(executableDirectory.Name, "bin", StringComparison.OrdinalIgnoreCase))
         {
             return parent;
         }
