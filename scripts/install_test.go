@@ -644,6 +644,35 @@ func TestWindowsControlPanelOmitsCopyButtons(t *testing.T) {
 	}
 }
 
+func TestWindowsControlPanelKeepsExistingBackgroundAndStylesOnlyButtonsAndTabs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml"))
+	if err != nil {
+		t.Fatalf("read App.xaml: %v", err)
+	}
+	app := string(data)
+
+	for _, want := range []string{
+		`x:Key="SurfaceBrush" Color="#F5F7FA"`,
+		`x:Key="BorderBrush" Color="#D8DEE8"`,
+		`<Style TargetType="Button">`,
+		`<Style TargetType="TabControl">`,
+		`<Style TargetType="TabItem">`,
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("App.xaml missing restrained Windows style %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		`x:Key="PanelBrush"`,
+		`x:Key="ContentBrush"`,
+		`<Style TargetType="ComboBox">`,
+	} {
+		if strings.Contains(app, forbidden) {
+			t.Fatalf("button/tab styling must not change the existing window background or unrelated controls: %q", forbidden)
+		}
+	}
+}
 func TestWindowsControlPanelResolvesRuntimeRootFromExecutableDirectory(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
