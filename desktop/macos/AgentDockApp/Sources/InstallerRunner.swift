@@ -50,10 +50,17 @@ final class InstallerRunner {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: temporaryDirectory.path)
         defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
+        let tokenStore = TunnelTokenStore()
+        // 切换到临时或本机模式前，先从当前 Named Tunnel 配置迁移 Token；
+        // 后续安装脚本可以安全重写或删除活动 cloudflared.env。
+        try tokenStore.captureExistingTokenIfPresent()
+
         let resultURL = temporaryDirectory.appendingPathComponent("result.json")
         let offlinePayload = try requiredOfflinePayload()
+        let providedTunnelToken = try request.validatedTunnelToken()
         var tokenURL: URL?
-        if request.mode == .named, let token = try request.validatedTunnelToken() {
+        if request.mode == .named {
+            let token = try tokenStore.tokenForNamedTunnel(providedToken: providedTunnelToken)
             let url = temporaryDirectory.appendingPathComponent("tunnel-token")
             guard FileManager.default.createFile(atPath: url.path, contents: Data(token.utf8), attributes: [.posixPermissions: 0o600]) else {
                 throw ValidationError("无法创建安全的 Tunnel Token 临时文件。")
@@ -79,6 +86,11 @@ final class InstallerRunner {
         let result = try JSONDecoder().decode(InstallResult.self, from: data)
         guard result.schemaVersion == 1, result.ok else {
             throw ValidationError("安装结果格式不受支持。")
+        }
+
+        // 用户输入的新 Token 只有在安装和健康检查均成功后才覆盖保存值。
+        if let providedTunnelToken {
+            try tokenStore.persist(providedTunnelToken)
         }
         return result
     }
