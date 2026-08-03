@@ -281,9 +281,10 @@ begin
 
   DesktopShortcutCheckBox := TNewCheckBox.Create(WizardForm);
   DesktopShortcutCheckBox.Parent := WizardForm.FinishedPage;
-  DesktopShortcutCheckBox.Left := ScaleX(0);
+  DesktopShortcutCheckBox.Left := WizardForm.FinishedLabel.Left;
   DesktopShortcutCheckBox.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(18);
-  DesktopShortcutCheckBox.Width := WizardForm.FinishedPage.ClientWidth;
+  DesktopShortcutCheckBox.Width := WizardForm.FinishedPage.ClientWidth -
+    DesktopShortcutCheckBox.Left - ScaleX(8);
   DesktopShortcutCheckBox.Caption := GetLocalizedMessage('CreateDesktopShortcut');
   DesktopShortcutCheckBox.Checked := True;
 end;
@@ -303,6 +304,7 @@ end;
 function ApplyDesktopControlPanelShortcut(CreateRequested: Boolean): Boolean;
 var
   ShortcutPath: String;
+  CreatedShortcutPath: String;
 begin
   ShortcutPath := AddBackslash(ExpandConstant('{userdesktop}')) +
     GetLocalizedMessage('DesktopShortcutName') + '.lnk';
@@ -313,7 +315,7 @@ begin
     Exit;
   end;
 
-  Result := CreateShellLink(
+  CreatedShortcutPath := CreateShellLink(
     ShortcutPath,
     GetLocalizedMessage('DesktopShortcutDescription'),
     ExpandConstant('{app}\bin\agentdock-tray.exe'),
@@ -323,6 +325,7 @@ begin
     0,
     SW_SHOWNORMAL
   );
+  Result := CreatedShortcutPath <> '';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
