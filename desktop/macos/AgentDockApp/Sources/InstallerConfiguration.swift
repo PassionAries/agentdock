@@ -16,11 +16,11 @@ enum TunnelMode: String, CaseIterable {
     var detail: String {
         switch self {
         case .local:
-            return "只监听本机地址，不开放公网访问。"
+            return "只监听本机地址，不开放公网访问；此前保存的 Tunnel Token 会继续保留。"
         case .quick:
-            return "自动生成 trycloudflare.com 临时地址；电脑或 Tunnel 重启后会自动刷新，也可以手动重新生成。"
+            return "自动生成 trycloudflare.com 临时地址；电脑或 Tunnel 重启后会自动刷新，且不会删除已保存的固定域名 Tunnel Token。"
         case .named:
-            return "使用固定 HTTPS 地址，适合长期运行。"
+            return "使用固定 HTTPS 地址，适合长期运行；此前保存过 Tunnel Token 时可以留空复用。"
         }
     }
 }
@@ -86,11 +86,10 @@ struct InstallRequest {
     func validatedTunnelToken() throws -> String? {
         guard mode == .named else { return nil }
         let token = tunnelToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        if token.isEmpty, reuseExistingTunnelToken {
+        if token.isEmpty {
+            // InstallerRunner 会从当前用户私密存储中复用此前保存的 Token；
+            // 新安装或没有存储值时再给出明确错误。
             return nil
-        }
-        guard !token.isEmpty else {
-            throw ValidationError("请填写 Cloudflare Tunnel Token。")
         }
         guard !token.contains("\n"), !token.contains("\r") else {
             throw ValidationError("Tunnel Token 必须是单行文本。")
