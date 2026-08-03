@@ -90,12 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(item(currentStatus.installed ? "打开 AgentDock" : "安装 AgentDock…", #selector(showSetup)))
         if currentStatus.installed {
-            let local = item("复制本地 MCP 地址", #selector(copyLocalMCP))
-            local.isEnabled = currentStatus.configuration?.localMCPURL != nil
-            menu.addItem(local)
-            let publicItem = item("复制公网 MCP 地址", #selector(copyPublicMCP))
-            publicItem.isEnabled = currentStatus.configuration?.publicMCPURL != nil
-            menu.addItem(publicItem)
             menu.addItem(.separator())
 
             if currentStatus.loaded {
@@ -122,8 +116,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() { setupWindow.present(status: currentStatus) }
-    @objc private func copyLocalMCP() { copy(currentStatus.configuration?.localMCPURL?.absoluteString) }
-    @objc private func copyPublicMCP() { copy(currentStatus.configuration?.publicMCPURL?.absoluteString) }
     @objc private func openLogs() { service.openLogs() }
     @objc private func openConfiguration() { service.openConfiguration() }
 
@@ -161,12 +153,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await MainActor.run { self.presentAlert(title: "\(action)失败", message: error.localizedDescription) }
             }
         }
-    }
-
-    private func copy(_ value: String?) {
-        guard let value, !value.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
     }
 
     private func presentAlert(title: String, message: String) {

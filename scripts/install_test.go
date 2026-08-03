@@ -644,18 +644,21 @@ func TestWindowsControlPanelOmitsCopyButtons(t *testing.T) {
 	}
 }
 
-func TestWindowsTrayMenuMatchesMacOSActions(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
+	windowsData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read App.xaml.cs: %v", err)
 	}
-	app := string(data)
+	macData, err := os.ReadFile(filepath.Join("..", "desktop", "macos", "AgentDockApp", "Sources", "AppDelegate.swift"))
+	if err != nil {
+		t.Fatalf("read AppDelegate.swift: %v", err)
+	}
+	windowsApp := string(windowsData)
+	macApp := string(macData)
 
 	orderedItems := []string{
 		`AgentDock：{statusText}`,
 		`"打开 AgentDock"`,
-		`"复制本地 MCP 地址"`,
-		`"复制公网 MCP 地址"`,
 		`"停止 AgentDock"`,
 		`"重启 AgentDock"`,
 		`"启动 AgentDock"`,
@@ -667,7 +670,7 @@ func TestWindowsTrayMenuMatchesMacOSActions(t *testing.T) {
 	}
 	lastIndex := -1
 	for _, item := range orderedItems {
-		index := strings.Index(app, item)
+		index := strings.Index(windowsApp, item)
 		if index < 0 {
 			t.Fatalf("Windows tray menu missing macOS-aligned item %q", item)
 		}
@@ -678,16 +681,53 @@ func TestWindowsTrayMenuMatchesMacOSActions(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"NotifyIcon_MouseUp",
+		"ContextMenuStrip = _trayMenu",
+		"PopulateTrayMenu(_trayMenu, null)",
+		"DispatcherTimer",
+		"PopulateTrayMenu",
+		"RefreshTraySnapshotAsync",
+		"!_trayMenu.Visible",
 		"Runtime.GetSnapshotAsync()",
 		"snapshot.CoreRunning",
-		"snapshot.LocalMcpUrl",
-		"snapshot.PublicMcpUrl",
-		"Forms.Clipboard.SetText(value)",
 		"https://github.com/uvwt/agentdock#readme",
 	} {
-		if !strings.Contains(app, want) {
-			t.Fatalf("Windows tray menu missing live behavior %q", want)
+		if !strings.Contains(windowsApp, want) {
+			t.Fatalf("Windows tray menu missing native live behavior %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`"打开 AgentDock"`,
+		`"停止 AgentDock"`,
+		`"重启 AgentDock"`,
+		`"启动 AgentDock"`,
+		`"检查更新…"`,
+		`"打开日志目录"`,
+		`"打开配置目录"`,
+		`"打开使用文档"`,
+		`"退出菜单栏"`,
+	} {
+		if !strings.Contains(macApp, want) {
+			t.Fatalf("macOS tray menu missing item %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		`"复制本地 MCP 地址"`,
+		`"复制公网 MCP 地址"`,
+		"copyLocalMCP",
+		"copyPublicMCP",
+		"Forms.Clipboard.SetText",
+		"NSPasteboard.general",
+	} {
+		if strings.Contains(windowsApp, forbidden) || strings.Contains(macApp, forbidden) {
+			t.Fatalf("desktop tray menus must not expose copy-address behavior %q", forbidden)
+		}
+	}
+
+	for _, forbidden := range []string{"NotifyIcon_MouseUp", "_trayMenu.Show("} {
+		if strings.Contains(windowsApp, forbidden) {
+			t.Fatalf("Windows tray menu must use native NotifyIcon dismissal instead of manual popup behavior %q", forbidden)
 		}
 	}
 }

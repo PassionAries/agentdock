@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using Application = System.Windows.Application;
 using Forms = System.Windows.Forms;
 
@@ -23,6 +24,9 @@ public partial class App : System.Windows.Application
     private CancellationTokenSource? _showEventCancellation;
     private Forms.NotifyIcon? _notifyIcon;
     private Forms.ContextMenuStrip? _trayMenu;
+    private DispatcherTimer? _trayStatusTimer;
+    private RuntimeSnapshot? _traySnapshot;
+    private bool _traySnapshotRefreshInProgress;
     private bool _ownsSingleInstanceMutex;
     private bool _exitRequested;
 
@@ -87,6 +91,7 @@ public partial class App : System.Windows.Application
     {
         _exitRequested = true;
         _showEventCancellation?.Cancel();
+        _trayStatusTimer?.Stop();
         _trayMenu?.Dispose();
         _notifyIcon?.Dispose();
         ControlPanelWindow.Close();
@@ -114,65 +119,98 @@ public partial class App : System.Windows.Application
 
     private void CreateNotifyIcon()
     {
+        _trayMenu = new Forms.ContextMenuStrip();
+        PopulateTrayMenu(_trayMenu, null);
+
         _notifyIcon = new Forms.NotifyIcon
         {
             Text = "AgentDock",
             Visible = true,
-            Icon = LoadIcon()
+            Icon = LoadIcon(),
+            ContextMenuStrip = _trayMenu
         };
         _notifyIcon.DoubleClick += (_, _) => ShowControlPanel();
-        _notifyIcon.MouseUp += NotifyIcon_MouseUp;
+
+        // 系统托盘菜单必须挂到 NotifyIcon 上，不能手动 Show；否则会产生任务栏图标且失焦后不自动关闭。
+        _trayStatusTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(3)
+        };
+        _trayStatusTimer.Tick += async (_, _) => await RefreshTraySnapshotAsync();
+        _trayStatusTimer.Start();
+        _ = RefreshTraySnapshotAsync();
     }
 
-    private async void NotifyIcon_MouseUp(object? sender, Forms.MouseEventArgs e)
+    private async Task RefreshTraySnapshotAsync()
     {
-        if (e.Button != Forms.MouseButtons.Right)
+        if (_traySnapshotRefreshInProgress)
         {
             return;
         }
 
+        _traySnapshotRefreshInProgress = true;
         try
         {
-            var snapshot = await Runtime.GetSnapshotAsync();
-            _trayMenu?.Dispose();
-            _trayMenu = BuildTrayMenu(snapshot);
-            _trayMenu.Show(Forms.Cursor.Position);
+            _traySnapshot = await Runtime.GetSnapshotAsync();
+            if (_notifyIcon is not null)
+            {
+                _notifyIcon.Text = TruncateNotifyIconText($"AgentDock：{GetTrayStatusText(_traySnapshot)}");
+            }
+            if (_trayMenu is not null && !_trayMenu.Visible)
+            {
+                PopulateTrayMenu(_trayMenu, _traySnapshot);
+            }
         }
-        catch (Exception ex)
+        catch
         {
-            _notifyIcon?.ShowBalloonTip(5000, "AgentDock", ex.Message, Forms.ToolTipIcon.Error);
+            if (_notifyIcon is not null)
+            {
+                _notifyIcon.Text = "AgentDock：状态不可用";
+            }
+            if (_trayMenu is not null && !_trayMenu.Visible)
+            {
+                PopulateTrayMenu(_trayMenu, null);
+            }
+        }
+        finally
+        {
+            _traySnapshotRefreshInProgress = false;
         }
     }
 
-    private Forms.ContextMenuStrip BuildTrayMenu(RuntimeSnapshot snapshot)
+    private void PopulateTrayMenu(Forms.ContextMenuStrip menu, RuntimeSnapshot? snapshot)
     {
-        var menu = new Forms.ContextMenuStrip();
-        var statusText = GetTrayStatusText(snapshot);
+        while (menu.Items.Count > 0)
+        {
+            var oldItem = menu.Items[0];
+            menu.Items.RemoveAt(0);
+            oldItem.Dispose();
+        }
+
+        var statusText = snapshot is null ? "正在读取状态…" : GetTrayStatusText(snapshot);
         var status = new Forms.ToolStripMenuItem($"AgentDock：{statusText}") { Enabled = false };
         menu.Items.Add(status);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         menu.Items.Add(CreateMenuItem("打开 AgentDock", (_, _) => ShowControlPanel()));
-        menu.Items.Add(CreateMenuItem(
-            "复制本地 MCP 地址",
-            (_, _) => CopyTrayText(snapshot.LocalMcpUrl, "本地 MCP 地址已复制。"),
-            !string.IsNullOrWhiteSpace(snapshot.LocalMcpUrl)));
-        menu.Items.Add(CreateMenuItem(
-            "复制公网 MCP 地址",
-            (_, _) => CopyTrayText(snapshot.PublicMcpUrl, "公网 MCP 地址已复制。"),
-            !string.IsNullOrWhiteSpace(snapshot.PublicMcpUrl)));
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        if (snapshot.CoreRunning)
+        if (snapshot?.CoreRunning == true)
         {
             menu.Items.Add(CreateMenuItem("停止 AgentDock", async (_, _) => await RunTrayActionAsync("stop")));
             menu.Items.Add(CreateMenuItem("重启 AgentDock", async (_, _) => await RunTrayActionAsync("restart")));
         }
         else
         {
-            menu.Items.Add(CreateMenuItem("启动 AgentDock", async (_, _) => await RunTrayActionAsync("start")));
+            menu.Items.Add(CreateMenuItem(
+                "启动 AgentDock",
+                async (_, _) => await RunTrayActionAsync("start"),
+                snapshot is not null));
         }
-        menu.Items.Add(CreateMenuItem("检查更新…", async (_, _) => await RunTrayActionAsync("update")));
+        menu.Items.Add(CreateMenuItem(
+            "检查更新…",
+            async (_, _) => await RunTrayActionAsync("update"),
+            snapshot is not null));
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         menu.Items.Add(CreateMenuItem("打开日志目录", (_, _) => Runtime.OpenLogsDirectory()));
@@ -185,7 +223,6 @@ public partial class App : System.Windows.Application
         {
             _notifyIcon.Text = TruncateNotifyIconText($"AgentDock：{statusText}");
         }
-        return menu;
     }
 
     private static Forms.ToolStripMenuItem CreateMenuItem(string text, EventHandler onClick, bool enabled = true)
@@ -205,23 +242,6 @@ public partial class App : System.Windows.Application
         return snapshot.CoreRunning ? "服务异常" : "已停止";
     }
 
-    private void CopyTrayText(string value, string successMessage)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return;
-            }
-            Forms.Clipboard.SetText(value);
-            _notifyIcon?.ShowBalloonTip(3000, "AgentDock", successMessage, Forms.ToolTipIcon.Info);
-        }
-        catch (Exception ex)
-        {
-            _notifyIcon?.ShowBalloonTip(5000, "AgentDock", ex.Message, Forms.ToolTipIcon.Error);
-        }
-    }
-
     private static void OpenDocumentation()
     {
         Process.Start(new ProcessStartInfo("https://github.com/uvwt/agentdock#readme")
@@ -239,6 +259,7 @@ public partial class App : System.Windows.Application
             await Runtime.RunActionAsync(action);
             var refreshTask = await Dispatcher.InvokeAsync(ControlPanelWindow.RefreshAsync);
             await refreshTask;
+            await RefreshTraySnapshotAsync();
         }
         catch (Exception ex)
         {
@@ -262,6 +283,7 @@ public partial class App : System.Windows.Application
         _showEventCancellation?.Cancel();
         _showEvent?.Dispose();
         _showEventCancellation?.Dispose();
+        _trayStatusTimer?.Stop();
         _trayMenu?.Dispose();
         _notifyIcon?.Dispose();
         if (_ownsSingleInstanceMutex)
