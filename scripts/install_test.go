@@ -644,6 +644,54 @@ func TestWindowsControlPanelOmitsCopyButtons(t *testing.T) {
 	}
 }
 
+func TestWindowsTrayMenuMatchesMacOSActions(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read App.xaml.cs: %v", err)
+	}
+	app := string(data)
+
+	orderedItems := []string{
+		`AgentDock：{statusText}`,
+		`"打开 AgentDock"`,
+		`"复制本地 MCP 地址"`,
+		`"复制公网 MCP 地址"`,
+		`"停止 AgentDock"`,
+		`"重启 AgentDock"`,
+		`"启动 AgentDock"`,
+		`"检查更新…"`,
+		`"打开日志目录"`,
+		`"打开配置目录"`,
+		`"打开使用文档"`,
+		`"退出菜单栏"`,
+	}
+	lastIndex := -1
+	for _, item := range orderedItems {
+		index := strings.Index(app, item)
+		if index < 0 {
+			t.Fatalf("Windows tray menu missing macOS-aligned item %q", item)
+		}
+		if index <= lastIndex {
+			t.Fatalf("Windows tray menu item %q is out of order", item)
+		}
+		lastIndex = index
+	}
+
+	for _, want := range []string{
+		"NotifyIcon_MouseUp",
+		"Runtime.GetSnapshotAsync()",
+		"snapshot.CoreRunning",
+		"snapshot.LocalMcpUrl",
+		"snapshot.PublicMcpUrl",
+		"Forms.Clipboard.SetText(value)",
+		"https://github.com/uvwt/agentdock#readme",
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("Windows tray menu missing live behavior %q", want)
+		}
+	}
+}
+
 func TestWindowsControlPanelKeepsExistingBackgroundAndStylesOnlyButtonsAndTabs(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml"))
 	if err != nil {

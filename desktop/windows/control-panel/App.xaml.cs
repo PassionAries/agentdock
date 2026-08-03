@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -21,6 +22,7 @@ public partial class App : System.Windows.Application
     private EventWaitHandle? _showEvent;
     private CancellationTokenSource? _showEventCancellation;
     private Forms.NotifyIcon? _notifyIcon;
+    private Forms.ContextMenuStrip? _trayMenu;
     private bool _ownsSingleInstanceMutex;
     private bool _exitRequested;
 
@@ -85,6 +87,7 @@ public partial class App : System.Windows.Application
     {
         _exitRequested = true;
         _showEventCancellation?.Cancel();
+        _trayMenu?.Dispose();
         _notifyIcon?.Dispose();
         ControlPanelWindow.Close();
         Shutdown();
@@ -115,30 +118,119 @@ public partial class App : System.Windows.Application
         {
             Text = "AgentDock",
             Visible = true,
-            Icon = LoadIcon(),
-            ContextMenuStrip = new Forms.ContextMenuStrip()
+            Icon = LoadIcon()
         };
         _notifyIcon.DoubleClick += (_, _) => ShowControlPanel();
-
-        var open = new Forms.ToolStripMenuItem("打开控制面板");
-        open.Click += (_, _) => ShowControlPanel();
-        var start = new Forms.ToolStripMenuItem("启动 AgentDock");
-        start.Click += async (_, _) => await RunTrayActionAsync("start");
-        var restart = new Forms.ToolStripMenuItem("重启 AgentDock");
-        restart.Click += async (_, _) => await RunTrayActionAsync("restart");
-        var stop = new Forms.ToolStripMenuItem("停止 AgentDock");
-        stop.Click += async (_, _) => await RunTrayActionAsync("stop");
-        var exit = new Forms.ToolStripMenuItem("退出托盘");
-        exit.Click += (_, _) => Dispatcher.Invoke(RequestExit);
-
-        _notifyIcon.ContextMenuStrip.Items.Add(open);
-        _notifyIcon.ContextMenuStrip.Items.Add(new Forms.ToolStripSeparator());
-        _notifyIcon.ContextMenuStrip.Items.Add(start);
-        _notifyIcon.ContextMenuStrip.Items.Add(restart);
-        _notifyIcon.ContextMenuStrip.Items.Add(stop);
-        _notifyIcon.ContextMenuStrip.Items.Add(new Forms.ToolStripSeparator());
-        _notifyIcon.ContextMenuStrip.Items.Add(exit);
+        _notifyIcon.MouseUp += NotifyIcon_MouseUp;
     }
+
+    private async void NotifyIcon_MouseUp(object? sender, Forms.MouseEventArgs e)
+    {
+        if (e.Button != Forms.MouseButtons.Right)
+        {
+            return;
+        }
+
+        try
+        {
+            var snapshot = await Runtime.GetSnapshotAsync();
+            _trayMenu?.Dispose();
+            _trayMenu = BuildTrayMenu(snapshot);
+            _trayMenu.Show(Forms.Cursor.Position);
+        }
+        catch (Exception ex)
+        {
+            _notifyIcon?.ShowBalloonTip(5000, "AgentDock", ex.Message, Forms.ToolTipIcon.Error);
+        }
+    }
+
+    private Forms.ContextMenuStrip BuildTrayMenu(RuntimeSnapshot snapshot)
+    {
+        var menu = new Forms.ContextMenuStrip();
+        var statusText = GetTrayStatusText(snapshot);
+        var status = new Forms.ToolStripMenuItem($"AgentDock：{statusText}") { Enabled = false };
+        menu.Items.Add(status);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
+        menu.Items.Add(CreateMenuItem("打开 AgentDock", (_, _) => ShowControlPanel()));
+        menu.Items.Add(CreateMenuItem(
+            "复制本地 MCP 地址",
+            (_, _) => CopyTrayText(snapshot.LocalMcpUrl, "本地 MCP 地址已复制。"),
+            !string.IsNullOrWhiteSpace(snapshot.LocalMcpUrl)));
+        menu.Items.Add(CreateMenuItem(
+            "复制公网 MCP 地址",
+            (_, _) => CopyTrayText(snapshot.PublicMcpUrl, "公网 MCP 地址已复制。"),
+            !string.IsNullOrWhiteSpace(snapshot.PublicMcpUrl)));
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
+        if (snapshot.CoreRunning)
+        {
+            menu.Items.Add(CreateMenuItem("停止 AgentDock", async (_, _) => await RunTrayActionAsync("stop")));
+            menu.Items.Add(CreateMenuItem("重启 AgentDock", async (_, _) => await RunTrayActionAsync("restart")));
+        }
+        else
+        {
+            menu.Items.Add(CreateMenuItem("启动 AgentDock", async (_, _) => await RunTrayActionAsync("start")));
+        }
+        menu.Items.Add(CreateMenuItem("检查更新…", async (_, _) => await RunTrayActionAsync("update")));
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
+        menu.Items.Add(CreateMenuItem("打开日志目录", (_, _) => Runtime.OpenLogsDirectory()));
+        menu.Items.Add(CreateMenuItem("打开配置目录", (_, _) => Runtime.OpenConfigDirectory()));
+        menu.Items.Add(CreateMenuItem("打开使用文档", (_, _) => OpenDocumentation()));
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add(CreateMenuItem("退出菜单栏", (_, _) => Dispatcher.Invoke(RequestExit)));
+
+        if (_notifyIcon is not null)
+        {
+            _notifyIcon.Text = TruncateNotifyIconText($"AgentDock：{statusText}");
+        }
+        return menu;
+    }
+
+    private static Forms.ToolStripMenuItem CreateMenuItem(string text, EventHandler onClick, bool enabled = true)
+    {
+        var item = new Forms.ToolStripMenuItem(text) { Enabled = enabled };
+        item.Click += onClick;
+        return item;
+    }
+
+    private static string GetTrayStatusText(RuntimeSnapshot snapshot)
+    {
+        if (snapshot.Healthy)
+        {
+            var version = string.IsNullOrWhiteSpace(snapshot.Manifest.Version) ? "未知版本" : snapshot.Manifest.Version;
+            return $"运行正常 · {version}";
+        }
+        return snapshot.CoreRunning ? "服务异常" : "已停止";
+    }
+
+    private void CopyTrayText(string value, string successMessage)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+            Forms.Clipboard.SetText(value);
+            _notifyIcon?.ShowBalloonTip(3000, "AgentDock", successMessage, Forms.ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            _notifyIcon?.ShowBalloonTip(5000, "AgentDock", ex.Message, Forms.ToolTipIcon.Error);
+        }
+    }
+
+    private static void OpenDocumentation()
+    {
+        Process.Start(new ProcessStartInfo("https://github.com/uvwt/agentdock#readme")
+        {
+            UseShellExecute = true
+        });
+    }
+
+    private static string TruncateNotifyIconText(string value) => value.Length <= 63 ? value : value[..63];
 
     private async Task RunTrayActionAsync(string action)
     {
@@ -170,6 +262,7 @@ public partial class App : System.Windows.Application
         _showEventCancellation?.Cancel();
         _showEvent?.Dispose();
         _showEventCancellation?.Dispose();
+        _trayMenu?.Dispose();
         _notifyIcon?.Dispose();
         if (_ownsSingleInstanceMutex)
         {
