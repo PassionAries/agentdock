@@ -652,10 +652,12 @@ func pipeConnectionPair(t *testing.T) (*os.File, *os.File, func()) {
 		t.Fatal(err)
 	}
 	cleanup := func() {
-		_ = reader.Close()
-		_ = writer.Close()
-		_ = peerReader.Close()
+		// Close peer ends first so blocked Windows pipe I/O observes EOF before
+		// either local handle is closed.
 		_ = peerWriter.Close()
+		_ = peerReader.Close()
+		_ = writer.Close()
+		_ = reader.Close()
 	}
 	return reader, writer, cleanup
 }

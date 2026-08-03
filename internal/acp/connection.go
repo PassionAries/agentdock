@@ -298,7 +298,12 @@ func (c *Connection) finish(err error) {
 			c.closeErr = errors.Join(c.closeErr, c.writer.Close())
 		}
 		if c.reader != nil {
-			c.closeErr = errors.Join(c.closeErr, c.reader.Close())
+			// Closing a Windows anonymous-pipe reader while another goroutine is
+			// blocked in Read can wait for the peer to close and deadlock shutdown.
+			// Publish the terminal state synchronously, but release the owned reader
+			// in the background; the process controller or peer cleanup supplies EOF.
+			reader := c.reader
+			go func() { _ = reader.Close() }()
 		}
 		close(c.closed)
 		c.failPending(newError("ACP_CONNECTION_CLOSED", "ACP connection closed", true, nil, c.closeErr))
