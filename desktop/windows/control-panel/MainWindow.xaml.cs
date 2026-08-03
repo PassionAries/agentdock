@@ -168,11 +168,6 @@ public partial class MainWindow : Window
     private async void UpdateButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("update", "正在检查并更新…");
     private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
-    private void CopyLocalMcpButton_Click(object sender, RoutedEventArgs e) => CopyText(LocalMcpTextBox.Text, "本地 MCP 地址已复制");
-    private void CopyPublicMcpButton_Click(object sender, RoutedEventArgs e) => CopyText(PublicMcpTextBox.Text, "公网 MCP 地址已复制");
-    private void CopyBearerButton_Click(object sender, RoutedEventArgs e) => CopyText(_bearerToken, "Bearer Token 已复制");
-    private void CopyOAuthButton_Click(object sender, RoutedEventArgs e) => CopyText(_oauthPassword, "OAuth 密码已复制");
-
     private void ToggleBearerButton_Click(object sender, RoutedEventArgs e)
     {
         _showBearer = !_showBearer;
@@ -194,17 +189,6 @@ public partial class MainWindow : Window
     }
 
     private static string MaskSecret(string value) => string.IsNullOrEmpty(value) ? "未配置" : new string('●', Math.Clamp(value.Length, 8, 32));
-
-    private void CopyText(string value, string successMessage)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            FooterStatusText.Text = "没有可复制的内容";
-            return;
-        }
-        Clipboard.SetText(value);
-        FooterStatusText.Text = successMessage;
-    }
 
     private async void TestPublicButton_Click(object sender, RoutedEventArgs e)
     {

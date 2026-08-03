@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using Application = System.Windows.Application;
@@ -11,6 +12,10 @@ public partial class App : System.Windows.Application
 {
     private const string MutexName = "Local\\AgentDock.ControlPanel.Singleton";
     private const string ShowEventName = "Local\\AgentDock.ControlPanel.Show";
+    private const string AppUserModelId = "com.uvwt.agentdock.controlpanel";
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _showEvent;
@@ -25,6 +30,9 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 使用稳定的 AppUserModelID，避免升级后任务栏沿用旧版本的隐式图标缓存。
+        _ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+
         _singleInstanceMutex = new Mutex(true, MutexName, out var createdNew);
         _ownsSingleInstanceMutex = createdNew;
         if (!createdNew)

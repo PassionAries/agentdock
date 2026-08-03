@@ -73,14 +73,10 @@
                   <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="本地 MCP" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBox x:Name="LocalMcpTextBox" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,10" />
-                <Button Grid.Column="2" Content="复制" Click="CopyLocalMcpButton_Click" />
+                <TextBox x:Name="LocalMcpTextBox" Grid.Column="1" Grid.ColumnSpan="2" IsReadOnly="True" Margin="0,0,0,10" />
                 <TextBlock Text="公网 MCP" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="PublicMcpTextBox" Grid.Row="1" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,10" />
-                <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal">
-                  <Button Content="复制" Click="CopyPublicMcpButton_Click" />
-                  <Button Content="测试" Click="TestPublicButton_Click" />
-                </StackPanel>
+                <Button Grid.Row="1" Grid.Column="2" Content="测试" Click="TestPublicButton_Click" />
                 <TextBlock Text="公网检测" Grid.Row="2" VerticalAlignment="Center" />
                 <TextBlock x:Name="PublicTestStatusText" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="尚未检测" TextWrapping="Wrap" />
               </Grid>
@@ -99,16 +95,10 @@
                 </Grid.RowDefinitions>
                 <TextBlock Text="Bearer Token" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="BearerTokenTextBox" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,10" />
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                  <Button x:Name="ToggleBearerButton" Content="显示" Click="ToggleBearerButton_Click" />
-                  <Button Content="复制" Click="CopyBearerButton_Click" />
-                </StackPanel>
+                <Button x:Name="ToggleBearerButton" Grid.Column="2" Content="显示" Click="ToggleBearerButton_Click" />
                 <TextBlock Text="OAuth 密码" Grid.Row="1" VerticalAlignment="Center" />
                 <TextBox x:Name="OAuthPasswordTextBox" Grid.Row="1" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,0" />
-                <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal">
-                  <Button x:Name="ToggleOAuthButton" Content="显示" Click="ToggleOAuthButton_Click" />
-                  <Button Content="复制" Click="CopyOAuthButton_Click" />
-                </StackPanel>
+                <Button x:Name="ToggleOAuthButton" Grid.Row="1" Grid.Column="2" Content="显示" Click="ToggleOAuthButton_Click" />
               </Grid>
             </GroupBox>
           </StackPanel>

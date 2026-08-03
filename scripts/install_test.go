@@ -594,6 +594,56 @@ func TestDesktopAppIconAssets(t *testing.T) {
 	}
 }
 
+func TestWindowsControlPanelUsesStableAppUserModelID(t *testing.T) {
+	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read App.xaml.cs: %v", err)
+	}
+	app := string(appData)
+	for _, want := range []string{
+		"com.uvwt.agentdock.controlpanel",
+		"SetCurrentProcessExplicitAppUserModelID",
+		"_ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId)",
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("App.xaml.cs missing stable taskbar identity %q", want)
+		}
+	}
+
+	setupData, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "AgentDock.iss"))
+	if err != nil {
+		t.Fatalf("read AgentDock.iss: %v", err)
+	}
+	if !strings.Contains(string(setupData), "AppUserModelID: \"com.uvwt.agentdock.controlpanel\"") {
+		t.Fatal("Start menu shortcut must use the same stable AppUserModelID as the control panel process")
+	}
+}
+
+func TestWindowsControlPanelOmitsCopyButtons(t *testing.T) {
+	xamlData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"))
+	if err != nil {
+		t.Fatalf("read MainWindow.xaml: %v", err)
+	}
+	codeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read MainWindow.xaml.cs: %v", err)
+	}
+
+	xaml := string(xamlData)
+	code := string(codeData)
+	for _, forbidden := range []string{
+		`Content="复制"`,
+		"CopyLocalMcpButton_Click",
+		"CopyPublicMcpButton_Click",
+		"CopyBearerButton_Click",
+		"CopyOAuthButton_Click",
+	} {
+		if strings.Contains(xaml, forbidden) || strings.Contains(code, forbidden) {
+			t.Fatalf("Windows control panel must not expose copy-button behavior %q", forbidden)
+		}
+	}
+}
+
 func TestWindowsControlPanelResolvesRuntimeRootFromExecutableDirectory(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
