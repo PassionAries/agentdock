@@ -1,6 +1,7 @@
 package scripts
 
 import (
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -539,6 +540,11 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"CreateOutputProgressPage",
 		"OfflineProgressDescription",
 		"FinishedControlPanel",
+		"DesktopShortcutCheckBox",
+		"DesktopShortcutCheckBox.Checked := True",
+		"ApplyDesktopControlPanelShortcut",
+		"CreateShellLink",
+		"{userdesktop}\\{code:GetLocalizedMessage|DesktopShortcutName}.lnk",
 		"if CurPageID = wpFinished then",
 		"{app}\\bin\\agentdock-tray.exe",
 	} {
@@ -559,6 +565,30 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		if strings.Contains(setup, forbidden) {
 			t.Fatalf("Setup completion page must not expose connection details or credentials: %q", forbidden)
 		}
+	}
+}
+
+func TestDesktopAppIconAssets(t *testing.T) {
+	pngData, err := os.ReadFile(filepath.Join("..", "packaging", "assets", "agentdock.png"))
+	if err != nil {
+		t.Fatalf("read shared AgentDock PNG: %v", err)
+	}
+	if len(pngData) < 24 || string(pngData[:8]) != "\x89PNG\r\n\x1a\n" {
+		t.Fatal("shared AgentDock icon must be a valid PNG")
+	}
+	if width, height := binary.BigEndian.Uint32(pngData[16:20]), binary.BigEndian.Uint32(pngData[20:24]); width != 1024 || height != 1024 {
+		t.Fatalf("shared AgentDock icon must be 1024x1024, got %dx%d", width, height)
+	}
+
+	icoData, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "assets", "agentdock.ico"))
+	if err != nil {
+		t.Fatalf("read Windows AgentDock ICO: %v", err)
+	}
+	if len(icoData) < 6 || binary.LittleEndian.Uint16(icoData[2:4]) != 1 {
+		t.Fatal("Windows AgentDock icon must be a valid ICO")
+	}
+	if count := binary.LittleEndian.Uint16(icoData[4:6]); count < 9 {
+		t.Fatalf("Windows AgentDock icon must include multiple sizes, got %d entries", count)
 	}
 }
 

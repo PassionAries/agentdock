@@ -12,6 +12,7 @@ ARCH_LIST="${AGENTDOCK_MACOS_ARCHES:-$(uname -m)}"
 OFFLINE_PAYLOAD_DIR="${AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR:-}"
 MIN_VERSION="${AGENTDOCK_MACOS_MIN_VERSION:-13.0}"
 BUNDLE_ID="com.uvwt.agentdock"
+APP_ICON_SOURCE="$ROOT_DIR/packaging/assets/agentdock.png"
 
 usage() {
   cat <<'USAGE'
@@ -37,10 +38,11 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-for command_name in codesign ditto file hdiutil lipo npm plutil shasum swiftc xcrun; do
+for command_name in codesign ditto file hdiutil iconutil lipo npm plutil shasum sips swiftc xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
+[[ -f "$APP_ICON_SOURCE" && ! -L "$APP_ICON_SOURCE" ]] || die "缺少 macOS App 图标：$APP_ICON_SOURCE"
 [[ -f "$LOGIN_HELPER_SOURCE" && ! -L "$LOGIN_HELPER_SOURCE" ]] || die "缺少 macOS 登录代理源码：$LOGIN_HELPER_SOURCE"
 [[ -f "$INSTALLER_SCRIPT" && ! -L "$INSTALLER_SCRIPT" ]] || die "缺少 macOS 安装脚本：$INSTALLER_SCRIPT"
 [[ -f "$BROWSER_INSTALLER_SCRIPT" && ! -L "$BROWSER_INSTALLER_SCRIPT" ]] || die "缺少浏览器支持安装脚本：$BROWSER_INSTALLER_SCRIPT"
@@ -144,6 +146,29 @@ chmod 0755 "$RESOURCES_DIR/install-macos-platform.sh" "$RESOURCES_DIR/install-br
 find "$RESOURCES_DIR/browser-runner" -type d -exec chmod 0755 {} +
 find "$RESOURCES_DIR/browser-runner" -type f -exec chmod 0644 {} +
 
+ICONSET_DIR="$TMP_DIR/AgentDock.iconset"
+mkdir -p "$ICONSET_DIR"
+icon_specs=(
+  'icon_16x16.png:16'
+  'icon_16x16@2x.png:32'
+  'icon_32x32.png:32'
+  'icon_32x32@2x.png:64'
+  'icon_128x128.png:128'
+  'icon_128x128@2x.png:256'
+  'icon_256x256.png:256'
+  'icon_256x256@2x.png:512'
+  'icon_512x512.png:512'
+  'icon_512x512@2x.png:1024'
+)
+for icon_spec in "${icon_specs[@]}"; do
+  icon_name="${icon_spec%%:*}"
+  icon_size="${icon_spec##*:}"
+  sips -z "$icon_size" "$icon_size" "$APP_ICON_SOURCE" --out "$ICONSET_DIR/$icon_name" >/dev/null
+done
+iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AgentDock.icns"
+[[ -f "$RESOURCES_DIR/AgentDock.icns" && ! -L "$RESOURCES_DIR/AgentDock.icns" ]] || \
+  die "macOS App 图标生成失败"
+
 # 图形安装器必须在断网环境中完成核心和 Tunnel 安装。构建阶段只接受已经
 # 生成并带 SHA-256 的载荷，避免 App 在运行时静默回退到网络下载。
 OFFLINE_RESOURCES_DIR="$RESOURCES_DIR/offline-payload"
@@ -202,6 +227,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>AgentDock</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
+  <key>CFBundleIconFile</key>
+  <string>AgentDock.icns</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

@@ -4,6 +4,7 @@ var
   StartupPage: TInputOptionWizardPage;
   ConnectionPage: TInputOptionWizardPage;
   FixedTunnelPage: TInputQueryWizardPage;
+  DesktopShortcutCheckBox: TNewCheckBox;
   PurgeState: Boolean;
   UninstallCleanupExecuted: Boolean;
   ResultFilePath: String;
@@ -277,6 +278,14 @@ begin
     GetLocalizedMessage('OfflineProgressCaption'),
     GetLocalizedMessage('OfflineProgressDescription')
   );
+
+  DesktopShortcutCheckBox := TNewCheckBox.Create(WizardForm);
+  DesktopShortcutCheckBox.Parent := WizardForm.FinishedPage;
+  DesktopShortcutCheckBox.Left := ScaleX(0);
+  DesktopShortcutCheckBox.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(18);
+  DesktopShortcutCheckBox.Width := WizardForm.FinishedPage.ClientWidth;
+  DesktopShortcutCheckBox.Caption := GetLocalizedMessage('CreateDesktopShortcut');
+  DesktopShortcutCheckBox.Checked := True;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -291,6 +300,31 @@ begin
     ((PageID = FixedTunnelPage.ID) and (SelectedTunnelMode() <> 'named'));
 end;
 
+function ApplyDesktopControlPanelShortcut(CreateRequested: Boolean): Boolean;
+var
+  ShortcutPath: String;
+begin
+  ShortcutPath := AddBackslash(ExpandConstant('{userdesktop}')) +
+    GetLocalizedMessage('DesktopShortcutName') + '.lnk';
+  if not CreateRequested then
+  begin
+    DeleteFile(ShortcutPath);
+    Result := not FileExists(ShortcutPath);
+    Exit;
+  end;
+
+  Result := CreateShellLink(
+    ShortcutPath,
+    GetLocalizedMessage('DesktopShortcutDescription'),
+    ExpandConstant('{app}\bin\agentdock-tray.exe'),
+    '',
+    ExpandConstant('{app}'),
+    ExpandConstant('{app}\bin\agentdock-tray.exe'),
+    0,
+    SW_SHOWNORMAL
+  );
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   URL: String;
@@ -299,6 +333,8 @@ begin
   Result := True;
   if CurPageID = wpFinished then
   begin
+    if not ApplyDesktopControlPanelShortcut(DesktopShortcutCheckBox.Checked) then
+      Log('AgentDock desktop shortcut state could not be applied.');
     if not Exec(
       ExpandConstant('{app}\bin\agentdock-tray.exe'),
       '',
