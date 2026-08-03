@@ -657,6 +657,8 @@ func TestWindowsControlPanelKeepsExistingBackgroundAndStylesOnlyButtonsAndTabs(t
 		`<Style TargetType="Button">`,
 		`<Style TargetType="TabControl">`,
 		`<Style TargetType="TabItem">`,
+		`x:Name="PART_SelectedContentHost"`,
+		`Background="White"`,
 	} {
 		if !strings.Contains(app, want) {
 			t.Fatalf("App.xaml missing restrained Windows style %q", want)

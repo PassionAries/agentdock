@@ -83,7 +83,7 @@
                         KeyboardNavigation.TabIndex="1"
                         Panel.ZIndex="1" />
               <Border Grid.Row="1"
-                      Background="Transparent"
+                      Background="White"
                       BorderBrush="{TemplateBinding BorderBrush}"
                       BorderThickness="{TemplateBinding BorderThickness}"
                       KeyboardNavigation.TabNavigation="Local"
