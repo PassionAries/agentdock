@@ -156,7 +156,21 @@ public partial class MainWindow : Window
     private async void StartButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("start", "正在启动…");
     private async void StopButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("stop", "正在停止…");
     private async void RestartButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("restart", "正在重启…");
-    private async void UpdateButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("update", "正在检查并更新…");
+
+    private async void UpdateButton_Click(object sender, RoutedEventArgs e) =>
+        await ((App)Application.Current).CheckForUpdatesAsync(this);
+
+    public void SetUpdateState(bool inProgress, string? status = null)
+    {
+        UpdateButton.IsEnabled = !inProgress;
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            FooterStatusText.Text = status;
+        }
+    }
+
+    public void SetUpdateStatus(string status) => FooterStatusText.Text = status;
+
     private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
     private void ToggleBearerButton_Click(object sender, RoutedEventArgs e)

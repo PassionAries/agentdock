@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -42,10 +43,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	if len(args) > 0 && args[0] == "update" {
-		if len(args) != 1 {
-			return errors.New("update 不接受额外参数")
+		switch {
+		case len(args) == 1:
+			return selfupdate.Run(ctx, stdout)
+		case len(args) == 2 && args[1] == "--check":
+			result, err := selfupdate.Check(ctx)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(stdout).Encode(result)
+		default:
+			return errors.New("用法：agentdock update [--check]")
 		}
-		return selfupdate.Run(ctx, stdout)
 	}
 	if len(args) > 0 && args[0] == "skill" {
 		return runSkillCommand(ctx, args[1:], stdout, stderr)
@@ -116,7 +125,7 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "用法：")
 		fmt.Fprintln(stderr, "  agentdock [服务参数]")
 		fmt.Fprintln(stderr, "  agentdock --version")
-		fmt.Fprintln(stderr, "  agentdock update")
+		fmt.Fprintln(stderr, "  agentdock update [--check]")
 		fmt.Fprintln(stderr, "  agentdock skill bootstrap --bundle <目录>")
 		fmt.Fprintln(stderr, "\n服务参数：")
 		flags.PrintDefaults()

@@ -26,9 +26,10 @@ import (
 )
 
 const (
-	defaultReleaseAPI     = "https://api.github.com/repos/uvwt/agentdock/releases/latest"
-	maxReleaseBytes       = 64 << 20
-	coreSkillBundlePrefix = "share/agentdock/core-skills/"
+	defaultReleaseAPI        = "https://api.github.com/repos/uvwt/agentdock/releases/latest"
+	maxReleaseArchiveBytes   = 256 << 20
+	maxExtractedPayloadBytes = 64 << 20
+	coreSkillBundlePrefix    = "share/agentdock/core-skills/"
 )
 
 type release struct {
@@ -39,6 +40,21 @@ type release struct {
 type releaseAsset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
+}
+
+type CheckResult struct {
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	Message         string `json:"message"`
+}
+
+type updateInspection struct {
+	Result         CheckResult
+	ArchiveName    string
+	ExecutableName string
+	ArchiveAsset   releaseAsset
+	ChecksumAsset  releaseAsset
 }
 
 type options struct {
@@ -68,14 +84,34 @@ type applyResult struct {
 }
 
 func Run(ctx context.Context, output io.Writer) error {
+	opts, err := runtimeOptions(output)
+	if err != nil {
+		return err
+	}
+	return run(ctx, opts)
+}
+
+func Check(ctx context.Context) (CheckResult, error) {
+	opts, err := runtimeOptions(io.Discard)
+	if err != nil {
+		return CheckResult{}, err
+	}
+	inspection, err := inspectUpdate(ctx, opts)
+	if err != nil {
+		return CheckResult{}, err
+	}
+	return inspection.Result, nil
+}
+
+func runtimeOptions(output io.Writer) (options, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("定位当前 AgentDock 二进制失败: %w", err)
+		return options{}, fmt.Errorf("定位当前 AgentDock 二进制失败: %w", err)
 	}
 	if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
 		executable = resolved
 	}
-	return run(ctx, options{
+	return options{
 		CurrentVersion: config.Version,
 		ExecutablePath: executable,
 		GOOS:           runtime.GOOS,
@@ -85,7 +121,7 @@ func Run(ctx context.Context, output io.Writer) error {
 		Output:         output,
 		Apply:          applyPlatformUpdate,
 		VerifyBinary:   verifyBinaryVersion,
-	})
+	}, nil
 }
 
 func run(ctx context.Context, opts options) error {
@@ -99,40 +135,25 @@ func run(ctx context.Context, opts options) error {
 		return errors.New("更新执行器未配置")
 	}
 
-	latest, err := fetchLatestRelease(ctx, opts.HTTPClient, opts.ReleaseAPI)
+	inspection, err := inspectUpdate(ctx, opts)
 	if err != nil {
 		return err
 	}
-	currentVersion := normalizeVersion(opts.CurrentVersion)
-	targetVersion := normalizeVersion(latest.TagName)
-	if currentVersion == "vdev" || currentVersion == "" {
-		return errors.New("当前是开发构建，无法通过 agentdock update 判断可升级版本")
-	}
-	if currentVersion == targetVersion {
-		fmt.Fprintf(opts.Output, "当前已是最新版本：%s\n", targetVersion)
-		return nil
-	}
-	if comparison, comparable := compareVersions(currentVersion, targetVersion); comparable && comparison > 0 {
-		fmt.Fprintf(opts.Output, "当前版本 %s 高于最新 Release %s，不执行降级。\n", currentVersion, targetVersion)
+	if !inspection.Result.UpdateAvailable {
+		fmt.Fprintln(opts.Output, inspection.Result.Message)
 		return nil
 	}
 
-	archiveName, executableName, err := platformAssetNames(opts.GOOS, opts.GOARCH)
-	if err != nil {
-		return err
-	}
-	archiveAsset, ok := findAsset(latest.Assets, archiveName)
-	if !ok {
-		return fmt.Errorf("Release %s 缺少当前平台文件 %s", targetVersion, archiveName)
-	}
-	checksumAsset, ok := findAsset(latest.Assets, archiveName+".sha256")
-	if !ok {
-		return fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, archiveName)
-	}
+	currentVersion := inspection.Result.CurrentVersion
+	targetVersion := inspection.Result.LatestVersion
+	archiveName := inspection.ArchiveName
+	executableName := inspection.ExecutableName
+	archiveAsset := inspection.ArchiveAsset
+	checksumAsset := inspection.ChecksumAsset
 
 	fmt.Fprintf(opts.Output, "当前版本：%s\n最新版本：%s\n\n", currentVersion, targetVersion)
 	fmt.Fprintf(opts.Output, "正在下载 %s...\n", archiveName)
-	archiveData, err := download(ctx, opts.HTTPClient, archiveAsset.URL, maxReleaseBytes)
+	archiveData, err := download(ctx, opts.HTTPClient, archiveAsset.URL, maxReleaseArchiveBytes)
 	if err != nil {
 		return fmt.Errorf("下载更新文件失败: %w", err)
 	}
@@ -189,6 +210,58 @@ func run(ctx context.Context, opts options) error {
 		fmt.Fprintf(opts.Output, "更新完成：%s → %s。当前未检测到托管服务，请重新启动正在运行的 AgentDock。\n", currentVersion, targetVersion)
 	}
 	return nil
+}
+
+func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) {
+	if opts.HTTPClient == nil {
+		return updateInspection{}, errors.New("更新 HTTP 客户端不能为空")
+	}
+	latest, err := fetchLatestRelease(ctx, opts.HTTPClient, opts.ReleaseAPI)
+	if err != nil {
+		return updateInspection{}, err
+	}
+
+	currentVersion := normalizeVersion(opts.CurrentVersion)
+	targetVersion := normalizeVersion(latest.TagName)
+	if currentVersion == "vdev" || currentVersion == "" {
+		return updateInspection{}, errors.New("当前是开发构建，无法通过 agentdock update 判断可升级版本")
+	}
+
+	result := CheckResult{
+		CurrentVersion: currentVersion,
+		LatestVersion:  targetVersion,
+	}
+	if currentVersion == targetVersion {
+		result.Message = fmt.Sprintf("当前已是最新版本：%s", targetVersion)
+		return updateInspection{Result: result}, nil
+	}
+	if comparison, comparable := compareVersions(currentVersion, targetVersion); comparable && comparison > 0 {
+		result.Message = fmt.Sprintf("当前版本 %s 高于最新 Release %s，不执行降级。", currentVersion, targetVersion)
+		return updateInspection{Result: result}, nil
+	}
+
+	archiveName, executableName, err := platformAssetNames(opts.GOOS, opts.GOARCH)
+	if err != nil {
+		return updateInspection{}, err
+	}
+	archiveAsset, ok := findAsset(latest.Assets, archiveName)
+	if !ok {
+		return updateInspection{}, fmt.Errorf("Release %s 缺少当前平台文件 %s", targetVersion, archiveName)
+	}
+	checksumAsset, ok := findAsset(latest.Assets, archiveName+".sha256")
+	if !ok {
+		return updateInspection{}, fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, archiveName)
+	}
+
+	result.UpdateAvailable = true
+	result.Message = fmt.Sprintf("发现新版本：%s → %s", currentVersion, targetVersion)
+	return updateInspection{
+		Result:         result,
+		ArchiveName:    archiveName,
+		ExecutableName: executableName,
+		ArchiveAsset:   archiveAsset,
+		ChecksumAsset:  checksumAsset,
+	}, nil
 }
 
 func fetchLatestRelease(ctx context.Context, client *http.Client, endpoint string) (release, error) {
@@ -281,7 +354,7 @@ func extractExecutable(archiveData []byte, goos, executableName string) ([]byte,
 				return nil, err
 			}
 			defer opened.Close()
-			return readLimited(opened, maxReleaseBytes)
+			return readLimited(opened, maxExtractedPayloadBytes)
 		}
 		return nil, fmt.Errorf("压缩包缺少 %s", executableName)
 	}
@@ -305,7 +378,7 @@ func extractExecutable(archiveData []byte, goos, executableName string) ([]byte,
 		if name != wanted || !header.FileInfo().Mode().IsRegular() {
 			continue
 		}
-		return readLimited(tarReader, maxReleaseBytes)
+		return readLimited(tarReader, maxExtractedPayloadBytes)
 	}
 	return nil, fmt.Errorf("压缩包缺少 %s", wanted)
 }
