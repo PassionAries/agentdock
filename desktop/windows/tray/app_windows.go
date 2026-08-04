@@ -111,6 +111,7 @@ var (
 	procGlobalLock          = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock        = kernel32.NewProc("GlobalUnlock")
 	procGlobalFree          = kernel32.NewProc("GlobalFree")
+	procRtlMoveMemory       = kernel32.NewProc("RtlMoveMemory")
 
 	activeTray            *trayApp
 	taskbarCreatedMessage uint32
@@ -577,8 +578,9 @@ func setClipboardText(value string) error {
 	if pointer == 0 {
 		return fmt.Errorf("锁定剪贴板内存失败: %w", lockErr)
 	}
-	buffer := unsafe.Slice((*uint16)(unsafe.Pointer(pointer)), len(encoded))
-	copy(buffer, encoded)
+	// 目标地址属于 Windows 全局内存，不把它包装成 Go 切片，避免 uintptr
+	// 跨越调用边界后重新转换为 unsafe.Pointer 的生命周期风险。
+	procRtlMoveMemory.Call(pointer, uintptr(unsafe.Pointer(&encoded[0])), size)
 	procGlobalUnlock.Call(memory)
 
 	opened := false
