@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,81 @@ func TestBootstrapInstallsActivatesAndRecordsBundledSkills(t *testing.T) {
 	// 重复执行同一 Bundle 应保持幂等，不创建重复状态或报同版本冲突。
 	if _, err := Bootstrap(context.Background(), state, manager, bundle); err != nil {
 		t.Fatalf("second Bootstrap() failed: %v", err)
+	}
+}
+
+func TestBootstrapReplacesExistingBundledSkillWithSameVersion(t *testing.T) {
+	state, manager := newTestManager(t)
+	localRoot := t.TempDir()
+	local := writeBundledSkillWithBody(t, localRoot, "skill-authoring", "1.0.0", "Local modification")
+	if _, err := manager.Install(context.Background(), skills.InstallRequest{
+		Source:   filepath.Join(localRoot, local.Name),
+		Activate: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle := t.TempDir()
+	official := writeBundledSkillWithBody(t, bundle, local.Name, local.Version, "Official content")
+	writeManifest(t, bundle, Manifest{Skills: []ManifestSkill{official}})
+	if _, err := Bootstrap(context.Background(), state, manager, bundle); err != nil {
+		t.Fatal(err)
+	}
+
+	installedPath, err := state.Resolve(local.Name, local.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(installedPath, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Official content") || strings.Contains(string(data), "Local modification") {
+		t.Fatalf("bundled Skill was not replaced with official content: %s", data)
+	}
+}
+
+func TestBootstrapRestoresReplacedBundledSkillWhenActivationFails(t *testing.T) {
+	state, manager := newTestManager(t)
+	localRoot := t.TempDir()
+	local := writeBundledSkillWithBody(t, localRoot, "first-skill", "1.0.0", "Local modification")
+	if _, err := manager.Install(context.Background(), skills.InstallRequest{
+		Source:   filepath.Join(localRoot, local.Name),
+		Activate: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle := t.TempDir()
+	first := writeBundledSkillWithBody(t, bundle, local.Name, local.Version, "Official replacement")
+	second := writeBundledSkill(t, bundle, "second-skill", "1.0.0")
+	writeManifest(t, bundle, Manifest{Skills: []ManifestSkill{first, second}})
+
+	lockPath := filepath.Join(state.Root(), "locks", second.Name+".lock")
+	if err := os.Mkdir(lockPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = os.Remove(lockPath)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := Bootstrap(ctx, state, manager, bundle); err == nil {
+		t.Fatal("Bootstrap() succeeded despite blocked activation")
+	}
+
+	installedPath, err := state.Resolve(local.Name, local.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(installedPath, "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Local modification") || strings.Contains(string(data), "Official replacement") {
+		t.Fatalf("failed Bootstrap did not restore original Skill content: %s", data)
 	}
 }
 
@@ -136,11 +212,16 @@ func newTestManager(t *testing.T) (*skillstate.Store, *skills.Manager) {
 
 func writeBundledSkill(t *testing.T, bundle, name, version string) ManifestSkill {
 	t.Helper()
+	return writeBundledSkillWithBody(t, bundle, name, version, "Test")
+}
+
+func writeBundledSkillWithBody(t *testing.T, bundle, name, version, body string) ManifestSkill {
+	t.Helper()
 	packageDir := filepath.Join(bundle, name)
 	if err := os.MkdirAll(packageDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	document := "---\nname: " + name + "\ndescription: Test bundled Skill.\nversion: " + version + "\n---\n\n# Test\n"
+	document := "---\nname: " + name + "\ndescription: Test bundled Skill.\nversion: " + version + "\n---\n\n# " + body + "\n"
 	if err := os.WriteFile(filepath.Join(packageDir, "SKILL.md"), []byte(document), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -38,13 +38,14 @@ type InstalledSkill struct {
 }
 
 type candidate struct {
-	manifest ManifestSkill
-	path     string
-	existed  bool
+	manifest   ManifestSkill
+	path       string
+	existed    bool
+	backupPath string
 }
 
 // Bootstrap 安装并激活 Release 随附的 Skill Bundle。
-// 包校验、安装、激活和内置清单提交按顺序执行，失败时恢复原选择并清理本次新增版本。
+// 包校验、安装、激活和内置清单提交按顺序执行；已有版本会先备份并由官方包替换，失败时完整回滚。
 func Bootstrap(ctx context.Context, state *skillstate.Store, manager *skills.Manager, bundleDir string) (Result, error) {
 	if state == nil {
 		return Result{}, errors.New("skill state store is required")
@@ -70,19 +71,49 @@ func Bootstrap(ctx context.Context, state *skillstate.Store, manager *skills.Man
 		snapshots[item.manifest.Name] = snapshot
 	}
 
+	transactionRoot, err := state.TempPath("bundle")
+	if err != nil {
+		return Result{}, fmt.Errorf("create bundled Skill transaction: %w", err)
+	}
+	defer os.RemoveAll(transactionRoot)
+
 	installed := make([]candidate, 0, len(candidates))
 	results := make([]InstalledSkill, 0, len(candidates))
-	for _, item := range candidates {
+	for index := range candidates {
+		item := candidates[index]
+		if item.existed {
+			destination, err := state.InstalledPath(item.manifest.Name, item.manifest.Version)
+			if err != nil {
+				rollbackErr := rollbackBootstrap(context.WithoutCancel(ctx), state, nil, installed, snapshots)
+				return Result{}, errors.Join(err, rollbackErr)
+			}
+			info, err := os.Lstat(destination)
+			if err != nil {
+				rollbackErr := rollbackBootstrap(context.WithoutCancel(ctx), state, nil, installed, snapshots)
+				return Result{}, errors.Join(fmt.Errorf("inspect bundled skill %s: %w", item.manifest.Name, err), rollbackErr)
+			}
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				rollbackErr := rollbackBootstrap(context.WithoutCancel(ctx), state, nil, installed, snapshots)
+				return Result{}, errors.Join(fmt.Errorf("bundled skill %s installed version is not a regular directory", item.manifest.Name), rollbackErr)
+			}
+			item.backupPath = filepath.Join(transactionRoot, fmt.Sprintf("%03d-%s-%s", index, item.manifest.Name, item.manifest.Version))
+			if err := os.Rename(destination, item.backupPath); err != nil {
+				rollbackErr := rollbackBootstrap(context.WithoutCancel(ctx), state, nil, installed, snapshots)
+				return Result{}, errors.Join(fmt.Errorf("stage bundled skill %s replacement: %w", item.manifest.Name, err), rollbackErr)
+			}
+			candidates[index] = item
+		}
+
+		installed = append(installed, item)
 		result, err := manager.Install(ctx, skills.InstallRequest{
 			Source:       item.path,
 			DigestSHA256: item.manifest.Digest,
 			Activate:     false,
 		})
 		if err != nil {
-			cleanupErr := cleanupNewVersions(context.WithoutCancel(ctx), state, installed)
-			return Result{}, errors.Join(fmt.Errorf("install bundled skill %s: %w", item.manifest.Name, err), cleanupErr)
+			rollbackErr := rollbackBootstrap(context.WithoutCancel(ctx), state, nil, installed, snapshots)
+			return Result{}, errors.Join(fmt.Errorf("install bundled skill %s: %w", item.manifest.Name, err), rollbackErr)
 		}
-		installed = append(installed, item)
 		results = append(results, InstalledSkill{Name: result.Skill, Version: result.Version, Digest: result.Digest})
 	}
 
@@ -232,24 +263,39 @@ func rollbackBootstrap(ctx context.Context, state *skillstate.Store, activated, 
 			rollbackErrors = append(rollbackErrors, fmt.Errorf("restore %s selection: %w", name, err))
 		}
 	}
-	if err := cleanupNewVersions(ctx, state, installed); err != nil {
+	if err := rollbackInstalledVersions(ctx, state, installed); err != nil {
 		rollbackErrors = append(rollbackErrors, err)
 	}
 	return errors.Join(rollbackErrors...)
 }
 
-func cleanupNewVersions(ctx context.Context, state *skillstate.Store, installed []candidate) error {
-	var cleanupErrors []error
+func rollbackInstalledVersions(ctx context.Context, state *skillstate.Store, installed []candidate) error {
+	var rollbackErrors []error
 	for index := len(installed) - 1; index >= 0; index-- {
 		item := installed[index]
+		if item.backupPath != "" {
+			destination, err := state.InstalledPath(item.manifest.Name, item.manifest.Version)
+			if err != nil {
+				rollbackErrors = append(rollbackErrors, err)
+				continue
+			}
+			if err := os.RemoveAll(destination); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("remove replacement for bundled skill %s version %s: %w", item.manifest.Name, item.manifest.Version, err))
+				continue
+			}
+			if err := os.Rename(item.backupPath, destination); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Errorf("restore bundled skill %s version %s: %w", item.manifest.Name, item.manifest.Version, err))
+			}
+			continue
+		}
 		if item.existed {
 			continue
 		}
 		if err := state.RemoveVersion(ctx, item.manifest.Name, item.manifest.Version); err != nil {
-			cleanupErrors = append(cleanupErrors, fmt.Errorf("remove bundled skill %s version %s: %w", item.manifest.Name, item.manifest.Version, err))
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("remove bundled skill %s version %s: %w", item.manifest.Name, item.manifest.Version, err))
 		}
 	}
-	return errors.Join(cleanupErrors...)
+	return errors.Join(rollbackErrors...)
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

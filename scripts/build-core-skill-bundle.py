@@ -17,6 +17,17 @@ CORE_SKILLS = (
     "skill-vetter-runtime",
 )
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
+TEXT_FILE_SUFFIXES = {
+    ".cfg", ".conf", ".css", ".csv", ".go", ".html", ".ini", ".js", ".json",
+    ".jsx", ".md", ".ps1", ".py", ".sh", ".toml", ".ts", ".tsx", ".txt",
+    ".xml", ".yaml", ".yml",
+}
+
+
+def normalize_package_data(path: Path, data: bytes) -> bytes:
+    if path.suffix.lower() not in TEXT_FILE_SUFFIXES:
+        return data
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,7 +58,10 @@ def read_identity(skill_root: Path, expected_name: str) -> tuple[str, str]:
 
 
 def package_skill(skill_root: Path, archive_path: Path) -> str:
-    files = sorted(path for path in skill_root.rglob("*") if path.is_file() or path.is_symlink())
+    files = sorted(
+        (path for path in skill_root.rglob("*") if path.is_file() or path.is_symlink()),
+        key=lambda path: path.relative_to(skill_root).as_posix(),
+    )
     if not files:
         raise ValueError(f"{skill_root} has no files")
 
@@ -56,8 +70,10 @@ def package_skill(skill_root: Path, archive_path: Path) -> str:
             if path.is_symlink():
                 raise ValueError(f"symlink is not allowed in core Skill: {path}")
             relative = path.relative_to(skill_root).as_posix()
-            data = path.read_bytes()
-            mode = stat.S_IMODE(path.stat().st_mode)
+            data = normalize_package_data(path, path.read_bytes())
+            # Core Skills are documents and interpreter-driven scripts. A fixed file mode
+            # keeps package bytes stable across Windows, WSL, and Unix checkouts.
+            mode = 0o644
             info = zipfile.ZipInfo(relative, FIXED_ZIP_TIME)
             info.create_system = 3
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -92,9 +108,8 @@ def build_bundle(repo_root: Path, output: Path) -> None:
         )
 
     manifest = {"skills": entries}
-    (output / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    (output / "manifest.json").write_bytes(
+        (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     )
 
 

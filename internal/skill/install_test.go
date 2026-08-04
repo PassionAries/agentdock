@@ -160,6 +160,38 @@ func TestInstallTreatsDirectoryAndZipAsSameContent(t *testing.T) {
 	}
 }
 
+func TestInstallRejectsDifferentContentForSameVersion(t *testing.T) {
+	state, err := skillstate.New(filepath.Join(t.TempDir(), "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := New(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeSource := func(body string) string {
+		t.Helper()
+		source := filepath.Join(t.TempDir(), "demo-skill")
+		if err := os.MkdirAll(source, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		document := "---\nname: demo-skill\ndescription: Demo Skill.\nversion: 1.0.0\n---\n\n# " + body + "\n"
+		if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte(document), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return source
+	}
+
+	if _, err := manager.Install(context.Background(), InstallRequest{Source: writeSource("First")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(context.Background(), InstallRequest{Source: writeSource("Second")}); err == nil ||
+		!strings.Contains(err.Error(), "version already exists with different content") {
+		t.Fatalf("ordinary Skill install should reject same-version replacement: %v", err)
+	}
+}
+
 func writeSkillArchive(t *testing.T, source, archivePath string) {
 	t.Helper()
 	archive, err := os.Create(archivePath)
