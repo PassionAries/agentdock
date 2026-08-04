@@ -21,7 +21,6 @@ $trayBinaryPath = Join-Path $installDir 'agentdock-tray.exe'
 $trayIconPath = Join-Path $installDir 'agentdock.ico'
 $runtimeManifestPath = Join-Path $testRoot 'runtime.json'
 $tokenPath = Join-Path $testRoot 'auth-token.dpapi'
-$launcherPath = Join-Path $testRoot 'start-agentdock.ps1'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = 'AgentDock'
 $trayRunValueName = 'AgentDockTray'
@@ -81,11 +80,17 @@ function Assert-AgentDockHealthy {
     }
     $startupCommand = Get-ItemPropertyValue -LiteralPath $runKey -Name $runValueName -ErrorAction Stop
     $trayStartupCommand = Get-ItemPropertyValue -LiteralPath $runKey -Name $trayRunValueName -ErrorAction Stop
-    if (-not $trayStartupCommand.Contains($trayBinaryPath)) {
+    if (-not $trayStartupCommand.Contains($trayBinaryPath) -or -not $trayStartupCommand.Contains('--background')) {
         throw "AgentDock tray HKCU startup command is incorrect: $trayStartupCommand"
     }
-    if (-not $startupCommand.Contains($launcherPath)) {
-        throw "AgentDock HKCU startup command does not reference the launcher: $startupCommand"
+    if (-not $startupCommand.Contains($trayBinaryPath) -or
+        -not $startupCommand.Contains('--start-core') -or
+        -not $startupCommand.Contains('--runtime-root') -or
+        -not $startupCommand.Contains($testRoot)) {
+        throw "AgentDock core HKCU startup command is not native: $startupCommand"
+    }
+    if ($startupCommand.Contains('powershell.exe') -or $startupCommand.Contains('start-agentdock.ps1')) {
+        throw "AgentDock core HKCU startup command still uses the legacy launcher: $startupCommand"
     }
 
     $userHome = [Environment]::GetFolderPath('UserProfile')
