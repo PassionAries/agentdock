@@ -54,7 +54,12 @@ func TestUnixRoundTrip(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("IPC server did not stop after cancellation")
 	}
 }

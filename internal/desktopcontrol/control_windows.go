@@ -9,12 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+var cancelSynchronousIOProc = windows.NewLazySystemDLL("kernel32.dll").NewProc("CancelSynchronousIo")
 
 func endpointPath(runtimeRoot string) string {
 	digest := sha256.Sum256([]byte(strings.ToLower(runtimeRoot)))
@@ -44,27 +48,77 @@ func servePlatform(ctx context.Context, runtimeRoot string, handle func([]byte) 
 		if err != nil {
 			return fmt.Errorf("create desktop control named pipe: %w", err)
 		}
-		connected := make(chan error, 1)
-		go func() {
-			connectErr := windows.ConnectNamedPipe(pipe, nil)
-			if errors.Is(connectErr, windows.ERROR_PIPE_CONNECTED) {
-				connectErr = nil
-			}
-			connected <- connectErr
-		}()
-		select {
-		case <-ctx.Done():
+		connectErr := connectNamedPipe(ctx, pipe)
+		if ctx.Err() != nil {
 			_ = windows.CloseHandle(pipe)
-			<-connected
 			return nil
-		case connectErr := <-connected:
-			if connectErr != nil {
-				_ = windows.CloseHandle(pipe)
-				return fmt.Errorf("connect desktop control named pipe: %w", connectErr)
-			}
+		}
+		if connectErr != nil {
+			_ = windows.CloseHandle(pipe)
+			return fmt.Errorf("connect desktop control named pipe: %w", connectErr)
 		}
 		servePipe(pipe, handle)
 	}
+}
+
+func connectNamedPipe(ctx context.Context, pipe windows.Handle) error {
+	type connectorState struct {
+		thread windows.Handle
+		err    error
+	}
+
+	ready := make(chan connectorState, 1)
+	connected := make(chan error, 1)
+	go func() {
+		// CancelSynchronousIo 只会取消指定线程发起的同步 I/O，因此连接调用必须固定在同一个 OS 线程。
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		thread, err := windows.OpenThread(windows.THREAD_TERMINATE, false, windows.GetCurrentThreadId())
+		ready <- connectorState{thread: thread, err: err}
+		if err != nil {
+			connected <- err
+			return
+		}
+
+		connectErr := windows.ConnectNamedPipe(pipe, nil)
+		if errors.Is(connectErr, windows.ERROR_PIPE_CONNECTED) {
+			connectErr = nil
+		}
+		connected <- connectErr
+	}()
+
+	connector := <-ready
+	if connector.err != nil {
+		return fmt.Errorf("open desktop control connector thread: %w", connector.err)
+	}
+	defer windows.CloseHandle(connector.thread)
+
+	select {
+	case connectErr := <-connected:
+		return connectErr
+	case <-ctx.Done():
+		cancelErr := cancelSynchronousIO(connector.thread)
+		connectErr := <-connected
+		if cancelErr != nil && !errors.Is(cancelErr, windows.ERROR_NOT_FOUND) {
+			return fmt.Errorf("cancel desktop control named pipe connection: %w", cancelErr)
+		}
+		if connectErr != nil && !errors.Is(connectErr, windows.ERROR_OPERATION_ABORTED) {
+			return connectErr
+		}
+		return ctx.Err()
+	}
+}
+
+func cancelSynchronousIO(thread windows.Handle) error {
+	result, _, callErr := cancelSynchronousIOProc.Call(uintptr(thread))
+	if result != 0 {
+		return nil
+	}
+	if callErr == syscall.Errno(0) {
+		return errors.New("CancelSynchronousIo failed without an error code")
+	}
+	return callErr
 }
 
 func servePipe(pipe windows.Handle, handle func([]byte) []byte) {
