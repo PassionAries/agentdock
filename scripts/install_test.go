@@ -760,6 +760,16 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 			t.Fatalf("Setup completion page must not expose connection details or credentials: %q", forbidden)
 		}
 	}
+	for _, forbidden := range []string{
+		"(recommended)",
+		"（推荐）",
+		"The tray stays a normal user process",
+		"托盘始终使用普通用户权限",
+	} {
+		if strings.Contains(setup, forbidden) {
+			t.Fatalf("Setup must not show recommendation or privilege implementation details: %q", forbidden)
+		}
+	}
 }
 
 func TestDesktopAppIconAssets(t *testing.T) {

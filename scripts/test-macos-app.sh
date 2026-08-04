@@ -20,6 +20,7 @@ swiftc \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TunnelTokenStore.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/PublicEndpointChecker.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ServicePortValidation.swift" \

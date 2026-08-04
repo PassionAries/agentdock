@@ -56,6 +56,10 @@ public sealed class RuntimeService : IDisposable
         {
             settings.LogLevel = "info";
         }
+        settings.AcpAgent = NormalizeAcpAgent(settings.AcpAgent);
+        settings.AcpCommand ??= "";
+        settings.AcpArgs ??= [];
+        settings.AcpAllowedRoots ??= [];
 
         var localOrigin = $"http://127.0.0.1:{settings.Port}";
         var localMcpUrl = localOrigin + "/mcp";
@@ -105,6 +109,76 @@ public sealed class RuntimeService : IDisposable
     public string ReadOAuthPassword() => ReadProtectedText(Path.Combine(RuntimeRoot, "oauth-password.dpapi"), OAuthPasswordEntropy);
     public string ReadTunnelToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi"), TunnelTokenEntropy);
     public string ReadNexusToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "nexus-token.dpapi"), NexusTokenEntropy);
+
+    public AcpAdapterResolution ResolveAcpAdapter(string agent, string configuredCommand = "")
+    {
+        var normalizedAgent = NormalizeAcpAgent(agent);
+        string[] executableNames;
+        string[] arguments;
+        switch (normalizedAgent)
+        {
+            case "claude":
+                executableNames = ["claude-agent-acp.exe", "claude-agent-acp"];
+                arguments = [];
+                break;
+            case "grok":
+                executableNames = ["grok.exe", "grok"];
+                arguments = ["agent", "stdio"];
+                break;
+            default:
+                executableNames = ["codex-acp.exe", "codex-acp"];
+                arguments = [];
+                break;
+        }
+
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configuredCommand))
+        {
+            candidates.Add(configuredCommand);
+        }
+        var directories = new List<string>
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Grok"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WinGet", "Links"),
+            Path.Combine(RuntimeRoot, "bin")
+        };
+        var pathValue = Environment.GetEnvironmentVariable("PATH") ?? "";
+        directories.AddRange(pathValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        foreach (var directory in directories.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            foreach (var executableName in executableNames)
+            {
+                candidates.Add(Path.Combine(directory, executableName));
+            }
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(candidate);
+                if (!seen.Add(fullPath) || !File.Exists(fullPath))
+                {
+                    continue;
+                }
+                var extension = Path.GetExtension(fullPath);
+                if (extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".ps1", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                return new AcpAdapterResolution(true, fullPath, arguments, $"已检测到 · {fullPath}");
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                // 忽略单个无效 PATH 项，继续检查其他标准安装位置。
+            }
+        }
+        return new AcpAdapterResolution(false, "", arguments, $"未安装 · 未找到 {executableNames[0]}");
+    }
 
     public async Task RunActionAsync(string action, CancellationToken cancellationToken = default)
     {
@@ -210,7 +284,10 @@ public sealed class RuntimeService : IDisposable
             "--nexus-endpoint", settings.NexusEndpoint ?? "",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
             "--browser-runner-dir", settings.BrowserRunnerDir ?? "",
-            "--browser-node-path", settings.BrowserNodePath ?? ""
+            "--browser-node-path", settings.BrowserNodePath ?? "",
+            $"--acp-enabled={settings.AcpEnabled.ToString().ToLowerInvariant()}",
+            "--acp-agent", NormalizeAcpAgent(settings.AcpAgent),
+            "--acp-allowed-roots-json", JsonSerializer.Serialize(settings.AcpAllowedRoots ?? [], JsonOptions)
         };
         string? secretFile = null;
         try
@@ -467,6 +544,16 @@ public sealed class RuntimeService : IDisposable
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .LastOrDefault();
         return string.IsNullOrWhiteSpace(line) ? fallback : line;
+    }
+
+    private static string NormalizeAcpAgent(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "claude" => "claude",
+            "grok" => "grok",
+            _ => "codex"
+        };
     }
 
     private static string ResolveRuntimeRoot()

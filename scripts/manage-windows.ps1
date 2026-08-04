@@ -248,6 +248,10 @@ function Get-ControlPanelSettings {
     if (@('debug', 'info', 'warn', 'error') -notcontains $storedLogLevel) {
         $storedLogLevel = 'info'
     }
+    $storedACPAgent = [string] (Get-ObjectProperty -Object $stored -Name 'acp_agent' -Default 'codex')
+    if (@('codex', 'claude', 'grok') -notcontains $storedACPAgent) {
+        $storedACPAgent = 'codex'
+    }
     return [pscustomobject][ordered]@{
         port = $storedPort
         log_level = $storedLogLevel
@@ -255,6 +259,11 @@ function Get-ControlPanelSettings {
         browser_enabled = Convert-ToBoolean -Value (Get-ObjectProperty -Object $stored -Name 'browser_enabled' -Default $false)
         browser_runner_dir = [string] (Get-ObjectProperty -Object $stored -Name 'browser_runner_dir' -Default '')
         browser_node_path = [string] (Get-ObjectProperty -Object $stored -Name 'browser_node_path' -Default '')
+        acp_enabled = Convert-ToBoolean -Value (Get-ObjectProperty -Object $stored -Name 'acp_enabled' -Default $false)
+        acp_agent = $storedACPAgent
+        acp_command = [string] (Get-ObjectProperty -Object $stored -Name 'acp_command' -Default '')
+        acp_args = @((Get-ObjectProperty -Object $stored -Name 'acp_args' -Default @()))
+        acp_allowed_roots = @((Get-ObjectProperty -Object $stored -Name 'acp_allowed_roots' -Default @()))
     }
 }
 
@@ -436,12 +445,20 @@ function Invoke-LaunchCore {
     $env:AGENTDOCK_PORT = [string] $settings.port
     $env:AGENTDOCK_LOG_LEVEL = [string] $settings.log_level
     $env:AGENTDOCK_BROWSER_ENABLED = ([bool] $settings.browser_enabled).ToString().ToLowerInvariant()
+    $env:AGENTDOCK_ACP_ENABLED = ([bool] $settings.acp_enabled).ToString().ToLowerInvariant()
 
     foreach ($name in @(
         'AGENTDOCK_NEXUS_ENDPOINT',
         'AGENTDOCK_NEXUS_TOKEN',
         'AGENTDOCK_BROWSER_RUNNER_DIR',
         'AGENTDOCK_BROWSER_NODE_PATH',
+        'AGENTDOCK_ACP_AGENT',
+        'AGENTDOCK_ACP_COMMAND',
+        'AGENTDOCK_ACP_ARGS_JSON',
+        'AGENTDOCK_ACP_ENV_FROM_ENV_JSON',
+        'AGENTDOCK_ACP_ALLOWED_ROOTS',
+        'AGENTDOCK_ACP_MAX_CONCURRENT_PROMPTS',
+        'AGENTDOCK_ACP_INTERACTION_TIMEOUT_MS',
         'AGENTDOCK_SERVER_URL',
         'AGENTDOCK_OAUTH_ENABLED',
         'AGENTDOCK_OAUTH_PASSWORD',
@@ -461,6 +478,18 @@ function Invoke-LaunchCore {
     }
     if (-not [string]::IsNullOrWhiteSpace([string] $settings.browser_node_path)) {
         $env:AGENTDOCK_BROWSER_NODE_PATH = [string] $settings.browser_node_path
+    }
+    if ([bool] $settings.acp_enabled) {
+        if (-not (Test-Path -LiteralPath ([string] $settings.acp_command) -PathType Leaf)) {
+            throw "找不到 Coding Agent 命令：$($settings.acp_command)"
+        }
+        if (@($settings.acp_allowed_roots).Count -eq 0) {
+            throw 'Coding Agent 允许目录不能为空。'
+        }
+        $env:AGENTDOCK_ACP_AGENT = [string] $settings.acp_agent
+        $env:AGENTDOCK_ACP_COMMAND = [string] $settings.acp_command
+        $env:AGENTDOCK_ACP_ARGS_JSON = ConvertTo-Json -InputObject @($settings.acp_args) -Compress
+        $env:AGENTDOCK_ACP_ALLOWED_ROOTS = [string]::Join(',', @($settings.acp_allowed_roots))
     }
 
     $activeServerUrl = Read-TextFile -Path $ServerUrlPath

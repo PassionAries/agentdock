@@ -44,6 +44,10 @@ Use the published `@agentclientprotocol/codex-acp` package. Configure AgentDock 
 
 The adapter starts the Codex App Server and maps Codex events and approvals into ACP. A separately installed Codex CLI can be selected with the adapter's documented host environment when testing a specific CLI build.
 
+### Grok Build
+
+Use the installed native `grok` executable with arguments `["agent", "stdio"]`. The current CLI may omit optional `agentInfo` while still negotiating ACP wire version `1` and advertising capabilities. Do not add `--always-approve` to the default acceptance configuration; exercise permission interactions explicitly.
+
 ## Generic service configuration
 
 The following is a template. Replace placeholders only in the protected service environment, not in repository files:
@@ -202,6 +206,16 @@ Capture evidence for:
 - a remote retry/error case proving that a failed App Server turn cannot be reported as a completed AgentDock run;
 - a retry-then-success case proving the compatibility guard does not create false failures;
 - subagent or review metadata only when naturally supported by the installed adapter version;
+- clean process-tree termination.
+
+### Grok Build adapter
+
+Capture evidence for:
+
+- ACP wire version `1`, capabilities, auth methods, and `_meta` identity when optional `agentInfo` is omitted;
+- session creation and streamed assistant/tool updates;
+- an explicit permission response with default approval behavior;
+- cancellation and load/list behavior only when advertised;
 - clean process-tree termination.
 
 Do not claim a feature merely because the adapter README lists it. Record only behavior observed from the pinned version under test.

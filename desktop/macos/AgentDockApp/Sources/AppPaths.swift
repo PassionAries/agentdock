@@ -31,6 +31,12 @@ struct ServiceConfiguration: Equatable {
         "AGENTDOCK_BROWSER_ENABLED",
         "AGENTDOCK_BROWSER_RUNNER_DIR",
         "AGENTDOCK_BROWSER_NODE_PATH",
+        "AGENTDOCK_ACP_ENABLED",
+        "AGENTDOCK_ACP_AGENT",
+        "AGENTDOCK_ACP_COMMAND",
+        "AGENTDOCK_ACP_ARGS_JSON",
+        "AGENTDOCK_ACP_ENV_FROM_ENV_JSON",
+        "AGENTDOCK_ACP_ALLOWED_ROOTS",
     ]
 
     let host: String
@@ -44,6 +50,11 @@ struct ServiceConfiguration: Equatable {
     let browserEnabled: Bool
     let browserRunnerDir: String
     let browserNodePath: String
+    let acpEnabled: Bool
+    let acpAgent: ACPAgentPreset
+    let acpCommand: String
+    let acpArgs: [String]
+    let acpAllowedRoots: [String]
 
     var healthHost: String {
         switch host {
@@ -89,13 +100,26 @@ struct ServiceConfiguration: Equatable {
             nexusToken: values["AGENTDOCK_NEXUS_TOKEN"] ?? "",
             browserEnabled: parseBool(values["AGENTDOCK_BROWSER_ENABLED"]),
             browserRunnerDir: values["AGENTDOCK_BROWSER_RUNNER_DIR"] ?? "",
-            browserNodePath: values["AGENTDOCK_BROWSER_NODE_PATH"] ?? ""
+            browserNodePath: values["AGENTDOCK_BROWSER_NODE_PATH"] ?? "",
+            acpEnabled: parseBool(values["AGENTDOCK_ACP_ENABLED"]),
+            acpAgent: ACPAgentPreset.parse(values["AGENTDOCK_ACP_AGENT"] ?? "codex"),
+            acpCommand: values["AGENTDOCK_ACP_COMMAND"] ?? "",
+            acpArgs: decodeStringArray(values["AGENTDOCK_ACP_ARGS_JSON"]),
+            acpAllowedRoots: ACPDesktopConfiguration.parseAllowedRoots(values["AGENTDOCK_ACP_ALLOWED_ROOTS"] ?? "")
         )
     }
 
     static func normalizedLogLevel(_ raw: String) -> String {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return value == "warning" ? "warn" : (value.isEmpty ? "info" : value)
+    }
+
+    private static func decodeStringArray(_ raw: String?) -> [String] {
+        guard let raw, let data = raw.data(using: .utf8),
+              let values = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return values
     }
 
     private static func parseBool(_ raw: String?) -> Bool {

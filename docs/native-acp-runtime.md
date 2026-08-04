@@ -132,18 +132,19 @@ AGENTDOCK_ACP_ENV_FROM_ENV_JSON='{"ANTHROPIC_API_KEY":"HOST_ANTHROPIC_API_KEY"}'
 
 On Windows, `AGENTDOCK_ACP_ALLOWED_ROOTS` uses comma-separated Windows paths and the JSON arguments contain escaped backslashes when needed.
 
-`AGENTDOCK_HOME` and `AGENTDOCK_DEFAULT_DIR` are first-class host configuration, not adapter environment mappings. They isolate AgentDock's own state and default workspace before the ACP manager is created. Running Claude and Codex at the same time therefore requires distinct values for both variables in addition to distinct ports and authentication credentials.
+`AGENTDOCK_HOME` and `AGENTDOCK_DEFAULT_DIR` are first-class host configuration, not adapter environment mappings. They isolate AgentDock's own state and default workspace before the ACP manager is created. Running multiple ACP adapters at the same time therefore requires distinct values for both variables in addition to distinct ports and authentication credentials.
 
 The command and arguments never pass through a shell. Do not configure `npx`, an online installer, or an unpinned package runner as the production executable.
 
-### Claude and Codex adapters
+### Claude, Codex, and Grok Build adapters
 
 AgentDock deliberately does not bundle or fork an adapter. Install and pin the adapter independently, then configure AgentDock with an absolute executable and absolute adapter entry point.
 
 - Claude: [`agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) exposes the Claude Agent SDK through ACP.
 - Codex: [`agentclientprotocol/codex-acp`](https://github.com/agentclientprotocol/codex-acp) starts the Codex App Server and maps Codex sessions, events, approvals, tools, plans, and subagents into ACP.
+- Grok Build: the native `grok` executable exposes ACP over `grok agent stdio`. AgentDock passes `agent` and `stdio` directly without a shell and does not enable `--always-approve` by default.
 
-One AgentDock process owns one configured adapter. To expose Claude and Codex simultaneously, run two isolated AgentDock service instances with different homes, loopback ports, authentication credentials, adapter commands, and allowed roots. This keeps session stores and process ownership single-purpose and prevents cross-agent state ambiguity while reusing the same adapter-neutral runtime.
+One AgentDock process owns one configured adapter. To expose multiple agents simultaneously, run isolated AgentDock service instances with different homes, loopback ports, authentication credentials, adapter commands, and allowed roots. This keeps session stores and process ownership single-purpose and prevents cross-agent state ambiguity while reusing the same adapter-neutral runtime.
 
 Never put API keys in `AGENTDOCK_ACP_ARGS_JSON`, a systemd `ExecStart`, shell history, or the process command line. Keep secrets in the service manager's protected environment file and map only the required names with `AGENTDOCK_ACP_ENV_FROM_ENV_JSON`.
 

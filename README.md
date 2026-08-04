@@ -248,7 +248,7 @@ AgentDock can optionally act as a native ACP client and host a local coding-agen
 - Optional ACP methods are enabled only when the `initialize` response advertises the corresponding capability
 - Restart recovery preserves session metadata but never replays a potentially mutating prompt automatically
 
-ACP is disabled by default. Enabling it requires at least an absolute adapter executable and allowed workspace roots:
+ACP is disabled by default. The macOS and Windows control panels provide Codex, Claude, and Grok Build presets and only use locally installed executables. Grok Build runs as `grok agent stdio`; `--always-approve` is never enabled by default. Enabling ACP requires at least an absolute adapter executable and allowed workspace roots:
 
 ```bash
 AGENTDOCK_ACP_ENABLED=true
@@ -258,7 +258,7 @@ AGENTDOCK_ACP_ARGS_JSON='["/absolute/path/to/claude-agent-acp/dist/index.js"]'
 AGENTDOCK_ACP_ALLOWED_ROOTS=/srv/code,/srv/worktrees
 ```
 
-Map sensitive variables explicitly from the host with `AGENTDOCK_ACP_ENV_FROM_ENV_JSON`; their values are not written to AgentDock state. See [Native ACP Runtime](docs/native-acp-runtime.md) for the architecture and [Native ACP Acceptance](docs/native-acp-acceptance.md) for the Claude/Codex validation sequence.
+Map sensitive variables explicitly from the host with `AGENTDOCK_ACP_ENV_FROM_ENV_JSON`; their values are not written to AgentDock state. See [Native ACP Runtime](docs/native-acp-runtime.md) for the architecture and [Native ACP Acceptance](docs/native-acp-acceptance.md) for the Claude, Codex, and Grok Build validation sequence.
 
 ### Browser and desktop automation
 
