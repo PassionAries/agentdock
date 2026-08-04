@@ -616,7 +616,7 @@ function New-ElevatedAgentDockScheduledTask {
         throw 'Elevated AgentDock task configuration is incomplete.'
     }
 
-    $taskArguments = "--start-core --runtime-root `"$RuntimeRoot`""
+    $taskArguments = "service launch-core --runtime-root `"$RuntimeRoot`""
     $action = New-ScheduledTaskAction -Execute $LauncherPath -Argument $taskArguments
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserName
     $principal = New-ScheduledTaskPrincipal `
@@ -1211,7 +1211,7 @@ try {
         Start-ElevatedAgentDockTaskAction `
             -Action $taskAction `
             -BackupDirectory $taskBackupDirectory `
-            -LauncherPath $destinationTrayBinary `
+            -LauncherPath $destinationBinary `
             -RuntimeRoot $runtimeDir `
             -TaskUser $taskUser
         $taskTransactionPrepared = $true
