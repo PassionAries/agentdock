@@ -9,6 +9,10 @@ struct EditableServiceSettings {
     let browserEnabled: Bool
     let browserRunnerDir: String
     let browserNodePath: String
+    let acpEnabled: Bool
+    let acpAgent: ACPAgentPreset
+    let acpCommand: String
+    let acpAllowedRoots: [String]
 
     func validated() throws -> EditableServiceSettings {
         try ServicePortValidation.validate(port)
@@ -39,6 +43,16 @@ struct EditableServiceSettings {
             }
         }
 
+        var command = ""
+        var allowedRoots: [String] = []
+        if acpEnabled {
+            guard let resolved = acpAgent.resolveExecutable(configuredCommand: acpCommand) else {
+                throw ValidationError("\(acpAgent.title) 不可用：\(acpAgent.missingExecutableMessage)。")
+            }
+            command = resolved
+            allowedRoots = try ACPDesktopConfiguration.validateAllowedRoots(acpAllowedRoots)
+        }
+
         return EditableServiceSettings(
             port: port,
             logLevel: normalizedLogLevel,
@@ -46,7 +60,11 @@ struct EditableServiceSettings {
             nexusTokenReplacement: nexusTokenReplacement,
             browserEnabled: browserEnabled,
             browserRunnerDir: runner,
-            browserNodePath: node
+            browserNodePath: node,
+            acpEnabled: acpEnabled,
+            acpAgent: acpAgent,
+            acpCommand: command,
+            acpAllowedRoots: allowedRoots
         )
     }
 
@@ -94,7 +112,16 @@ final class ServiceConfigurationController {
             "AGENTDOCK_BROWSER_ENABLED": settings.browserEnabled ? "true" : "false",
             "AGENTDOCK_BROWSER_RUNNER_DIR": settings.browserRunnerDir,
             "AGENTDOCK_BROWSER_NODE_PATH": settings.browserNodePath,
+            "AGENTDOCK_ACP_ENABLED": settings.acpEnabled ? "true" : "false",
+            "AGENTDOCK_ACP_AGENT": settings.acpAgent.rawValue,
+            "AGENTDOCK_ACP_COMMAND": settings.acpCommand,
+            "AGENTDOCK_ACP_ARGS_JSON": try ACPDesktopConfiguration.encodeArguments(settings.acpAgent.arguments),
+            "AGENTDOCK_ACP_ALLOWED_ROOTS": settings.acpAllowedRoots.joined(separator: ","),
         ]
+        if settings.acpEnabled {
+            // 桌面预设依赖各 Agent 自己的登录状态，不继承上一个 Agent 的密钥映射。
+            replacements["AGENTDOCK_ACP_ENV_FROM_ENV_JSON"] = "{}"
+        }
         if let replacement = settings.nexusTokenReplacement {
             replacements["AGENTDOCK_NEXUS_TOKEN"] = replacement
         }

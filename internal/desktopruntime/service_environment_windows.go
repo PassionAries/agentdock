@@ -26,6 +26,14 @@ var managedCoreEnvironment = []string{
 	"AGENTDOCK_BROWSER_ENABLED",
 	"AGENTDOCK_BROWSER_RUNNER_DIR",
 	"AGENTDOCK_BROWSER_NODE_PATH",
+	"AGENTDOCK_ACP_ENABLED",
+	"AGENTDOCK_ACP_AGENT",
+	"AGENTDOCK_ACP_COMMAND",
+	"AGENTDOCK_ACP_ARGS_JSON",
+	"AGENTDOCK_ACP_ENV_FROM_ENV_JSON",
+	"AGENTDOCK_ACP_ALLOWED_ROOTS",
+	"AGENTDOCK_ACP_MAX_CONCURRENT_PROMPTS",
+	"AGENTDOCK_ACP_INTERACTION_TIMEOUT_MS",
 	"AGENTDOCK_SERVER_URL",
 	"AGENTDOCK_OAUTH_ENABLED",
 	"AGENTDOCK_OAUTH_PASSWORD",
@@ -33,12 +41,17 @@ var managedCoreEnvironment = []string{
 }
 
 type controlPanelSettings struct {
-	Port             int    `json:"port"`
-	LogLevel         string `json:"log_level"`
-	NexusEndpoint    string `json:"nexus_endpoint"`
-	BrowserEnabled   bool   `json:"browser_enabled"`
-	BrowserRunnerDir string `json:"browser_runner_dir"`
-	BrowserNodePath  string `json:"browser_node_path"`
+	Port             int      `json:"port"`
+	LogLevel         string   `json:"log_level"`
+	NexusEndpoint    string   `json:"nexus_endpoint"`
+	BrowserEnabled   bool     `json:"browser_enabled"`
+	BrowserRunnerDir string   `json:"browser_runner_dir"`
+	BrowserNodePath  string   `json:"browser_node_path"`
+	ACPEnabled       bool     `json:"acp_enabled"`
+	ACPAgent         string   `json:"acp_agent"`
+	ACPCommand       string   `json:"acp_command"`
+	ACPArgs          []string `json:"acp_args"`
+	ACPAllowedRoots  []string `json:"acp_allowed_roots"`
 }
 
 func platformPrepareCoreEnvironment(runtimeRoot string) error {
@@ -71,6 +84,7 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		"AGENTDOCK_PORT":            strconv.Itoa(settings.Port),
 		"AGENTDOCK_LOG_LEVEL":       settings.LogLevel,
 		"AGENTDOCK_BROWSER_ENABLED": strconv.FormatBool(settings.BrowserEnabled),
+		"AGENTDOCK_ACP_ENABLED":     strconv.FormatBool(settings.ACPEnabled),
 	}
 	if settings.NexusEndpoint != "" {
 		managed["AGENTDOCK_NEXUS_ENDPOINT"] = settings.NexusEndpoint
@@ -85,6 +99,32 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	}
 	if settings.BrowserNodePath != "" {
 		managed["AGENTDOCK_BROWSER_NODE_PATH"] = settings.BrowserNodePath
+	}
+	if settings.ACPEnabled {
+		info, statErr := os.Stat(settings.ACPCommand)
+		if statErr != nil {
+			return fmt.Errorf("读取 Coding Agent 命令失败 %s: %w", settings.ACPCommand, statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Coding Agent 命令不是普通文件: %s", settings.ACPCommand)
+		}
+		for _, root := range settings.ACPAllowedRoots {
+			rootInfo, rootErr := os.Stat(root)
+			if rootErr != nil {
+				return fmt.Errorf("读取 Coding Agent 允许目录失败 %s: %w", root, rootErr)
+			}
+			if !rootInfo.IsDir() {
+				return fmt.Errorf("Coding Agent 允许目录不是文件夹: %s", root)
+			}
+		}
+		argsJSON, marshalErr := json.Marshal(settings.ACPArgs)
+		if marshalErr != nil {
+			return fmt.Errorf("编码 Coding Agent 参数失败: %w", marshalErr)
+		}
+		managed["AGENTDOCK_ACP_AGENT"] = settings.ACPAgent
+		managed["AGENTDOCK_ACP_COMMAND"] = settings.ACPCommand
+		managed["AGENTDOCK_ACP_ARGS_JSON"] = string(argsJSON)
+		managed["AGENTDOCK_ACP_ALLOWED_ROOTS"] = strings.Join(settings.ACPAllowedRoots, ",")
 	}
 
 	serverURL, err := readTrimmedText(filepath.Join(root, "server-url.txt"))
@@ -115,7 +155,7 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 }
 
 func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPanelSettings, error) {
-	settings := controlPanelSettings{Port: fallbackPort, LogLevel: "info"}
+	settings := controlPanelSettings{Port: fallbackPort, LogLevel: "info", ACPAgent: "codex"}
 	data, err := os.ReadFile(filepath.Join(runtimeRoot, "control-panel-settings.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return settings, nil
@@ -139,6 +179,34 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 	settings.NexusEndpoint = strings.TrimSpace(settings.NexusEndpoint)
 	settings.BrowserRunnerDir = strings.TrimSpace(settings.BrowserRunnerDir)
 	settings.BrowserNodePath = strings.TrimSpace(settings.BrowserNodePath)
+	settings.ACPAgent = strings.ToLower(strings.TrimSpace(settings.ACPAgent))
+	if settings.ACPAgent == "" {
+		settings.ACPAgent = "codex"
+	}
+	settings.ACPCommand = strings.TrimSpace(settings.ACPCommand)
+	if settings.ACPCommand != "" {
+		settings.ACPCommand = filepath.Clean(settings.ACPCommand)
+	}
+	roots := make([]string, 0, len(settings.ACPAllowedRoots))
+	for _, root := range settings.ACPAllowedRoots {
+		if cleaned := strings.TrimSpace(root); cleaned != "" {
+			roots = append(roots, filepath.Clean(cleaned))
+		}
+	}
+	settings.ACPAllowedRoots = roots
+	if settings.ACPEnabled {
+		switch settings.ACPAgent {
+		case "codex", "claude", "grok":
+		default:
+			return controlPanelSettings{}, fmt.Errorf("不支持的 Coding Agent: %s", settings.ACPAgent)
+		}
+		if !filepath.IsAbs(settings.ACPCommand) {
+			return controlPanelSettings{}, fmt.Errorf("Coding Agent 命令必须是绝对路径: %s", settings.ACPCommand)
+		}
+		if len(settings.ACPAllowedRoots) == 0 {
+			return controlPanelSettings{}, errors.New("Coding Agent 允许目录不能为空")
+		}
+	}
 	return settings, nil
 }
 

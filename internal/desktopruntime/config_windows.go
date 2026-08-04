@@ -62,6 +62,17 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	if err != nil {
 		return err
 	}
+	var acpAdapter desktopACPAdapter
+	if request.ACPEnabled {
+		configuredCommand := ""
+		if runtime.settings.ACPAgent == request.ACPAgent {
+			configuredCommand = runtime.settings.ACPCommand
+		}
+		acpAdapter, err = resolveDesktopACPAdapter(request.ACPAgent, runtime.root, configuredCommand)
+		if err != nil {
+			return err
+		}
+	}
 	settingsPath := filepath.Join(runtime.root, "control-panel-settings.json")
 	nexusTokenPath := filepath.Join(runtime.root, "nexus-token.dpapi")
 	snapshotPaths := []string{
@@ -105,6 +116,11 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 		BrowserEnabled:   request.BrowserEnabled,
 		BrowserRunnerDir: request.BrowserRunnerDir,
 		BrowserNodePath:  request.BrowserNodePath,
+		ACPEnabled:       request.ACPEnabled,
+		ACPAgent:         request.ACPAgent,
+		ACPCommand:       acpAdapter.Command,
+		ACPArgs:          append([]string(nil), acpAdapter.Args...),
+		ACPAllowedRoots:  append([]string(nil), request.ACPAllowedRoots...),
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

@@ -7,6 +7,7 @@ using Application = System.Windows.Application;
 using Clipboard = System.Windows.Clipboard;
 using Color = System.Windows.Media.Color;
 using MessageBox = System.Windows.MessageBox;
+using Forms = System.Windows.Forms;
 
 namespace AgentDock.ControlPanel;
 
@@ -100,10 +101,15 @@ public partial class MainWindow : Window
                 BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
                 BrowserRunnerDirTextBox.Text = snapshot.Settings.BrowserRunnerDir;
                 BrowserNodePathTextBox.Text = snapshot.Settings.BrowserNodePath;
+                AcpEnabledCheckBox.IsChecked = snapshot.Settings.AcpEnabled;
+                SelectAcpAgent(snapshot.Settings.AcpAgent);
+                AcpAllowedRootTextBox.Text = snapshot.Settings.AcpAllowedRoots.FirstOrDefault()
+                    ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 _settingsLoaded = true;
             }
 
             UpdateTunnelModeUi();
+            RefreshAcpUi();
         }
         finally
         {
@@ -265,11 +271,72 @@ public partial class MainWindow : Window
             TunnelActionStatusText);
     }
 
+    private void AcpSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized || _updatingUi)
+        {
+            return;
+        }
+        RefreshAcpUi();
+    }
+
+    private void AcpBrowseButton_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "选择 Coding Agent 允许访问的目录",
+            ShowNewFolderButton = true,
+            SelectedPath = Directory.Exists(AcpAllowedRootTextBox.Text.Trim())
+                ? AcpAllowedRootTextBox.Text.Trim()
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        };
+        if (dialog.ShowDialog() == Forms.DialogResult.OK)
+        {
+            AcpAllowedRootTextBox.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void RefreshAcpUi()
+    {
+        var enabled = AcpEnabledCheckBox.IsChecked == true;
+        AcpAgentComboBox.IsEnabled = enabled;
+        AcpAllowedRootTextBox.IsEnabled = enabled;
+        AcpBrowseButton.IsEnabled = enabled;
+        var agent = SelectedAcpAgent();
+        var configuredCommand = string.Equals(_snapshot?.Settings.AcpAgent, agent, StringComparison.OrdinalIgnoreCase)
+            ? _snapshot?.Settings.AcpCommand ?? ""
+            : "";
+        var resolution = _runtime.ResolveAcpAdapter(agent, configuredCommand);
+        AcpStatusText.Text = enabled
+            ? resolution.Message
+            : resolution.Available ? $"已检测到 {AgentDisplayName(agent)} · 启用后生效" : resolution.Message;
+        AcpStatusText.Foreground = enabled && !resolution.Available
+            ? new SolidColorBrush(Color.FromRgb(217, 45, 32))
+            : new SolidColorBrush(Color.FromRgb(102, 112, 133));
+    }
+
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(PortTextBox.Text.Trim(), out var port) || port is < 1 or > 65535)
         {
             MessageBox.Show(this, "端口必须是 1 到 65535 之间的整数。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var acpEnabled = AcpEnabledCheckBox.IsChecked == true;
+        var acpRoot = AcpAllowedRootTextBox.Text.Trim();
+        if (acpEnabled && (!Path.IsPathFullyQualified(acpRoot) || !Directory.Exists(acpRoot)))
+        {
+            MessageBox.Show(this, "请选择存在的 Coding Agent 允许目录。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var acpAgent = SelectedAcpAgent();
+        var configuredAcpCommand = string.Equals(_snapshot?.Settings.AcpAgent, acpAgent, StringComparison.OrdinalIgnoreCase)
+            ? _snapshot?.Settings.AcpCommand ?? ""
+            : "";
+        if (acpEnabled && !_runtime.ResolveAcpAdapter(acpAgent, configuredAcpCommand).Available)
+        {
+            MessageBox.Show(this, $"{AgentDisplayName(acpAgent)} 当前不可用，请先安装对应命令。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -280,7 +347,10 @@ public partial class MainWindow : Window
             NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
             BrowserRunnerDir = BrowserRunnerDirTextBox.Text.Trim(),
-            BrowserNodePath = BrowserNodePathTextBox.Text.Trim()
+            BrowserNodePath = BrowserNodePathTextBox.Text.Trim(),
+            AcpEnabled = acpEnabled,
+            AcpAgent = acpAgent,
+            AcpAllowedRoots = acpEnabled ? [acpRoot] : []
         };
         await ExecuteActionAsync(
             "正在保存设置并重启…",
@@ -312,6 +382,29 @@ public partial class MainWindow : Window
             () => _runtime.SetStartupAsync("tray", TrayStartupCheckBox.IsChecked == true),
             SettingsStatusText);
     }
+
+    private void SelectAcpAgent(string value)
+    {
+        foreach (var item in AcpAgentComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), value, StringComparison.OrdinalIgnoreCase))
+            {
+                AcpAgentComboBox.SelectedItem = item;
+                return;
+            }
+        }
+        AcpAgentComboBox.SelectedIndex = 0;
+    }
+
+    private string SelectedAcpAgent() =>
+        (AcpAgentComboBox.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "codex";
+
+    private static string AgentDisplayName(string agent) => agent switch
+    {
+        "claude" => "Claude",
+        "grok" => "Grok Build",
+        _ => "Codex"
+    };
 
     private void SelectLogLevel(string value)
     {

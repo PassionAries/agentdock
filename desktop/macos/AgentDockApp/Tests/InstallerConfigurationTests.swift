@@ -89,6 +89,23 @@ struct InstallerConfigurationTests {
         precondition(updatedValues["AGENTDOCK_NEXUS_TOKEN"] == "quote'and space")
         precondition(updatedText.components(separatedBy: "AGENTDOCK_PORT=").count == 2)
 
+        let acpEnvironmentData = try environment.dataByUpdating([
+            "AGENTDOCK_ACP_ENABLED": "true",
+            "AGENTDOCK_ACP_AGENT": "grok",
+            "AGENTDOCK_ACP_COMMAND": "/Users/test/.local/bin/grok",
+            "AGENTDOCK_ACP_ARGS_JSON": "[\"agent\",\"stdio\"]",
+            "AGENTDOCK_ACP_ALLOWED_ROOTS": "/Users/test/Project",
+        ])
+        let acpValues = ManagedEnvironment.parseValues(String(decoding: acpEnvironmentData, as: UTF8.self))
+        precondition(acpValues["AGENTDOCK_ACP_AGENT"] == "grok")
+        precondition(acpValues["AGENTDOCK_ACP_ARGS_JSON"] == "[\"agent\",\"stdio\"]")
+        precondition(ACPAgentPreset.grok.arguments == ["agent", "stdio"])
+        precondition(ACPAgentPreset.parse("GROK") == .grok)
+        precondition(ACPDesktopConfiguration.parseAllowedRoots("/one, /two") == ["/one", "/two"])
+        let encodedGrokArguments = try ACPDesktopConfiguration.encodeArguments(ACPAgentPreset.grok.arguments)
+        precondition(encodedGrokArguments == "[\"agent\",\"stdio\"]")
+        try testACPExecutableResolution()
+
         expectFailure("不允许") {
             _ = try environment.dataByUpdating(["AGENTDOCK_OAUTH_TOKEN_SECRET": "nope"])
         }
@@ -117,6 +134,29 @@ struct InstallerConfigurationTests {
         try testTunnelTokenStore()
         try await testPublicEndpointChecker()
         print("installer configuration tests passed")
+    }
+
+    private static func testACPExecutableResolution() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentDockACPExecutableTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bin = root.appendingPathComponent(".local/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let executable = bin.appendingPathComponent("grok")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+
+        let resolved = ACPAgentPreset.grok.resolveExecutable(home: root, environment: [:])
+        precondition(resolved == executable.resolvingSymlinksInPath().path)
+        precondition(ACPAgentPreset.codex.resolveExecutable(home: root, environment: [:]) == nil)
+
+        let workspace = root.appendingPathComponent("Project", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        let roots = try ACPDesktopConfiguration.validateAllowedRoots([workspace.path, workspace.path])
+        precondition(roots == [workspace.resolvingSymlinksInPath().path])
+        expectFailure("整个文件系统") {
+            _ = try ACPDesktopConfiguration.validateAllowedRoots(["/"])
+        }
     }
 
     private static func testTunnelTokenStore() throws {

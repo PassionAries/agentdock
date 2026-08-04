@@ -248,7 +248,7 @@ AgentDock 可以选择作为 ACP Client 原生托管本地 Coding Agent adapter�
 - 可选 ACP 方法严格按 `initialize` 返回的 capability 开启
 - 重启后只恢复会话元数据，不自动重放可能产生副作用的 Prompt
 
-ACP 默认关闭。启用时至少配置绝对 adapter 可执行路径和允许根目录：
+ACP 默认关闭。macOS 与 Windows 控制面板提供 Codex、Claude 和 Grok Build 三个预设，只会使用本机已安装的可执行入口；Grok Build 使用 `grok agent stdio`，不会默认开启 `--always-approve`。启用时至少配置绝对 adapter 可执行路径和允许根目录：
 
 ```bash
 AGENTDOCK_ACP_ENABLED=true
@@ -258,7 +258,7 @@ AGENTDOCK_ACP_ARGS_JSON='["/absolute/path/to/claude-agent-acp/dist/index.js"]'
 AGENTDOCK_ACP_ALLOWED_ROOTS=/srv/code,/srv/worktrees
 ```
 
-敏感变量通过 `AGENTDOCK_ACP_ENV_FROM_ENV_JSON` 从宿主环境显式映射，不写入 AgentDock 状态。架构与安全边界见 [Native ACP Runtime](docs/native-acp-runtime.md)，Claude/Codex 验收顺序见 [Native ACP Acceptance](docs/native-acp-acceptance.md)。
+敏感变量通过 `AGENTDOCK_ACP_ENV_FROM_ENV_JSON` 从宿主环境显式映射，不写入 AgentDock 状态。架构与安全边界见 [Native ACP Runtime](docs/native-acp-runtime.md)，Claude、Codex 与 Grok Build 验收顺序见 [Native ACP Acceptance](docs/native-acp-acceptance.md)。
 
 ### 浏览器与桌面自动化
 

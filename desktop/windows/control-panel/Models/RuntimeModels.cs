@@ -75,6 +75,21 @@ public sealed class ControlPanelSettings
 
     [JsonPropertyName("browser_node_path")]
     public string BrowserNodePath { get; set; } = "";
+
+    [JsonPropertyName("acp_enabled")]
+    public bool AcpEnabled { get; set; }
+
+    [JsonPropertyName("acp_agent")]
+    public string AcpAgent { get; set; } = "codex";
+
+    [JsonPropertyName("acp_command")]
+    public string AcpCommand { get; set; } = "";
+
+    [JsonPropertyName("acp_args")]
+    public List<string> AcpArgs { get; set; } = [];
+
+    [JsonPropertyName("acp_allowed_roots")]
+    public List<string> AcpAllowedRoots { get; set; } = [];
 }
 
 public sealed record RuntimeSnapshot(
@@ -112,3 +127,5 @@ public sealed class UpdateCheckResult
 }
 
 public sealed record UpdateProgress(int Percentage, string Message);
+
+public sealed record AcpAdapterResolution(bool Available, string Command, IReadOnlyList<string> Arguments, string Message);

@@ -15,6 +15,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private let logLevel = NSPopUpButton(frame: .zero, pullsDown: false)
     private let browserEnabled = NSButton(checkboxWithTitle: "启用浏览器工具", target: nil, action: nil)
     private let browserStatus = NSTextField(wrappingLabelWithString: "")
+    private let acpEnabled = NSButton(checkboxWithTitle: "启用 Coding Agent", target: nil, action: nil)
+    private let acpAgent = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let acpAllowedRoots = NSTextField(string: "")
+    private let acpChooseDirectory = NSButton(title: "选择目录", target: nil, action: nil)
+    private let acpStatus = NSTextField(wrappingLabelWithString: "")
     private let nexusEndpoint = NSTextField(string: "")
     private let nexusToken = NSSecureTextField(string: "")
     private let nexusTokenStatus = NSTextField(labelWithString: "")
@@ -30,6 +35,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private var initialLogLevel = "info"
     private var initialNexusEndpoint = ""
     private var initialBrowserEnabled = false
+    private var initialACPEnabled = false
+    private var initialACPAgent = ACPAgentPreset.codex
+    private var initialACPAllowedRoots: [String] = []
     private var installedRunnerDir = ""
     private var installedNodePath = ""
     private var browserSupportInstalledThisSession = false
@@ -45,7 +53,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         self.menuLoginAgent = menuLoginAgent
         self.onChanged = onChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 590, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 590, height: 760),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -77,12 +85,20 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         initialLogLevel = configuration.logLevel
         initialNexusEndpoint = configuration.nexusEndpoint
         initialBrowserEnabled = configuration.browserEnabled
+        initialACPEnabled = configuration.acpEnabled
+        initialACPAgent = configuration.acpAgent
+        initialACPAllowedRoots = configuration.acpAllowedRoots
 
         serviceAutostart.state = status.autostartEnabled ? .on : .off
         menuAutostart.state = initialMenuAutostart ? .on : .off
         portField.integerValue = initialPort
         logLevel.selectItem(withTitle: initialLogLevel)
         browserEnabled.state = initialBrowserEnabled ? .on : .off
+        acpEnabled.state = initialACPEnabled ? .on : .off
+        acpAgent.selectItem(withTitle: initialACPAgent.title)
+        acpAllowedRoots.stringValue = (initialACPAllowedRoots.isEmpty
+            ? [service.paths.workDirectory.path]
+            : initialACPAllowedRoots).joined(separator: ", ")
         nexusEndpoint.stringValue = initialNexusEndpoint
         nexusToken.stringValue = ""
         nexusToken.placeholderString = configuration.nexusTokenConfigured
@@ -90,6 +106,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             : "可选 Nexus Token"
         nexusTokenStatus.stringValue = configuration.nexusTokenConfigured ? "当前已配置 Token" : "当前未配置 Token"
         refreshBrowserStatus()
+        refreshACPStatus()
         showStatus("", isError: false)
         setBusy(false)
         refreshApplyState()
@@ -132,6 +149,23 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         browserEnabled.action = #selector(browserToggled)
         browserStatus.textColor = .secondaryLabelColor
         browserStatus.font = .systemFont(ofSize: 12)
+
+        acpEnabled.target = self
+        acpEnabled.action = #selector(acpChanged)
+        acpAgent.addItems(withTitles: ACPAgentPreset.allCases.map(\.title))
+        acpAgent.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        acpAgent.target = self
+        acpAgent.action = #selector(acpChanged)
+        acpAllowedRoots.placeholderString = "/Users/name/Project"
+        acpAllowedRoots.target = self
+        acpAllowedRoots.action = #selector(markChanged)
+        acpAllowedRoots.delegate = self
+        acpAllowedRoots.widthAnchor.constraint(equalToConstant: 335).isActive = true
+        acpChooseDirectory.target = self
+        acpChooseDirectory.action = #selector(chooseACPDirectory)
+        acpStatus.textColor = .secondaryLabelColor
+        acpStatus.font = .systemFont(ofSize: 12)
+        acpStatus.widthAnchor.constraint(equalToConstant: 500).isActive = true
 
         nexusEndpoint.placeholderString = "https://nexus.example.com"
         nexusEndpoint.target = self
@@ -181,6 +215,20 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         browserStack.spacing = 5
         browserStatus.widthAnchor.constraint(equalToConstant: 500).isActive = true
 
+        let acpDirectoryRow = NSStackView(views: [acpAllowedRoots, acpChooseDirectory])
+        acpDirectoryRow.orientation = .horizontal
+        acpDirectoryRow.alignment = .centerY
+        acpDirectoryRow.spacing = 8
+        let acpStack = NSStackView(views: [
+            acpEnabled,
+            formRow(title: "Agent", control: acpAgent),
+            formRow(title: "允许目录", control: acpDirectoryRow),
+            acpStatus,
+        ])
+        acpStack.orientation = .vertical
+        acpStack.alignment = .leading
+        acpStack.spacing = 8
+
         let nexusStack = NSStackView(views: [
             formRow(title: "Endpoint", control: nexusEndpoint),
             formRow(title: "Token", control: nexusToken),
@@ -208,6 +256,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             separator(),
             sectionTitle("服务"),
             serviceForm,
+            separator(),
+            sectionTitle("Coding Agent（ACP）"),
+            acpStack,
             separator(),
             sectionTitle("浏览器工具"),
             browserStack,
@@ -265,6 +316,23 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         refreshApplyState()
     }
 
+    @objc private func acpChanged() {
+        refreshACPStatus()
+        refreshApplyState()
+    }
+
+    @objc private func chooseACPDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            acpAllowedRoots.stringValue = url.path
+            refreshApplyState()
+        }
+    }
+
     @objc private func browserToggled() {
         guard browserEnabled.state == .on else {
             refreshBrowserStatus()
@@ -311,7 +379,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             nexusTokenReplacement: tokenReplacement,
             browserEnabled: browserEnabled.state == .on,
             browserRunnerDir: installedRunnerDir.isEmpty ? configuration.browserRunnerDir : installedRunnerDir,
-            browserNodePath: installedNodePath.isEmpty ? configuration.browserNodePath : installedNodePath
+            browserNodePath: installedNodePath.isEmpty ? configuration.browserNodePath : installedNodePath,
+            acpEnabled: acpEnabled.state == .on,
+            acpAgent: selectedACPAgent(),
+            acpCommand: selectedACPAgent() == configuration.acpAgent ? configuration.acpCommand : "",
+            acpAllowedRoots: ACPDesktopConfiguration.parseAllowedRoots(acpAllowedRoots.stringValue)
         )
         setBusy(true)
         showStatus("正在保存配置并验证 AgentDock…", isError: false)
@@ -333,11 +405,16 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 initialLogLevel = validatedSettings.logLevel
                 initialNexusEndpoint = validatedSettings.nexusEndpoint
                 initialBrowserEnabled = validatedSettings.browserEnabled
+                initialACPEnabled = validatedSettings.acpEnabled
+                initialACPAgent = validatedSettings.acpAgent
+                initialACPAllowedRoots = validatedSettings.acpAllowedRoots
                 browserSupportInstalledThisSession = false
                 portField.integerValue = initialPort
                 logLevel.selectItem(withTitle: initialLogLevel)
                 nexusEndpoint.stringValue = initialNexusEndpoint
                 nexusToken.stringValue = ""
+                acpAllowedRoots.stringValue = initialACPAllowedRoots.joined(separator: ", ")
+                refreshACPStatus()
                 showStatus("设置已保存。", isError: false)
                 setBusy(false)
                 refreshApplyState()
@@ -352,6 +429,32 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     @objc private func cancelPressed() { close() }
     @objc private func openLogsPressed() { service.openLogs() }
     @objc private func openConfigurationPressed() { service.openConfiguration() }
+
+    private func selectedACPAgent() -> ACPAgentPreset {
+        let title = acpAgent.titleOfSelectedItem ?? ""
+        return ACPAgentPreset.allCases.first { $0.title == title } ?? .codex
+    }
+
+    private func refreshACPStatus() {
+        let preset = selectedACPAgent()
+        let configuredCommand = currentConfiguration?.acpAgent == preset
+            ? currentConfiguration?.acpCommand ?? ""
+            : ""
+        let resolvedCommand = preset.resolveExecutable(configuredCommand: configuredCommand)
+        let enabled = acpEnabled.state == .on
+        acpAgent.isEnabled = enabled && !isBusy
+        acpAllowedRoots.isEnabled = enabled && !isBusy
+        acpChooseDirectory.isEnabled = enabled && !isBusy
+        if let resolvedCommand {
+            acpStatus.stringValue = enabled
+                ? "已检测到 · \(resolvedCommand)"
+                : "已检测到 \(preset.title) · 启用后生效"
+            acpStatus.textColor = .secondaryLabelColor
+        } else {
+            acpStatus.stringValue = "未安装 · \(preset.missingExecutableMessage)"
+            acpStatus.textColor = enabled ? .systemRed : .secondaryLabelColor
+        }
+    }
 
     private var browserFilesInstalled: Bool {
         guard !installedRunnerDir.isEmpty, !installedNodePath.isEmpty else { return false }
@@ -394,6 +497,11 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         }
         let pathsChanged = browserSupportInstalledThisSession
             && (browserEnabled.state == .on || initialBrowserEnabled)
+        let acpIsEnabled = acpEnabled.state == .on
+        let acpSettingsChanged = acpIsEnabled != initialACPEnabled
+            || ((acpIsEnabled || initialACPEnabled)
+                && (selectedACPAgent() != initialACPAgent
+                    || ACPDesktopConfiguration.parseAllowedRoots(acpAllowedRoots.stringValue) != initialACPAllowedRoots))
         let changed = (serviceAutostart.state == .on) != initialServiceAutostart
             || (menuAutostart.state == .on) != initialMenuAutostart
             || portField.integerValue != initialPort
@@ -401,15 +509,17 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             || nexusEndpoint.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) != initialNexusEndpoint
             || !nexusToken.stringValue.isEmpty
             || (browserEnabled.state == .on) != initialBrowserEnabled
+            || acpSettingsChanged
             || pathsChanged
         applyButton.isEnabled = changed
     }
 
     private func setBusy(_ busy: Bool) {
         isBusy = busy
-        for control in [serviceAutostart, menuAutostart, portField, logLevel, browserEnabled, nexusEndpoint, nexusToken] {
+        for control in [serviceAutostart, menuAutostart, portField, logLevel, browserEnabled, acpEnabled, nexusEndpoint, nexusToken] {
             control.isEnabled = !busy
         }
+        refreshACPStatus()
         cancelButton.isEnabled = !busy
         if busy {
             applyButton.isEnabled = false

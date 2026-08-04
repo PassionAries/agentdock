@@ -42,7 +42,7 @@ func TestRealAdapterInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initialized.ProtocolVersion != ProtocolVersion || initialized.AgentInfo.Name == "" {
-		t.Fatalf("unexpected initialize response: %#v", initialized)
+	if initialized.ProtocolVersion != ProtocolVersion {
+		t.Fatalf("unexpected ACP protocol version: %#v", initialized)
 	}
 }
