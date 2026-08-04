@@ -95,3 +95,20 @@ public sealed record RuntimeSnapshot(
     DateTimeOffset CheckedAt);
 
 public sealed record UrlTestResult(bool Success, int? StatusCode, TimeSpan Elapsed, string Message);
+
+public sealed class UpdateCheckResult
+{
+    [JsonPropertyName("current_version")]
+    public string CurrentVersion { get; set; } = "";
+
+    [JsonPropertyName("latest_version")]
+    public string LatestVersion { get; set; } = "";
+
+    [JsonPropertyName("update_available")]
+    public bool UpdateAvailable { get; set; }
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = "";
+}
+
+public sealed record UpdateProgress(int Percentage, string Message);

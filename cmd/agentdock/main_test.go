@@ -24,8 +24,8 @@ func TestRunPrintsVersionWithoutLoadingServerConfiguration(t *testing.T) {
 }
 
 func TestRunRejectsUnexpectedUpdateArguments(t *testing.T) {
-	err := run(context.Background(), []string{"update", "--check"}, &bytes.Buffer{}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "不接受额外参数") {
+	err := run(context.Background(), []string{"update", "--check", "extra"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "agentdock update [--check]") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

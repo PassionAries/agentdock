@@ -107,20 +107,32 @@ public sealed class RuntimeService : IDisposable
     public Task RunActionAsync(string action, CancellationToken cancellationToken = default) =>
         RunManagementScriptAsync(["-Action", action], cancellationToken);
 
-    public async Task<string> RunUpdateAsync(CancellationToken cancellationToken = default)
+    public async Task<UpdateCheckResult> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken);
-        var binaryPath = string.IsNullOrWhiteSpace(manifest?.BinaryPath)
-            ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
-            : manifest.BinaryPath;
-        if (!File.Exists(binaryPath))
-        {
-            throw new FileNotFoundException("找不到 AgentDock 核心程序，请运行 Setup.exe 修复安装。", binaryPath);
-        }
-
+        var binaryPath = await ResolveCoreBinaryAsync(cancellationToken);
         var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
         startInfo.ArgumentList.Add("update");
-        return await RunProcessAsync(startInfo, cancellationToken);
+        startInfo.ArgumentList.Add("--check");
+        var output = await RunProcessAsync(startInfo, cancellationToken);
+        try
+        {
+            return JsonSerializer.Deserialize<UpdateCheckResult>(output, JsonOptions)
+                ?? throw new JsonException("更新检查结果为空");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("无法解析 AgentDock 更新检查结果。", ex);
+        }
+    }
+
+    public async Task<string> RunUpdateAsync(
+        IProgress<UpdateProgress>? progress,
+        CancellationToken cancellationToken = default)
+    {
+        var binaryPath = await ResolveCoreBinaryAsync(cancellationToken);
+        var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
+        startInfo.ArgumentList.Add("update");
+        return await RunUpdateProcessAsync(startInfo, progress, cancellationToken);
     }
 
     public async Task SetTunnelModeAsync(
@@ -224,6 +236,19 @@ public sealed class RuntimeService : IDisposable
     public void OpenLogsDirectory() => OpenDirectory(LogsDirectory);
     public void OpenConfigDirectory() => OpenDirectory(ConfigDirectory);
 
+    private async Task<string> ResolveCoreBinaryAsync(CancellationToken cancellationToken)
+    {
+        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken);
+        var binaryPath = string.IsNullOrWhiteSpace(manifest?.BinaryPath)
+            ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
+            : manifest.BinaryPath;
+        if (!File.Exists(binaryPath))
+        {
+            throw new FileNotFoundException("找不到 AgentDock 核心程序，请运行 Setup.exe 修复安装。", binaryPath);
+        }
+        return binaryPath;
+    }
+
     private async Task RunManagementScriptAsync(IReadOnlyCollection<string> arguments, CancellationToken cancellationToken)
     {
         var script = ResolveManagementScript();
@@ -283,6 +308,73 @@ public sealed class RuntimeService : IDisposable
             return error;
         }
         return string.IsNullOrWhiteSpace(error) ? output : output + Environment.NewLine + error;
+    }
+
+    private static async Task<string> RunUpdateProcessAsync(
+        ProcessStartInfo startInfo,
+        IProgress<UpdateProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"无法启动 {startInfo.FileName}。");
+        var output = new StringBuilder();
+        var error = new StringBuilder();
+        var outputTask = ReadProcessLinesAsync(process.StandardOutput, output, progress, cancellationToken);
+        var errorTask = ReadProcessLinesAsync(process.StandardError, error, null, cancellationToken);
+
+        await Task.WhenAll(process.WaitForExitAsync(cancellationToken), outputTask, errorTask);
+        var outputText = output.ToString().Trim();
+        var errorText = error.ToString().Trim();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(errorText) ? outputText : errorText);
+        }
+
+        var result = string.IsNullOrWhiteSpace(outputText)
+            ? errorText
+            : string.IsNullOrWhiteSpace(errorText) ? outputText : outputText + Environment.NewLine + errorText;
+        progress?.Report(new UpdateProgress(100, LastNonEmptyLine(result, "更新完成。")));
+        return result;
+    }
+
+    private static async Task ReadProcessLinesAsync(
+        StreamReader reader,
+        StringBuilder buffer,
+        IProgress<UpdateProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        {
+            buffer.AppendLine(line);
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                progress?.Report(MapUpdateProgress(line));
+            }
+        }
+    }
+
+    private static UpdateProgress MapUpdateProgress(string line)
+    {
+        var message = line.Trim();
+        var percentage = message switch
+        {
+            var value when value.Contains("正在下载", StringComparison.Ordinal) => 20,
+            var value when value.Contains("文件校验通过", StringComparison.Ordinal) => 50,
+            var value when value.Contains("正在备份并安装", StringComparison.Ordinal) => 70,
+            var value when value.Contains("交给辅助进程", StringComparison.Ordinal) => 80,
+            var value when value.Contains("正在更新官方核心 Skill", StringComparison.Ordinal) => 90,
+            var value when value.Contains("更新完成", StringComparison.Ordinal) => 100,
+            var value when value.Contains("当前已是最新版本", StringComparison.Ordinal) => 100,
+            _ => 10
+        };
+        return new UpdateProgress(percentage, message);
+    }
+
+    private static string LastNonEmptyLine(string value, string fallback)
+    {
+        var line = value
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault();
+        return string.IsNullOrWhiteSpace(line) ? fallback : line;
     }
 
     private string ResolveManagementScript()

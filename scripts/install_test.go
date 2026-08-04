@@ -749,6 +749,14 @@ func TestWindowsUpdateFeedbackUsesUTF8AndImmediateStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read RuntimeService.cs: %v", err)
 	}
+	progressXAMLData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "UpdateProgressWindow.xaml"))
+	if err != nil {
+		t.Fatalf("read UpdateProgressWindow.xaml: %v", err)
+	}
+	progressCodeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "UpdateProgressWindow.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read UpdateProgressWindow.xaml.cs: %v", err)
+	}
 	scriptData, err := os.ReadFile(filepath.Join("manage-windows.ps1"))
 	if err != nil {
 		t.Fatalf("read manage-windows.ps1: %v", err)
@@ -758,40 +766,61 @@ func TestWindowsUpdateFeedbackUsesUTF8AndImmediateStatus(t *testing.T) {
 	window := string(windowData)
 	xaml := string(xamlData)
 	runtimeService := string(runtimeData)
+	progressXAML := string(progressXAMLData)
+	progressCode := string(progressCodeData)
 	script := string(scriptData)
 
 	for _, want := range []string{
 		`_updateInProgress ? "正在检查更新…" : "检查更新…"`,
-		`ShowBalloonTip(4000, "AgentDock", "正在检查更新，请稍候…"`,
-		`var output = await Runtime.RunUpdateAsync()`,
-		`LastNonEmptyLine(output, "更新检查完成。")`,
+		`ControlPanelWindow.SetUpdateState(true, "正在检查更新，请稍候…")`,
+		`var check = await Runtime.CheckForUpdatesAsync()`,
+		`if (!check.UpdateAvailable)`,
+		`MessageBoxButton.YesNo`,
+		`new UpdateProgressWindow(check.CurrentVersion, check.LatestVersion)`,
+		`var output = await Runtime.RunUpdateAsync(progress)`,
 	} {
 		if !strings.Contains(app, want) {
-			t.Fatalf("Windows tray update feedback missing %q", want)
+			t.Fatalf("Windows tray update flow missing %q", want)
 		}
 	}
 
 	for _, want := range []string{
 		`x:Name="UpdateButton"`,
-		`FooterStatusText.Text = "正在检查更新，请稍候…"`,
-		`await Dispatcher.Yield(DispatcherPriority.Background)`,
-		`var output = await _runtime.RunUpdateAsync()`,
-		`LastNonEmptyLine(output, "更新检查完成。")`,
+		`await ((App)Application.Current).CheckForUpdatesAsync(this)`,
+		`public void SetUpdateState`,
+		`public void SetUpdateStatus`,
 	} {
 		if !strings.Contains(xaml, want) && !strings.Contains(window, want) {
-			t.Fatalf("Windows control-panel update feedback missing %q", want)
+			t.Fatalf("Windows control-panel update flow missing %q", want)
 		}
 	}
 
 	for _, want := range []string{
-		`public async Task<string> RunUpdateAsync`,
-		`CreateRedirectedProcessStartInfo(binaryPath)`,
-		`startInfo.ArgumentList.Add("update")`,
+		`public async Task<UpdateCheckResult> CheckForUpdatesAsync`,
+		`startInfo.ArgumentList.Add("--check")`,
+		`JsonSerializer.Deserialize<UpdateCheckResult>`,
+		`IProgress<UpdateProgress>? progress`,
+		`ReadProcessLinesAsync`,
+		`MapUpdateProgress`,
 		`StandardOutputEncoding = utf8`,
 		`StandardErrorEncoding = utf8`,
 	} {
 		if !strings.Contains(runtimeService, want) {
 			t.Fatalf("Windows update process handling missing %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`x:Class="AgentDock.ControlPanel.UpdateProgressWindow"`,
+		`<ProgressBar x:Name="UpdateProgressBar"`,
+		`IsEnabled="False"`,
+		`if (!_canClose)`,
+		`UpdateProgressBar.Value = Math.Max`,
+		`public void Complete(string message)`,
+		`public void Fail(string message)`,
+	} {
+		if !strings.Contains(progressXAML, want) && !strings.Contains(progressCode, want) {
+			t.Fatalf("Windows update progress window missing %q", want)
 		}
 	}
 
@@ -808,9 +837,11 @@ func TestWindowsUpdateFeedbackUsesUTF8AndImmediateStatus(t *testing.T) {
 	for _, forbidden := range []string{
 		`RunTrayActionAsync("update")`,
 		`RunCoreActionAsync("update"`,
+		`var output = await Runtime.RunUpdateAsync();`,
+		`var output = await _runtime.RunUpdateAsync();`,
 	} {
 		if strings.Contains(app, forbidden) || strings.Contains(window, forbidden) {
-			t.Fatalf("Windows update UI must not route update through generic PowerShell action %q", forbidden)
+			t.Fatalf("Windows update UI must not bypass check-and-confirm flow %q", forbidden)
 		}
 	}
 }

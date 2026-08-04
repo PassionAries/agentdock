@@ -23,7 +23,6 @@ public partial class MainWindow : Window
     private bool _showBearer;
     private bool _showOAuth;
     private bool _updatingUi;
-    private bool _updateInProgress;
     private bool _settingsLoaded;
     private string _lastAutoTestOrigin = "";
     private DateTimeOffset _lastAutoTestAt = DateTimeOffset.MinValue;
@@ -167,45 +166,21 @@ public partial class MainWindow : Window
     private async void StopButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("stop", "正在停止…");
     private async void RestartButton_Click(object sender, RoutedEventArgs e) => await RunCoreActionAsync("restart", "正在重启…");
 
-    private async void UpdateButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_updateInProgress)
-        {
-            return;
-        }
+    private async void UpdateButton_Click(object sender, RoutedEventArgs e) =>
+        await ((App)Application.Current).CheckForUpdatesAsync(this);
 
-        _updateInProgress = true;
-        UpdateButton.IsEnabled = false;
-        FooterStatusText.Text = "正在检查更新，请稍候…";
-        await Dispatcher.Yield(DispatcherPriority.Background);
-        try
+    public void SetUpdateState(bool inProgress, string? status = null)
+    {
+        UpdateButton.IsEnabled = !inProgress;
+        if (!string.IsNullOrWhiteSpace(status))
         {
-            var output = await _runtime.RunUpdateAsync();
-            await RefreshAsync();
-            FooterStatusText.Text = LastNonEmptyLine(output, "更新检查完成。");
-        }
-        catch (Exception ex)
-        {
-            var message = LastNonEmptyLine(ex.Message, "检查更新失败。");
-            FooterStatusText.Text = message;
-            MessageBox.Show(this, message, "AgentDock", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        finally
-        {
-            _updateInProgress = false;
-            UpdateButton.IsEnabled = true;
+            FooterStatusText.Text = status;
         }
     }
+
+    public void SetUpdateStatus(string status) => FooterStatusText.Text = status;
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
-
-    private static string LastNonEmptyLine(string value, string fallback)
-    {
-        var line = value
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .LastOrDefault();
-        return string.IsNullOrWhiteSpace(line) ? fallback : line;
-    }
 
     private void ToggleBearerButton_Click(object sender, RoutedEventArgs e)
     {

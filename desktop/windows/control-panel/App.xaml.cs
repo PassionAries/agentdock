@@ -253,7 +253,10 @@ public partial class App : System.Windows.Application
 
     private static string TruncateNotifyIconText(string value) => value.Length <= 63 ? value : value[..63];
 
-    private async Task RunTrayUpdateAsync()
+    private Task RunTrayUpdateAsync() =>
+        CheckForUpdatesAsync(ControlPanelWindow.IsVisible ? ControlPanelWindow : null);
+
+    public async Task CheckForUpdatesAsync(Window? owner = null)
     {
         if (_updateInProgress)
         {
@@ -261,23 +264,73 @@ public partial class App : System.Windows.Application
         }
 
         _updateInProgress = true;
-        _notifyIcon?.ShowBalloonTip(4000, "AgentDock", "正在检查更新，请稍候…", Forms.ToolTipIcon.Info);
+        ControlPanelWindow.SetUpdateState(true, "正在检查更新，请稍候…");
+        UpdateProgressWindow? progressWindow = null;
         try
         {
-            var output = await Runtime.RunUpdateAsync();
-            _notifyIcon?.ShowBalloonTip(6000, "AgentDock", LastNonEmptyLine(output, "更新检查完成。"), Forms.ToolTipIcon.Info);
-            var refreshTask = await Dispatcher.InvokeAsync(ControlPanelWindow.RefreshAsync);
-            await refreshTask;
+            var check = await Runtime.CheckForUpdatesAsync();
+            ControlPanelWindow.SetUpdateStatus(check.Message);
+            if (!check.UpdateAvailable)
+            {
+                ShowUpdateMessage(owner, check.Message, MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var prompt = $"发现 AgentDock 新版本。\n\n当前版本：{check.CurrentVersion}\n最新版本：{check.LatestVersion}\n\n是否立即更新？";
+            if (ShowUpdateMessage(owner, prompt, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                ControlPanelWindow.SetUpdateStatus("已取消更新。");
+                return;
+            }
+
+            progressWindow = new UpdateProgressWindow(check.CurrentVersion, check.LatestVersion);
+            if (owner is { IsVisible: true })
+            {
+                progressWindow.Owner = owner;
+            }
+            else
+            {
+                progressWindow.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            }
+            progressWindow.Show();
+            var progress = new Progress<UpdateProgress>(progressWindow.Report);
+
+            var output = await Runtime.RunUpdateAsync(progress);
+            await ControlPanelWindow.RefreshAsync();
+            var completedMessage = LastNonEmptyLine(output, "更新完成。");
+            progressWindow.Complete(completedMessage);
+            ControlPanelWindow.SetUpdateStatus(completedMessage);
         }
         catch (Exception ex)
         {
-            _notifyIcon?.ShowBalloonTip(6000, "AgentDock", LastNonEmptyLine(ex.Message, "检查更新失败。"), Forms.ToolTipIcon.Error);
+            var message = LastNonEmptyLine(ex.Message, "检查更新失败。");
+            ControlPanelWindow.SetUpdateStatus(message);
+            if (progressWindow is null)
+            {
+                ShowUpdateMessage(owner, message, MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            else
+            {
+                progressWindow.Fail(message);
+            }
         }
         finally
         {
             _updateInProgress = false;
+            ControlPanelWindow.SetUpdateState(false);
             await RefreshTraySnapshotAsync();
         }
+    }
+
+    private static MessageBoxResult ShowUpdateMessage(
+        Window? owner,
+        string message,
+        MessageBoxButton buttons,
+        MessageBoxImage image)
+    {
+        return owner is { IsVisible: true }
+            ? System.Windows.MessageBox.Show(owner, message, "AgentDock 更新", buttons, image)
+            : System.Windows.MessageBox.Show(message, "AgentDock 更新", buttons, image);
     }
 
     private async Task RunTrayActionAsync(string action)

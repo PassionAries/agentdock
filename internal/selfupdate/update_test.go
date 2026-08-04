@@ -30,6 +30,57 @@ func TestReleaseArchiveLimitSupportsCurrentWindowsBundle(t *testing.T) {
 	}
 }
 
+func TestInspectUpdateReportsAvailableVersionWithoutApplying(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.6.2",
+			Assets: []releaseAsset{
+				{Name: "agentdock_windows_amd64.zip", URL: "https://example.invalid/archive"},
+				{Name: "agentdock_windows_amd64.zip.sha256", URL: "https://example.invalid/checksum"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	inspection, err := inspectUpdate(context.Background(), options{
+		CurrentVersion: "0.6.1",
+		GOOS:           "windows",
+		GOARCH:         "amd64",
+		ReleaseAPI:     server.URL,
+		HTTPClient:     server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Result.UpdateAvailable || inspection.Result.CurrentVersion != "v0.6.1" || inspection.Result.LatestVersion != "v0.6.2" {
+		t.Fatalf("unexpected check result: %#v", inspection.Result)
+	}
+	if inspection.ArchiveName != "agentdock_windows_amd64.zip" || inspection.ExecutableName != "agentdock.exe" {
+		t.Fatalf("unexpected inspection assets: %#v", inspection)
+	}
+}
+
+func TestInspectUpdateReportsCurrentVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{TagName: "v0.6.1"})
+	}))
+	defer server.Close()
+
+	inspection, err := inspectUpdate(context.Background(), options{
+		CurrentVersion: "0.6.1",
+		GOOS:           "windows",
+		GOARCH:         "amd64",
+		ReleaseAPI:     server.URL,
+		HTTPClient:     server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Result.UpdateAvailable || inspection.Result.Message != "当前已是最新版本：v0.6.1" {
+		t.Fatalf("unexpected current-version result: %#v", inspection.Result)
+	}
+}
+
 func TestRunDownloadsVerifiesAndAppliesRelease(t *testing.T) {
 	archive := makeTarGz(t, "bin/agentdock", []byte("new-binary"))
 	digest := sha256.Sum256(archive)
