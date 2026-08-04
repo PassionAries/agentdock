@@ -732,6 +732,89 @@ func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
 	}
 }
 
+func TestWindowsUpdateFeedbackUsesUTF8AndImmediateStatus(t *testing.T) {
+	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read App.xaml.cs: %v", err)
+	}
+	windowData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read MainWindow.xaml.cs: %v", err)
+	}
+	xamlData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"))
+	if err != nil {
+		t.Fatalf("read MainWindow.xaml: %v", err)
+	}
+	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	if err != nil {
+		t.Fatalf("read RuntimeService.cs: %v", err)
+	}
+	scriptData, err := os.ReadFile(filepath.Join("manage-windows.ps1"))
+	if err != nil {
+		t.Fatalf("read manage-windows.ps1: %v", err)
+	}
+
+	app := string(appData)
+	window := string(windowData)
+	xaml := string(xamlData)
+	runtimeService := string(runtimeData)
+	script := string(scriptData)
+
+	for _, want := range []string{
+		`_updateInProgress ? "正在检查更新…" : "检查更新…"`,
+		`ShowBalloonTip(4000, "AgentDock", "正在检查更新，请稍候…"`,
+		`var output = await Runtime.RunUpdateAsync()`,
+		`LastNonEmptyLine(output, "更新检查完成。")`,
+	} {
+		if !strings.Contains(app, want) {
+			t.Fatalf("Windows tray update feedback missing %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`x:Name="UpdateButton"`,
+		`FooterStatusText.Text = "正在检查更新，请稍候…"`,
+		`await Dispatcher.Yield(DispatcherPriority.Background)`,
+		`var output = await _runtime.RunUpdateAsync()`,
+		`LastNonEmptyLine(output, "更新检查完成。")`,
+	} {
+		if !strings.Contains(xaml, want) && !strings.Contains(window, want) {
+			t.Fatalf("Windows control-panel update feedback missing %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`public async Task<string> RunUpdateAsync`,
+		`CreateRedirectedProcessStartInfo(binaryPath)`,
+		`startInfo.ArgumentList.Add("update")`,
+		`StandardOutputEncoding = utf8`,
+		`StandardErrorEncoding = utf8`,
+	} {
+		if !strings.Contains(runtimeService, want) {
+			t.Fatalf("Windows update process handling missing %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`[Console]::InputEncoding = $Utf8NoBom`,
+		`[Console]::OutputEncoding = $Utf8NoBom`,
+		`$global:OutputEncoding = $Utf8NoBom`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("Windows management script missing UTF-8 output setup %q", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		`RunTrayActionAsync("update")`,
+		`RunCoreActionAsync("update"`,
+	} {
+		if strings.Contains(app, forbidden) || strings.Contains(window, forbidden) {
+			t.Fatalf("Windows update UI must not route update through generic PowerShell action %q", forbidden)
+		}
+	}
+}
+
 func TestWindowsControlPanelKeepsExistingBackgroundAndStylesOnlyButtonsAndTabs(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml"))
 	if err != nil {

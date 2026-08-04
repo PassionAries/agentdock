@@ -27,6 +27,7 @@ public partial class App : System.Windows.Application
     private DispatcherTimer? _trayStatusTimer;
     private RuntimeSnapshot? _traySnapshot;
     private bool _traySnapshotRefreshInProgress;
+    private bool _updateInProgress;
     private bool _ownsSingleInstanceMutex;
     private bool _exitRequested;
 
@@ -208,9 +209,9 @@ public partial class App : System.Windows.Application
                 snapshot is not null));
         }
         menu.Items.Add(CreateMenuItem(
-            "检查更新…",
-            async (_, _) => await RunTrayActionAsync("update"),
-            snapshot is not null));
+            _updateInProgress ? "正在检查更新…" : "检查更新…",
+            async (_, _) => await RunTrayUpdateAsync(),
+            snapshot is not null && !_updateInProgress));
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         menu.Items.Add(CreateMenuItem("打开日志目录", (_, _) => Runtime.OpenLogsDirectory()));
@@ -252,6 +253,33 @@ public partial class App : System.Windows.Application
 
     private static string TruncateNotifyIconText(string value) => value.Length <= 63 ? value : value[..63];
 
+    private async Task RunTrayUpdateAsync()
+    {
+        if (_updateInProgress)
+        {
+            return;
+        }
+
+        _updateInProgress = true;
+        _notifyIcon?.ShowBalloonTip(4000, "AgentDock", "正在检查更新，请稍候…", Forms.ToolTipIcon.Info);
+        try
+        {
+            var output = await Runtime.RunUpdateAsync();
+            _notifyIcon?.ShowBalloonTip(6000, "AgentDock", LastNonEmptyLine(output, "更新检查完成。"), Forms.ToolTipIcon.Info);
+            var refreshTask = await Dispatcher.InvokeAsync(ControlPanelWindow.RefreshAsync);
+            await refreshTask;
+        }
+        catch (Exception ex)
+        {
+            _notifyIcon?.ShowBalloonTip(6000, "AgentDock", LastNonEmptyLine(ex.Message, "检查更新失败。"), Forms.ToolTipIcon.Error);
+        }
+        finally
+        {
+            _updateInProgress = false;
+            await RefreshTraySnapshotAsync();
+        }
+    }
+
     private async Task RunTrayActionAsync(string action)
     {
         try
@@ -263,8 +291,16 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            _notifyIcon?.ShowBalloonTip(5000, "AgentDock", ex.Message, Forms.ToolTipIcon.Error);
+            _notifyIcon?.ShowBalloonTip(5000, "AgentDock", LastNonEmptyLine(ex.Message, "操作失败。"), Forms.ToolTipIcon.Error);
         }
+    }
+
+    private static string LastNonEmptyLine(string value, string fallback)
+    {
+        var line = value
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault();
+        return string.IsNullOrWhiteSpace(line) ? fallback : line;
     }
 
     private static Icon LoadIcon()

@@ -107,6 +107,22 @@ public sealed class RuntimeService : IDisposable
     public Task RunActionAsync(string action, CancellationToken cancellationToken = default) =>
         RunManagementScriptAsync(["-Action", action], cancellationToken);
 
+    public async Task<string> RunUpdateAsync(CancellationToken cancellationToken = default)
+    {
+        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken);
+        var binaryPath = string.IsNullOrWhiteSpace(manifest?.BinaryPath)
+            ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
+            : manifest.BinaryPath;
+        if (!File.Exists(binaryPath))
+        {
+            throw new FileNotFoundException("找不到 AgentDock 核心程序，请运行 Setup.exe 修复安装。", binaryPath);
+        }
+
+        var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
+        startInfo.ArgumentList.Add("update");
+        return await RunProcessAsync(startInfo, cancellationToken);
+    }
+
     public async Task SetTunnelModeAsync(
         string mode,
         string serverUrl,
@@ -216,14 +232,7 @@ public sealed class RuntimeService : IDisposable
             throw new FileNotFoundException("找不到 Windows 管理脚本，请运行 Setup.exe 修复安装。", script);
         }
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
+        var startInfo = CreateRedirectedProcessStartInfo("powershell.exe");
         startInfo.ArgumentList.Add("-NoLogo");
         startInfo.ArgumentList.Add("-NoProfile");
         startInfo.ArgumentList.Add("-NonInteractive");
@@ -238,7 +247,27 @@ public sealed class RuntimeService : IDisposable
             startInfo.ArgumentList.Add(argument);
         }
 
-        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 AgentDock 管理脚本。");
+        _ = await RunProcessAsync(startInfo, cancellationToken);
+    }
+
+    private static ProcessStartInfo CreateRedirectedProcessStartInfo(string fileName)
+    {
+        var utf8 = new UTF8Encoding(false);
+        return new ProcessStartInfo
+        {
+            FileName = fileName,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = utf8,
+            StandardErrorEncoding = utf8
+        };
+    }
+
+    private static async Task<string> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)
+    {
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"无法启动 {startInfo.FileName}。");
         var standardOutput = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var standardError = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
@@ -248,6 +277,12 @@ public sealed class RuntimeService : IDisposable
         {
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? output : error);
         }
+
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return error;
+        }
+        return string.IsNullOrWhiteSpace(error) ? output : output + Environment.NewLine + error;
     }
 
     private string ResolveManagementScript()

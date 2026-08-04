@@ -18,6 +18,18 @@ import (
 	"testing"
 )
 
+func TestReleaseArchiveLimitSupportsCurrentWindowsBundle(t *testing.T) {
+	// Windows 离线包包含自包含 WPF 控制面板，压缩后已超过 64 MiB；
+	// 下载上限需要留有增长空间，但单个解压内容仍保持原来的 64 MiB 防护。
+	const minimumArchiveLimit = 96 << 20
+	if maxReleaseArchiveBytes < minimumArchiveLimit {
+		t.Fatalf("release archive limit too small: got %d, want at least %d", maxReleaseArchiveBytes, minimumArchiveLimit)
+	}
+	if maxExtractedPayloadBytes != 64<<20 {
+		t.Fatalf("extracted payload limit changed unexpectedly: %d", maxExtractedPayloadBytes)
+	}
+}
+
 func TestRunDownloadsVerifiesAndAppliesRelease(t *testing.T) {
 	archive := makeTarGz(t, "bin/agentdock", []byte("new-binary"))
 	digest := sha256.Sum256(archive)

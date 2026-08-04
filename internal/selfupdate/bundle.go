@@ -39,8 +39,8 @@ func extractCoreSkillBundle(archiveData []byte, goos, tempDir string) (string, e
 		if !mode.IsRegular() {
 			return fmt.Errorf("Bundle 只允许普通文件: %s", name)
 		}
-		if size < 0 || size > maxReleaseBytes-total {
-			return fmt.Errorf("Bundle 解压内容超过 %d 字节限制", maxReleaseBytes)
+		if size < 0 || size > maxExtractedPayloadBytes-total {
+			return fmt.Errorf("Bundle 解压内容超过 %d 字节限制", maxExtractedPayloadBytes)
 		}
 		target := filepath.Join(bundlePath, clean)
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
@@ -78,8 +78,8 @@ func extractCoreSkillBundle(archiveData []byte, goos, tempDir string) (string, e
 			if !strings.HasPrefix(name, coreSkillBundlePrefix) || strings.HasSuffix(name, "/") {
 				continue
 			}
-			if file.UncompressedSize64 > uint64(maxReleaseBytes) {
-				return "", fmt.Errorf("Bundle 解压内容超过 %d 字节限制", maxReleaseBytes)
+			if file.UncompressedSize64 > uint64(maxExtractedPayloadBytes) {
+				return "", fmt.Errorf("Bundle 解压内容超过 %d 字节限制", maxExtractedPayloadBytes)
 			}
 			opened, err := file.Open()
 			if err != nil {

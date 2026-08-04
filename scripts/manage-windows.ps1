@@ -41,6 +41,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[Console]::InputEncoding = $Utf8NoBom
+[Console]::OutputEncoding = $Utf8NoBom
+$global:OutputEncoding = $Utf8NoBom
 Add-Type -AssemblyName System.Security
 
 function Convert-ToBoolean {

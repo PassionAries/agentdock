@@ -26,9 +26,10 @@ import (
 )
 
 const (
-	defaultReleaseAPI     = "https://api.github.com/repos/uvwt/agentdock/releases/latest"
-	maxReleaseBytes       = 64 << 20
-	coreSkillBundlePrefix = "share/agentdock/core-skills/"
+	defaultReleaseAPI        = "https://api.github.com/repos/uvwt/agentdock/releases/latest"
+	maxReleaseArchiveBytes   = 256 << 20
+	maxExtractedPayloadBytes = 64 << 20
+	coreSkillBundlePrefix    = "share/agentdock/core-skills/"
 )
 
 type release struct {
@@ -132,7 +133,7 @@ func run(ctx context.Context, opts options) error {
 
 	fmt.Fprintf(opts.Output, "当前版本：%s\n最新版本：%s\n\n", currentVersion, targetVersion)
 	fmt.Fprintf(opts.Output, "正在下载 %s...\n", archiveName)
-	archiveData, err := download(ctx, opts.HTTPClient, archiveAsset.URL, maxReleaseBytes)
+	archiveData, err := download(ctx, opts.HTTPClient, archiveAsset.URL, maxReleaseArchiveBytes)
 	if err != nil {
 		return fmt.Errorf("下载更新文件失败: %w", err)
 	}
@@ -281,7 +282,7 @@ func extractExecutable(archiveData []byte, goos, executableName string) ([]byte,
 				return nil, err
 			}
 			defer opened.Close()
-			return readLimited(opened, maxReleaseBytes)
+			return readLimited(opened, maxExtractedPayloadBytes)
 		}
 		return nil, fmt.Errorf("压缩包缺少 %s", executableName)
 	}
@@ -305,7 +306,7 @@ func extractExecutable(archiveData []byte, goos, executableName string) ([]byte,
 		if name != wanted || !header.FileInfo().Mode().IsRegular() {
 			continue
 		}
-		return readLimited(tarReader, maxReleaseBytes)
+		return readLimited(tarReader, maxExtractedPayloadBytes)
 	}
 	return nil, fmt.Errorf("压缩包缺少 %s", wanted)
 }

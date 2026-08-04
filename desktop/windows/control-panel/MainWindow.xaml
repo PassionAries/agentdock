@@ -55,7 +55,7 @@
                   <Button Content="启动" Click="StartButton_Click" />
                   <Button Content="停止" Click="StopButton_Click" />
                   <Button Content="重启" Click="RestartButton_Click" />
-                  <Button Content="更新" Click="UpdateButton_Click" />
+                  <Button x:Name="UpdateButton" Content="更新" Click="UpdateButton_Click" />
                 </StackPanel>
               </Grid>
             </GroupBox>
