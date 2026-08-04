@@ -664,7 +664,7 @@ jobs:
           test "$(readlink "$mount_dir/Applications")" = "/Applications"
           codesign --verify --deep --strict --verbose=2 "$mount_dir/AgentDock.app"
           app_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock")"
-          helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDockLoginHelper")"
+          helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper")"
           [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
           [[ "$helper_arches" == *arm64* && "$helper_arches" == *x86_64* ]]
 
