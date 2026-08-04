@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -48,9 +50,10 @@ jobs:
           set -euo pipefail
           asset="agentdock_linux_${GOARCH}.tar.gz"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          source_commit="$(git rev-parse HEAD)"
           mkdir -p dist/bin
           go build -trimpath \
-            -ldflags="-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=${build_date}" \
+            -ldflags="-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=${build_date}" \
             -o dist/bin/agentdock ./cmd/agentdock
           python3 scripts/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
           tar -C dist -czf "$asset" bin/agentdock share/agentdock/core-skills
@@ -75,6 +78,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -103,9 +108,10 @@ jobs:
           set -euo pipefail
           asset="agentdock_darwin_${GOARCH}.tar.gz"
           build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          source_commit="$(git rev-parse HEAD)"
           mkdir -p dist/bin
           go build -trimpath \
-            -ldflags="-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=${build_date}" \
+            -ldflags="-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=${build_date}" \
             -o dist/bin/agentdock ./cmd/agentdock
           python3 scripts/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
           tar -C dist -czf "$asset" bin/agentdock share/agentdock/core-skills
@@ -127,6 +133,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -214,6 +222,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -272,7 +282,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $buildDate = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-          $ldflags = "-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=$env:GITHUB_SHA -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=$buildDate"
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          $ldflags = "-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=$sourceCommit -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=$buildDate"
           $runtimeIdentifier = if ($env:GOARCH -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           go build -trimpath -ldflags $ldflags -o dist/agentdock.exe ./cmd/agentdock
@@ -336,6 +347,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Download Windows payload
         uses: actions/download-artifact@v4
@@ -403,6 +416,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -524,6 +539,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -732,6 +749,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Download published installer
         shell: powershell
@@ -784,6 +803,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3

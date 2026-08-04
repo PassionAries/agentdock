@@ -1196,6 +1196,33 @@ func TestMacOSReleaseChecksCloudflaredFromPayloadDirectory(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowChecksOutRequestedTag(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(data)
+	checkoutCount := strings.Count(workflow, "uses: actions/checkout@v4")
+	requestedRefCount := strings.Count(workflow, "ref: ${{ github.event.inputs.tag || github.ref }}")
+	if checkoutCount == 0 || requestedRefCount != checkoutCount {
+		t.Fatalf("every release checkout must use the requested tag: checkouts=%d refs=%d", checkoutCount, requestedRefCount)
+	}
+	for _, want := range []string{
+		`source_commit="$(git rev-parse HEAD)"`,
+		`internal/buildinfo.Commit=${source_commit}`,
+		`$sourceCommit = (git rev-parse HEAD).Trim()`,
+		`internal/buildinfo.Commit=$sourceCommit`,
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release.yml missing checked-out source commit behavior %q", want)
+		}
+	}
+	if strings.Contains(workflow, "internal/buildinfo.Commit=${GITHUB_SHA}") ||
+		strings.Contains(workflow, "internal/buildinfo.Commit=$env:GITHUB_SHA") {
+		t.Fatal("release build metadata must describe the checked-out tag, not the workflow dispatch commit")
+	}
+}
+
 func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
 	if err != nil {
