@@ -109,7 +109,11 @@ func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.Call
 	}
 	slog.Info("tool started", "tool", name)
 	result, err := s.runtime.Call(ctx, name, arguments)
-	slog.Info("tool finished", "tool", name, "duration_ms", time.Since(started).Milliseconds(), "ok", err == nil)
+	finishedAttrs := []any{"tool", name, "duration_ms", time.Since(started).Milliseconds(), "ok", err == nil}
+	if err != nil {
+		finishedAttrs = append(finishedAttrs, "error", err)
+	}
+	slog.Info("tool finished", finishedAttrs...)
 
 	encoded, encodeErr := json.Marshal(toolEnvelope(name, result, err))
 	if encodeErr != nil {

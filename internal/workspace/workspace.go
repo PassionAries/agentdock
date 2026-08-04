@@ -169,6 +169,11 @@ func (w *Workspace) displayPath(abs string) string {
 }
 
 func (w *Workspace) Relative(abs string) (string, error) {
+	rootVolume := filepath.VolumeName(w.root)
+	targetVolume := filepath.VolumeName(abs)
+	if rootVolume != "" && targetVolume != "" && !strings.EqualFold(rootVolume, targetVolume) {
+		return filepath.Clean(abs), nil
+	}
 	rel, err := filepath.Rel(w.root, abs)
 	if err != nil {
 		return "", err
