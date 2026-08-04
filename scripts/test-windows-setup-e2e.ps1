@@ -67,11 +67,28 @@ function Assert-ElevatedAgentDockTask {
     if (-not [string]::Equals($taskSid, $currentSid, [StringComparison]::OrdinalIgnoreCase)) {
         throw "AgentDock task belongs to another user: $($task.Principal.UserId) / $taskSid"
     }
-    $launcherMatch = @($task.Actions | Where-Object {
-        $_.Arguments -and $_.Arguments.Contains($launcherPath)
-    }).Count -gt 0
-    if (-not $launcherMatch) {
-        throw 'AgentDock task does not launch the installer-managed launcher.'
+    $nativeActionMatch = @($task.Actions | Where-Object {
+        $executeMatches = [string]::Equals(
+            [IO.Path]::GetFullPath($_.Execute),
+            [IO.Path]::GetFullPath($binaryPath),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+        $argumentsMatch = $_.Arguments -and
+            $_.Arguments.Contains('service launch-core') -and
+            $_.Arguments.Contains('--runtime-root') -and
+            $_.Arguments.Contains($InstallRoot)
+        $executeMatches -and $argumentsMatch
+    }).Count -eq 1
+    if (-not $nativeActionMatch) {
+        $actions = ($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
+        throw "AgentDock task does not launch the native core directly: $actions"
+    }
+    if (@($task.Actions | Where-Object {
+        $_.Execute.Contains('powershell.exe') -or
+        $_.Execute.Contains('agentdock-tray.exe') -or
+        ($_.Arguments -and $_.Arguments.Contains('--start-core'))
+    }).Count -gt 0) {
+        throw 'AgentDock elevated task must not invoke PowerShell or the tray startup proxy.'
     }
 }
 
