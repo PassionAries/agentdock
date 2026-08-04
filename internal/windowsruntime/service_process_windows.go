@@ -29,22 +29,33 @@ func StopBinaryProcesses(ctx context.Context, binaryPath string, timeout time.Du
 	if err := terminateProcessesAtPath(binaryPath); err != nil {
 		return err
 	}
+	stopped, err := waitBinaryStopped(ctx, binaryPath, timeout)
+	if err != nil {
+		return err
+	}
+	if !stopped {
+		return fmt.Errorf("进程未在 %s 内退出: %s", timeout, binaryPath)
+	}
+	return nil
+}
+
+func waitBinaryStopped(ctx context.Context, binaryPath string, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		running, err := processRunningAtPath(binaryPath)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !running {
-			return nil
+			return true, nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("进程未在 %s 内退出: %s", timeout, binaryPath)
+	return false, nil
 }
 
 func terminateProcessesAtPath(binaryPath string) error {

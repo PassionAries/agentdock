@@ -247,6 +247,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"service launch-core --runtime-root",
 		"--start-core --runtime-root",
 		"& $destinationBinary service start --runtime-root $runtimeDir",
+		"& $destinationBinary tunnel start --runtime-root $runtimeDir",
+		"--start-tunnel --runtime-root",
 		"New-ScheduledTaskAction -Execute $LauncherPath",
 		"[string] $TaskRuntimeRoot = ''",
 		"Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath",
@@ -277,6 +279,12 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	backupCall := strings.Index(script, "Copy-Item -LiteralPath $destinationBinary -Destination $binaryBackup -Force")
 	if backupCall < stopCall || backupCall > replaceCall {
 		t.Fatal("install.ps1 must back up the stopped binary before replacement")
+	}
+	manifestCall := strings.Index(script, "$manifestTunnelMode = $resolvedTunnelMode")
+	coreStartCall := strings.Index(script, "& $destinationBinary service start --runtime-root $runtimeDir")
+	tunnelStartCall := strings.Index(script, "& $destinationBinary tunnel start --runtime-root $runtimeDir")
+	if manifestCall < 0 || coreStartCall < 0 || tunnelStartCall < 0 || manifestCall > coreStartCall || manifestCall > tunnelStartCall {
+		t.Fatal("install.ps1 must write the runtime manifest before native core and Tunnel startup")
 	}
 
 	const securityAssemblyLoad = "Add-Type -AssemblyName System.Security"
@@ -352,6 +360,49 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 	}
 	if strings.Contains(script, "RuntimeMode 'quick' -PublicUrl ''") {
 		t.Fatal("Quick Tunnel transition must not write an invalid quick manifest without public_url")
+	}
+	for _, want := range []string{
+		"& $AgentDockBinary tunnel $Command --runtime-root $RuntimeRoot",
+		"'tunnel', 'configure'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("manage-windows.ps1 must delegate Tunnel operations to native commands: %q", want)
+		}
+	}
+}
+
+func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
+	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read App.xaml.cs: %v", err)
+	}
+	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	if err != nil {
+		t.Fatalf("read RuntimeService.cs: %v", err)
+	}
+	app := string(appData)
+	runtimeService := string(runtimeData)
+	for _, want := range []string{
+		`"--start-tunnel"`,
+		`RunTunnelActionAsync("start",`,
+		`RunTunnelStartupAsync()`,
+		`RunNativeAgentDockAsync("tunnel"`,
+		`allowElevation: false`,
+		`"configure"`,
+		`"--token-file"`,
+	} {
+		if !strings.Contains(app, want) && !strings.Contains(runtimeService, want) {
+			t.Fatalf("Windows control panel missing native Tunnel behavior %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		`RunManagementScriptAsync(["-Action", "start-tunnel"]`,
+		`RunManagementScriptAsync(["-Action", "stop-tunnel"]`,
+		`RunManagementScriptAsync(["-Action", "regenerate-quick"]`,
+	} {
+		if strings.Contains(runtimeService, forbidden) {
+			t.Fatalf("Windows control panel still invokes PowerShell for Tunnel lifecycle %q", forbidden)
+		}
 	}
 }
 

@@ -43,3 +43,10 @@ func TestRunServiceLaunchCoreRequiresRuntimeRoot(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRunTunnelRequiresRuntimeRoot(t *testing.T) {
+	err := run(context.Background(), []string{"tunnel", "start"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "--runtime-root") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/uvwt/agentdock/internal/fs/atomicfile"
 )
 
 const SchemaVersion = 1
@@ -51,6 +53,21 @@ func Load(path string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func Save(path string, manifest Manifest) error {
+	if err := manifest.Validate(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Windows runtime manifest: %w", err)
+	}
+	data = append(data, '\n')
+	if err := atomicfile.Write(path, data, 0o600); err != nil {
+		return fmt.Errorf("write Windows runtime manifest: %w", err)
+	}
+	return nil
 }
 
 func LoadForBinary(binaryPath string) (Manifest, error) {

@@ -112,16 +112,25 @@ public sealed class RuntimeService : IDisposable
         {
             case "start":
                 await RunCoreActionAsync("start", cancellationToken);
-                await RunManagementScriptAsync(["-Action", "start-tunnel"], cancellationToken);
+                await RunTunnelActionAsync("start", cancellationToken);
                 break;
             case "stop":
-                await RunManagementScriptAsync(["-Action", "stop-tunnel"], cancellationToken);
+                await RunTunnelActionAsync("stop", cancellationToken);
                 await RunCoreActionAsync("stop", cancellationToken);
                 break;
             case "restart":
-                // Quick Tunnel 重启前必须先清理旧公网地址，再重启核心并等待新地址。
-                // Tunnel 仍由兼容管理脚本编排，核心生命周期由脚本调用原生命令完成。
-                await RunManagementScriptAsync(["-Action", "restart"], cancellationToken);
+                var mode = ReadText(Path.Combine(RuntimeRoot, "cloudflared-mode.txt")).ToLowerInvariant();
+                if (mode == "quick")
+                {
+                    // Quick Tunnel 重建会清理旧地址、重启核心、等待新地址并再次应用 OAuth Origin。
+                    await RunTunnelActionAsync("regenerate", cancellationToken);
+                }
+                else
+                {
+                    await RunTunnelActionAsync("stop", cancellationToken);
+                    await RunCoreActionAsync("restart", cancellationToken);
+                    await RunTunnelActionAsync("start", cancellationToken);
+                }
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(action), action, "不支持的运行时操作。");
@@ -164,9 +173,9 @@ public sealed class RuntimeService : IDisposable
     {
         var arguments = new List<string>
         {
-            "-Action", "set-mode",
-            "-Mode", mode,
-            "-ServerUrl", serverUrl ?? ""
+            "configure",
+            "--mode", mode,
+            "--server-url", serverUrl ?? ""
         };
         string? secretFile = null;
         try
@@ -174,10 +183,10 @@ public sealed class RuntimeService : IDisposable
             if (!string.IsNullOrWhiteSpace(tunnelToken))
             {
                 secretFile = await WriteSecretFileAsync(tunnelToken, cancellationToken);
-                arguments.AddRange(["-TunnelTokenFile", secretFile]);
+                arguments.AddRange(["--token-file", secretFile]);
             }
 
-            await RunManagementScriptAsync(arguments, cancellationToken);
+            await RunNativeAgentDockAsync("tunnel", arguments, cancellationToken);
         }
         finally
         {
@@ -186,7 +195,7 @@ public sealed class RuntimeService : IDisposable
     }
 
     public Task RegenerateQuickTunnelAsync(CancellationToken cancellationToken = default) =>
-        RunManagementScriptAsync(["-Action", "regenerate-quick"], cancellationToken);
+        RunTunnelActionAsync("regenerate", cancellationToken);
 
     public async Task SaveSettingsAsync(
         ControlPanelSettings settings,
@@ -226,7 +235,8 @@ public sealed class RuntimeService : IDisposable
         {
             throw new ArgumentOutOfRangeException(nameof(component), component, "不支持的开机启动组件。");
         }
-        return RunNativeServiceAsync(
+        return RunNativeAgentDockAsync(
+            "service",
             ["autostart", "--component", component, "--enabled", enabled ? "true" : "false"],
             cancellationToken);
     }
@@ -276,20 +286,39 @@ public sealed class RuntimeService : IDisposable
         return binaryPath;
     }
 
+    internal Task RunCoreStartupAsync(CancellationToken cancellationToken = default) =>
+        RunNativeAgentDockAsync("service", ["start"], cancellationToken, allowElevation: false);
+
+    internal Task RunTunnelStartupAsync(CancellationToken cancellationToken = default) =>
+        RunNativeAgentDockAsync("tunnel", ["start"], cancellationToken, allowElevation: false);
+
     internal Task RunCoreActionAsync(string action, CancellationToken cancellationToken = default)
     {
         if (action is not ("start" or "stop" or "restart"))
         {
             throw new ArgumentOutOfRangeException(nameof(action), action, "不支持的核心服务操作。");
         }
-        return RunNativeServiceAsync([action], cancellationToken);
+        return RunNativeAgentDockAsync("service", [action], cancellationToken);
     }
 
-    private async Task RunNativeServiceAsync(IReadOnlyCollection<string> arguments, CancellationToken cancellationToken)
+    internal Task RunTunnelActionAsync(string action, CancellationToken cancellationToken = default)
+    {
+        if (action is not ("start" or "stop" or "restart" or "regenerate"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(action), action, "不支持的 Tunnel 操作。");
+        }
+        return RunNativeAgentDockAsync("tunnel", [action], cancellationToken);
+    }
+
+    private async Task RunNativeAgentDockAsync(
+        string command,
+        IReadOnlyCollection<string> arguments,
+        CancellationToken cancellationToken,
+        bool allowElevation = true)
     {
         var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
         var binaryPath = await ResolveCoreBinaryAsync(cancellationToken);
-        var commandArguments = new List<string> { "service" };
+        var commandArguments = new List<string> { command };
         commandArguments.AddRange(arguments);
         commandArguments.AddRange(["--runtime-root", RuntimeRoot]);
 
@@ -304,10 +333,11 @@ public sealed class RuntimeService : IDisposable
             _ = await RunProcessAsync(startInfo, cancellationToken);
         }
         catch (InvalidOperationException) when (
+            allowElevation &&
             string.Equals(manifest.PrivilegeMode, "elevated", StringComparison.OrdinalIgnoreCase))
         {
             // 最高权限计划任务启动的核心进程不能保证允许普通托盘终止。
-            // 只有原生命令实际失败时才请求 UAC，普通用户安装不会出现提权提示。
+            // 原生命令真正失败时才请求 UAC；命令设计为幂等，可安全重试已完成的前置状态变更。
             await RunElevatedProcessAsync(binaryPath, commandArguments, cancellationToken);
         }
     }

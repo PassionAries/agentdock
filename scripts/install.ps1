@@ -1345,6 +1345,35 @@ exit `$LASTEXITCODE
 "@
         [IO.File]::WriteAllText($launcherPath, $launcher, $Utf8NoBom)
 
+        $manifestTunnelMode = $resolvedTunnelMode
+        $manifestPublicUrl = ''
+        if ($resolvedTunnelMode -eq 'named') {
+            $manifestPublicUrl = $ServerUrl
+        } elseif ($resolvedTunnelMode -eq 'quick') {
+            # Quick Tunnel starts locally; the native command writes the real URL after cloudflared is ready.
+            $manifestTunnelMode = 'none'
+        }
+        $publicUrl = $manifestPublicUrl
+        $localMCPUrl = "http://127.0.0.1:$Port/mcp"
+        Write-RuntimeManifest `
+            -Path $runtimeManifestPath `
+            -RuntimeVersion $Version `
+            -InstallRoot $runtimeDir `
+            -AgentDockBinary $destinationBinary `
+            -TrayBinary $destinationTrayBinary `
+            -AgentDockLauncher $launcherPath `
+            -AgentDockTaskName $(if ($effectivePrivilegeMode -eq 'elevated') { 'AgentDock' } else { '' }) `
+            -PrivilegeMode $effectivePrivilegeMode `
+            -CloudflaredBinary $cloudflaredBinary `
+            -CloudflaredLauncher $cloudflaredLauncherPath `
+            -CoreStartupValueName $runValueName `
+            -TrayStartupValueName $trayRunValueName `
+            -TunnelStartupValueName $cloudflaredRunValueName `
+            -RuntimePort $Port `
+            -RuntimeTunnelMode $manifestTunnelMode `
+            -RuntimePublicUrl $manifestPublicUrl `
+            -Channel $InstallChannel
+
         New-Item -Path $runKey -Force | Out-Null
         if ($effectivePrivilegeMode -eq 'elevated') {
             Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
@@ -1557,13 +1586,19 @@ exit `$process.ExitCode
             [IO.File]::WriteAllText($cloudflaredStdoutLogPath, '', $Utf8NoBom)
             [IO.File]::WriteAllText($cloudflaredStderrLogPath, '', $Utf8NoBom)
 
-            $cloudflaredStartupCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$cloudflaredLauncherPath`""
+            $cloudflaredStartupCommand = "`"$destinationTrayBinary`" --start-tunnel --runtime-root `"$runtimeDir`""
             New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName -Value $cloudflaredStartupCommand -PropertyType String -Force | Out-Null
             $tunnelStartupRegistrationChanged = $true
-            Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath
+            & $destinationBinary tunnel start --runtime-root $runtimeDir
+            if ($LASTEXITCODE -ne 0) {
+                throw "AgentDock native Tunnel start failed with exit code $LASTEXITCODE."
+            }
 
             if ($resolvedTunnelMode -eq 'quick') {
-                $publicUrl = Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)
+                $publicUrl = Read-TextFile -Path $quickTunnelUrlPath
+                if ([string]::IsNullOrWhiteSpace($publicUrl)) {
+                    $publicUrl = Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)
+                }
                 Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl
             } else {
                 $publicUrl = $ServerUrl
@@ -1596,24 +1631,26 @@ exit `$process.ExitCode
     if (-not [string]::IsNullOrWhiteSpace($publicUrl)) {
         $publicMCPUrl = "$publicUrl/mcp"
     }
-    Write-RuntimeManifest `
-        -Path $runtimeManifestPath `
-        -RuntimeVersion $Version `
-        -InstallRoot $runtimeDir `
-        -AgentDockBinary $destinationBinary `
-        -TrayBinary $destinationTrayBinary `
-        -AgentDockLauncher $launcherPath `
-        -AgentDockTaskName $(if ($effectivePrivilegeMode -eq 'elevated') { 'AgentDock' } else { '' }) `
-        -PrivilegeMode $effectivePrivilegeMode `
-        -CloudflaredBinary $cloudflaredBinary `
-        -CloudflaredLauncher $cloudflaredLauncherPath `
-        -CoreStartupValueName $runValueName `
-        -TrayStartupValueName $trayRunValueName `
-        -TunnelStartupValueName $cloudflaredRunValueName `
-        -RuntimePort $Port `
-        -RuntimeTunnelMode $resolvedTunnelMode `
-        -RuntimePublicUrl $publicUrl `
-        -Channel $InstallChannel
+    if (-not $RegisterStartup) {
+        Write-RuntimeManifest `
+            -Path $runtimeManifestPath `
+            -RuntimeVersion $Version `
+            -InstallRoot $runtimeDir `
+            -AgentDockBinary $destinationBinary `
+            -TrayBinary $destinationTrayBinary `
+            -AgentDockLauncher $launcherPath `
+            -AgentDockTaskName $(if ($effectivePrivilegeMode -eq 'elevated') { 'AgentDock' } else { '' }) `
+            -PrivilegeMode $effectivePrivilegeMode `
+            -CloudflaredBinary $cloudflaredBinary `
+            -CloudflaredLauncher $cloudflaredLauncherPath `
+            -CoreStartupValueName $runValueName `
+            -TrayStartupValueName $trayRunValueName `
+            -TunnelStartupValueName $cloudflaredRunValueName `
+            -RuntimePort $Port `
+            -RuntimeTunnelMode $resolvedTunnelMode `
+            -RuntimePublicUrl $publicUrl `
+            -Channel $InstallChannel
+    }
 
     Write-Host 'Installing official core Skills...'
     $coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)

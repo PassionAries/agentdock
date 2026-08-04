@@ -41,10 +41,16 @@ public partial class App : System.Windows.Application
         _ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
         base.OnStartup(e);
 
-        if (TryGetCoreStartupRuntimeRoot(e.Args, out var runtimeRoot))
+        if (TryGetStartupRuntimeRoot(e.Args, "--start-core", out var coreRuntimeRoot))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            _ = StartCoreAndExitAsync(runtimeRoot);
+            _ = StartRuntimeComponentAndExitAsync(coreRuntimeRoot, "core");
+            return;
+        }
+        if (TryGetStartupRuntimeRoot(e.Args, "--start-tunnel", out var tunnelRuntimeRoot))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = StartRuntimeComponentAndExitAsync(tunnelRuntimeRoot, "tunnel");
             return;
         }
 
@@ -73,10 +79,10 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private static bool TryGetCoreStartupRuntimeRoot(string[] arguments, out string runtimeRoot)
+    private static bool TryGetStartupRuntimeRoot(string[] arguments, string startupFlag, out string runtimeRoot)
     {
         runtimeRoot = "";
-        if (!arguments.Any(argument => string.Equals(argument, "--start-core", StringComparison.OrdinalIgnoreCase)))
+        if (!arguments.Any(argument => string.Equals(argument, startupFlag, StringComparison.OrdinalIgnoreCase)))
         {
             return false;
         }
@@ -92,16 +98,23 @@ public partial class App : System.Windows.Application
         return !string.IsNullOrWhiteSpace(runtimeRoot);
     }
 
-    private async Task StartCoreAndExitAsync(string runtimeRoot)
+    private async Task StartRuntimeComponentAndExitAsync(string runtimeRoot, string component)
     {
         try
         {
             using var runtime = new RuntimeService(runtimeRoot);
-            await runtime.RunCoreActionAsync("start");
+            if (component == "core")
+            {
+                await runtime.RunCoreStartupAsync();
+            }
+            else
+            {
+                await runtime.RunTunnelStartupAsync();
+            }
         }
         catch (Exception ex)
         {
-            RecordBackgroundStartupFailure(runtimeRoot, ex);
+            RecordBackgroundStartupFailure(runtimeRoot, component, ex);
         }
         finally
         {
@@ -109,13 +122,13 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private static void RecordBackgroundStartupFailure(string runtimeRoot, Exception exception)
+    private static void RecordBackgroundStartupFailure(string runtimeRoot, string component, Exception exception)
     {
         try
         {
             var logsDirectory = Path.Combine(runtimeRoot, "logs");
             Directory.CreateDirectory(logsDirectory);
-            var message = $"{DateTimeOffset.Now:O} core startup failed: {exception.Message}{Environment.NewLine}";
+            var message = $"{DateTimeOffset.Now:O} {component} startup failed: {exception.Message}{Environment.NewLine}";
             File.AppendAllText(Path.Combine(logsDirectory, "control-panel.err.log"), message, new System.Text.UTF8Encoding(false));
         }
         catch

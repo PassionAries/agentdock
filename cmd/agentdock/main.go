@@ -60,6 +60,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "service" {
 		return runServiceCommand(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "tunnel" {
+		return windowsruntime.RunTunnelCommand(ctx, args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "skill" {
 		return runSkillCommand(ctx, args[1:], stdout, stderr)
 	}
@@ -152,6 +155,7 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "  agentdock --version")
 		fmt.Fprintln(stderr, "  agentdock update [--check]")
 		fmt.Fprintln(stderr, "  agentdock service <status|start|stop|restart|autostart> --runtime-root <目录>")
+		fmt.Fprintln(stderr, "  agentdock tunnel <status|start|stop|restart|regenerate|configure|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock skill bootstrap --bundle <目录>")
 		fmt.Fprintln(stderr, "\n服务参数：")
 		flags.PrintDefaults()

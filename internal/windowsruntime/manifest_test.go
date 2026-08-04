@@ -99,3 +99,31 @@ func TestManifestKeepsLegacyStandardModeCompatible(t *testing.T) {
 		t.Fatal("legacy manifest must remain a standard launcher installation")
 	}
 }
+
+func TestSaveManifestRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runtime.json")
+	manifest := Manifest{
+		SchemaVersion:               SchemaVersion,
+		AgentDockBinary:             filepath.Join(filepath.Dir(path), "bin", "agentdock.exe"),
+		TrayBinary:                  filepath.Join(filepath.Dir(path), "bin", "agentdock-tray.exe"),
+		CloudflaredBinary:           filepath.Join(filepath.Dir(path), "bin", "cloudflared.exe"),
+		StartupValueName:            "AgentDockCoreTest",
+		CloudflaredStartupValueName: "AgentDockTunnelTest",
+		Host:                        "127.0.0.1",
+		Port:                        28765,
+		LocalMCPURL:                 "http://127.0.0.1:28765/mcp",
+		TunnelMode:                  "quick",
+		PublicURL:                   "https://native-test.trycloudflare.com",
+		InstallChannel:              "setup",
+	}
+	if err := Save(path, manifest); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.PublicURL != manifest.PublicURL || loaded.CloudflaredStartupValueName != manifest.CloudflaredStartupValueName {
+		t.Fatalf("manifest round trip mismatch: %#v", loaded)
+	}
+}

@@ -130,7 +130,6 @@ $firstUrl = 'https://first-agentdock-test.trycloudflare.com'
 $secondUrl = 'https://second-agentdock-test.trycloudflare.com'
 $thirdUrl = 'https://third-agentdock-test.trycloudflare.com'
 $oldUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$refreshLauncher = $null
 
 try {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
@@ -174,6 +173,18 @@ try {
     Wait-TextFileValue -Path $serverUrlPath -ExpectedValue $firstUrl
     Wait-Healthy -Url $healthUrl
 
+    $coreStartupCommand = Get-ItemPropertyValue -LiteralPath $runKey -Name $startupName
+    $tunnelStartupCommand = Get-ItemPropertyValue -LiteralPath $runKey -Name $cloudflaredStartupName
+    if (-not $coreStartupCommand.Contains($trayBinary) -or -not $coreStartupCommand.Contains('--start-core')) {
+        throw "Core startup is not native: $coreStartupCommand"
+    }
+    if (-not $tunnelStartupCommand.Contains($trayBinary) -or -not $tunnelStartupCommand.Contains('--start-tunnel')) {
+        throw "Tunnel startup is not native: $tunnelStartupCommand"
+    }
+    if ($coreStartupCommand.Contains('powershell.exe') -or $tunnelStartupCommand.Contains('powershell.exe')) {
+        throw 'Native startup entries must not invoke PowerShell.'
+    }
+
     $firstManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     if ($firstManifest.tunnel_mode -ne 'quick' -or $firstManifest.public_url -ne $firstUrl) {
         throw "Initial runtime manifest did not contain the Quick Tunnel URL: $($firstManifest | ConvertTo-Json -Compress)"
@@ -188,21 +199,10 @@ try {
     $oauthSecretHash = (Get-FileHash -LiteralPath $oauthSecretPath -Algorithm SHA256).Hash
 
     [IO.File]::WriteAllText($urlSourcePath, $secondUrl, [Text.UTF8Encoding]::new($false))
-    Stop-ProcessByPath -ProcessName 'cloudflared' -BinaryPath $cloudflaredBinary
-    Start-Sleep -Milliseconds 750
-    Remove-Item -LiteralPath $quickUrlPath -Force -ErrorAction SilentlyContinue
-    $refreshLauncher = Start-Process `
-        -FilePath 'powershell.exe' `
-        -ArgumentList @(
-            '-NoLogo',
-            '-NoProfile',
-            '-NonInteractive',
-            '-WindowStyle', 'Hidden',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', "`"$cloudflaredLauncher`""
-        ) `
-        -WindowStyle Hidden `
-        -PassThru
+    & $agentDockBinary tunnel regenerate --runtime-root $runtimeDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native Quick Tunnel regeneration failed with exit code $LASTEXITCODE."
+    }
 
     Wait-TextFileValue -Path $quickUrlPath -ExpectedValue $secondUrl
     Wait-TextFileValue -Path $serverUrlPath -ExpectedValue $secondUrl
@@ -225,14 +225,21 @@ try {
         throw 'Quick Tunnel refresh unexpectedly rotated existing credentials.'
     }
 
-    & $managerPath -Action set-mode -RuntimeRoot $runtimeDir -Mode none
+    & $agentDockBinary tunnel configure --runtime-root $runtimeDir --mode none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native local-only transition failed with exit code $LASTEXITCODE."
+    }
     Wait-Healthy -Url $healthUrl
     Wait-TextFileValue -Path $serverUrlPath -ExpectedValue ''
     if (Test-Path -LiteralPath $quickUrlPath -PathType Leaf) {
         throw 'Switching to local-only mode did not remove the active Quick Tunnel URL.'
     }
     $noneManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($noneManifest.tunnel_mode -ne 'none' -or -not [string]::IsNullOrWhiteSpace($noneManifest.public_url)) {
+    $nonePublicUrl = ''
+    if ($noneManifest.PSObject.Properties.Name -contains 'public_url') {
+        $nonePublicUrl = [string] $noneManifest.public_url
+    }
+    if ($noneManifest.tunnel_mode -ne 'none' -or -not [string]::IsNullOrWhiteSpace($nonePublicUrl)) {
         throw "Local-only runtime manifest is invalid: $($noneManifest | ConvertTo-Json -Compress)"
     }
     if (@(Get-ProcessIdsByPath -ProcessName 'cloudflared' -BinaryPath $cloudflaredBinary).Count -ne 0) {
@@ -245,7 +252,10 @@ try {
     }
 
     [IO.File]::WriteAllText($urlSourcePath, $thirdUrl, [Text.UTF8Encoding]::new($false))
-    & $managerPath -Action set-mode -RuntimeRoot $runtimeDir -Mode quick
+    & $agentDockBinary tunnel configure --runtime-root $runtimeDir --mode quick
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native Quick Tunnel transition failed with exit code $LASTEXITCODE."
+    }
     Wait-TextFileValue -Path $quickUrlPath -ExpectedValue $thirdUrl
     Wait-TextFileValue -Path $serverUrlPath -ExpectedValue $thirdUrl
     Wait-Healthy -Url $healthUrl
@@ -288,9 +298,6 @@ try {
     }
     throw
 } finally {
-    if ($refreshLauncher -and -not $refreshLauncher.HasExited) {
-        Stop-Process -Id $refreshLauncher.Id -Force -ErrorAction SilentlyContinue
-    }
     Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath $trayBinary
     Stop-ProcessByPath -ProcessName 'cloudflared' -BinaryPath $cloudflaredBinary
     Stop-ProcessByPath -ProcessName 'agentdock' -BinaryPath $agentDockBinary

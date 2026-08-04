@@ -214,27 +214,6 @@ function Read-SecretFile {
     return $value
 }
 
-function Normalize-HttpsOrigin {
-    param([string] $Value)
-
-    $trimmed = $Value.Trim().TrimEnd('/')
-    if ([string]::IsNullOrWhiteSpace($trimmed)) {
-        throw '固定域名模式需要 HTTPS 公网地址。'
-    }
-    try {
-        $uri = [Uri] $trimmed
-    } catch {
-        throw "公网地址无效：$Value"
-    }
-    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne 'https' -or [string]::IsNullOrWhiteSpace($uri.Host)) {
-        throw "公网地址必须是完整 HTTPS Origin：$Value"
-    }
-    if ($uri.AbsolutePath -ne '/' -or $uri.Query -or $uri.Fragment -or $uri.UserInfo) {
-        throw "公网地址不能包含路径、查询参数、片段或用户信息：$Value"
-    }
-    return $trimmed
-}
-
 if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
     throw 'RuntimeRoot 不能为空。'
 }
@@ -365,30 +344,6 @@ function Stop-ProcessesAtPath {
     throw "无法停止 $ProcessName：$BinaryPath"
 }
 
-function Test-AgentDockHealth {
-    param([int] $HealthPort)
-
-    try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$HealthPort/healthz" -TimeoutSec 2
-        return $response.StatusCode -eq 200
-    } catch {
-        return $false
-    }
-}
-
-function Wait-AgentDockHealth {
-    param([int] $HealthPort)
-
-    $deadline = [DateTime]::UtcNow.AddSeconds(45)
-    do {
-        if (Test-AgentDockHealth -HealthPort $HealthPort) {
-            return
-        }
-        Start-Sleep -Milliseconds 500
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw "AgentDock 健康检查失败：http://127.0.0.1:$HealthPort/healthz"
-}
-
 function Escape-SingleQuoted {
     param([string] $Value)
     return $Value.Replace("'", "''")
@@ -446,60 +401,6 @@ exit `$LASTEXITCODE
 exit `$LASTEXITCODE
 "@
     Write-TextAtomically -Path $CloudflaredLauncher -Value $tunnelLauncher
-}
-
-function Start-HiddenLauncher {
-    param([string] $Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "找不到启动脚本：$Path"
-    }
-    $arguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Path`""
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle Hidden | Out-Null
-}
-
-function Set-RunValue {
-    param(
-        [string] $Name,
-        [string] $Value
-    )
-
-    New-Item -Path $RunKey -Force | Out-Null
-    New-ItemProperty -Path $RunKey -Name $Name -Value $Value -PropertyType String -Force | Out-Null
-}
-
-function Remove-RunValue {
-    param([string] $Name)
-    Remove-ItemProperty -LiteralPath $RunKey -Name $Name -ErrorAction SilentlyContinue
-}
-
-function Get-CoreStartupCommand {
-    return "`"$TrayBinary`" --start-core --runtime-root `"$RuntimeRoot`""
-}
-
-function Get-TunnelStartupCommand {
-    return "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$CloudflaredLauncher`""
-}
-
-function Get-TrayStartupCommand {
-    return "`"$TrayBinary`" --background"
-}
-
-function Invoke-TaskOperation {
-    param([ValidateSet('start', 'stop')] [string] $Operation)
-
-    try {
-        if ($Operation -eq 'start') {
-            Start-TaskPreservingStartupState
-        } else {
-            Stop-ScheduledTask -TaskName $TaskName -TaskPath '\' -ErrorAction Stop
-        }
-    } catch {
-        if (Test-IsAdministrator) {
-            throw
-        }
-        Invoke-ElevatedManagerAction -InternalAction "task-$Operation"
-    }
 }
 
 function Start-TaskPreservingStartupState {
@@ -593,6 +494,15 @@ function Invoke-NativeCoreCommand {
     }
 }
 
+function Invoke-NativeTunnelCommand {
+    param([ValidateSet('start', 'stop', 'restart', 'regenerate')] [string] $Command)
+
+    & $AgentDockBinary tunnel $Command --runtime-root $RuntimeRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "AgentDock 原生 Tunnel 命令执行失败：$Command，退出码：$LASTEXITCODE"
+    }
+}
+
 function Start-Core {
     Invoke-NativeCoreCommand -Command start
 }
@@ -603,17 +513,6 @@ function Stop-Core {
 
 function Restart-Core {
     Invoke-NativeCoreCommand -Command restart
-}
-
-function Wait-CloudflaredRunning {
-    $deadline = [DateTime]::UtcNow.AddSeconds(20)
-    do {
-        if (@(Get-ProcessesAtPath -ProcessName 'cloudflared' -BinaryPath $CloudflaredBinary).Count -gt 0) {
-            return
-        }
-        Start-Sleep -Milliseconds 500
-    } while ([DateTime]::UtcNow -lt $deadline)
-    throw "cloudflared 未保持运行：$CloudflaredBinary"
 }
 
 function Get-QuickTunnelUrlFromLogs {
@@ -703,20 +602,11 @@ function Invoke-LaunchTunnel {
 }
 
 function Start-Tunnel {
-    $modeValue = (Read-TextFile -Path $TunnelModePath).ToLowerInvariant()
-    if (@('quick', 'named') -notcontains $modeValue) {
-        return
-    }
-    if (@(Get-ProcessesAtPath -ProcessName 'cloudflared' -BinaryPath $CloudflaredBinary).Count -gt 0) {
-        return
-    }
-    Write-Launchers
-    Start-HiddenLauncher -Path $CloudflaredLauncher
-    Wait-CloudflaredRunning
+    Invoke-NativeTunnelCommand -Command start
 }
 
 function Stop-Tunnel {
-    Stop-ProcessesAtPath -ProcessName 'cloudflared' -BinaryPath $CloudflaredBinary
+    Invoke-NativeTunnelCommand -Command stop
 }
 
 function Wait-QuickTunnelReady {
@@ -731,14 +621,6 @@ function Wait-QuickTunnelReady {
     throw '新的 Quick Tunnel 地址未在 45 秒内准备完成。'
 }
 
-function Preserve-NamedServerUrl {
-    $currentMode = (Read-TextFile -Path $TunnelModePath).ToLowerInvariant()
-    $currentServerUrl = Read-TextFile -Path $ServerUrlPath
-    if ($currentMode -eq 'named' -and -not [string]::IsNullOrWhiteSpace($currentServerUrl)) {
-        Write-TextAtomically -Path $NamedServerUrlPath -Value $currentServerUrl
-    }
-}
-
 function Clear-ActivePublicUrl {
     Write-TextAtomically -Path $ServerUrlPath -Value ''
     Remove-Item -LiteralPath $QuickTunnelUrlPath -Force -ErrorAction SilentlyContinue
@@ -751,77 +633,23 @@ function Set-TunnelMode {
         [string] $RequestedTokenFile
     )
 
-    if (@('none', 'quick', 'named') -notcontains $RequestedMode) {
-        throw "不支持的公网模式：$RequestedMode"
+    $arguments = @(
+        'tunnel', 'configure',
+        '--runtime-root', $RuntimeRoot,
+        '--mode', $RequestedMode,
+        '--server-url', $RequestedServerUrl
+    )
+    if (-not [string]::IsNullOrWhiteSpace($RequestedTokenFile)) {
+        $arguments += @('--token-file', $RequestedTokenFile)
     }
-    Ensure-Credentials
-    Preserve-NamedServerUrl
-
-    $normalizedServerUrl = ''
-    if ($RequestedMode -eq 'named') {
-        $candidate = $RequestedServerUrl.Trim()
-        if ([string]::IsNullOrWhiteSpace($candidate)) {
-            $candidate = Read-TextFile -Path $NamedServerUrlPath
-        }
-        $normalizedServerUrl = Normalize-HttpsOrigin -Value $candidate
-
-        $providedToken = Read-SecretFile -Path $RequestedTokenFile
-        if (-not [string]::IsNullOrWhiteSpace($providedToken)) {
-            Write-ProtectedText -Path $TunnelTokenPath -Value $providedToken -Entropy 'agentdock.cloudflare.tunnel.v1'
-        }
-        $storedToken = Read-ProtectedText -Path $TunnelTokenPath -Entropy 'agentdock.cloudflare.tunnel.v1'
-        if ([string]::IsNullOrWhiteSpace($storedToken)) {
-            throw '固定域名模式需要 Cloudflare Tunnel Token。'
-        }
-    }
-
-    Stop-Tunnel
-    $settings = Get-ControlPanelSettings
-    switch ($RequestedMode) {
-        'none' {
-            Write-TextAtomically -Path $TunnelModePath -Value 'none'
-            Clear-ActivePublicUrl
-            Remove-RunValue -Name $CloudflaredStartupValueName
-            Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'none' -PublicUrl ''
-            Write-Launchers
-            Restart-Core
-        }
-        'quick' {
-            Write-TextAtomically -Path $TunnelModePath -Value 'quick'
-            Clear-ActivePublicUrl
-            Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'none' -PublicUrl ''
-            Write-Launchers
-            Set-RunValue -Name $CloudflaredStartupValueName -Value (Get-TunnelStartupCommand)
-            Restart-Core
-            Start-Tunnel
-            [void] (Wait-QuickTunnelReady)
-        }
-        'named' {
-            Write-TextAtomically -Path $NamedServerUrlPath -Value $normalizedServerUrl
-            Write-TextAtomically -Path $ServerUrlPath -Value $normalizedServerUrl
-            Write-TextAtomically -Path $TunnelModePath -Value 'named'
-            Remove-Item -LiteralPath $QuickTunnelUrlPath -Force -ErrorAction SilentlyContinue
-            Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'named' -PublicUrl $normalizedServerUrl
-            Write-Launchers
-            Set-RunValue -Name $CloudflaredStartupValueName -Value (Get-TunnelStartupCommand)
-            Restart-Core
-            Start-Tunnel
-        }
+    & $AgentDockBinary @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "AgentDock 原生 Tunnel 配置失败，退出码：$LASTEXITCODE"
     }
 }
 
 function Regenerate-QuickTunnel {
-    $modeValue = (Read-TextFile -Path $TunnelModePath).ToLowerInvariant()
-    if ($modeValue -ne 'quick') {
-        throw '只有临时地址模式可以重新生成 Quick Tunnel。'
-    }
-    Stop-Tunnel
-    Clear-ActivePublicUrl
-    $settings = Get-ControlPanelSettings
-    Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'none' -PublicUrl ''
-    Restart-Core
-    Start-Tunnel
-    [void] (Wait-QuickTunnelReady)
+    Invoke-NativeTunnelCommand -Command regenerate
 }
 
 function Save-ControlPanelSettings {

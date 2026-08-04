@@ -82,8 +82,15 @@ func startCore(ctx context.Context, manifest Manifest, runtimeRoot string) error
 
 func stopCore(ctx context.Context, manifest Manifest) error {
 	if manifest.UsesScheduledTask() {
-		// /End 在任务未运行时可能返回非零；后续按真实进程路径核对即可。
+		// 先让任务计划程序正常结束最高权限进程，避免普通托盘立即申请 PROCESS_TERMINATE。
 		_ = runScheduledTaskCommand(ctx, "/End", "/TN", scheduledTaskPath(manifest.AgentDockTaskName))
+		stopped, err := waitBinaryStopped(ctx, manifest.AgentDockBinary, 5*time.Second)
+		if err != nil {
+			return err
+		}
+		if stopped {
+			return nil
+		}
 	}
 	if err := StopBinaryProcesses(ctx, manifest.AgentDockBinary, 15*time.Second); err != nil {
 		return fmt.Errorf("停止 AgentDock 核心失败: %w", err)

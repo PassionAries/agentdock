@@ -196,14 +196,18 @@ try {
     $runAgentDock = Get-RunValue -RegistryPath $runKey -Name $runValueName
     $runCloudflared = Get-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName
     $runTray = Get-RunValue -RegistryPath $runKey -Name $trayRunValueName
-    if (-not $runAgentDock.Contains((Join-Path $runtimeDir 'start-agentdock.ps1'))) {
-        throw 'AgentDock startup entry is incorrect.'
+    $trayPath = Join-Path $installDir 'agentdock-tray.exe'
+    if (-not $runAgentDock.Contains($trayPath) -or -not $runAgentDock.Contains('--start-core')) {
+        throw "AgentDock startup entry is not native: $runAgentDock"
     }
-    if (-not $runTray.Contains((Join-Path $installDir 'agentdock-tray.exe'))) {
-        throw 'AgentDock tray startup entry is incorrect.'
+    if (-not $runTray.Contains($trayPath) -or -not $runTray.Contains('--background')) {
+        throw "AgentDock tray startup entry is incorrect: $runTray"
     }
-    if (-not $runCloudflared.Contains((Join-Path $runtimeDir 'start-cloudflared.ps1'))) {
-        throw 'cloudflared startup entry is incorrect.'
+    if (-not $runCloudflared.Contains($trayPath) -or -not $runCloudflared.Contains('--start-tunnel')) {
+        throw "cloudflared startup entry is not native: $runCloudflared"
+    }
+    if ($runAgentDock.Contains('powershell.exe') -or $runCloudflared.Contains('powershell.exe')) {
+        throw 'Core and Tunnel startup entries must not invoke PowerShell.'
     }
 
     $authHash = (Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash
