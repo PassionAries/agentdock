@@ -25,9 +25,11 @@ public sealed class RuntimeService : IDisposable
 
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
 
-    public RuntimeService()
+    public RuntimeService(string? runtimeRoot = null)
     {
-        RuntimeRoot = ResolveRuntimeRoot();
+        RuntimeRoot = string.IsNullOrWhiteSpace(runtimeRoot)
+            ? ResolveRuntimeRoot()
+            : Path.GetFullPath(runtimeRoot);
     }
 
     public string RuntimeRoot { get; }
@@ -104,8 +106,27 @@ public sealed class RuntimeService : IDisposable
     public string ReadTunnelToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi"), TunnelTokenEntropy);
     public string ReadNexusToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "nexus-token.dpapi"), NexusTokenEntropy);
 
-    public Task RunActionAsync(string action, CancellationToken cancellationToken = default) =>
-        RunManagementScriptAsync(["-Action", action], cancellationToken);
+    public async Task RunActionAsync(string action, CancellationToken cancellationToken = default)
+    {
+        switch (action)
+        {
+            case "start":
+                await RunCoreActionAsync("start", cancellationToken);
+                await RunManagementScriptAsync(["-Action", "start-tunnel"], cancellationToken);
+                break;
+            case "stop":
+                await RunManagementScriptAsync(["-Action", "stop-tunnel"], cancellationToken);
+                await RunCoreActionAsync("stop", cancellationToken);
+                break;
+            case "restart":
+                // Quick Tunnel 重启前必须先清理旧公网地址，再重启核心并等待新地址。
+                // Tunnel 仍由兼容管理脚本编排，核心生命周期由脚本调用原生命令完成。
+                await RunManagementScriptAsync(["-Action", "restart"], cancellationToken);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(action), action, "不支持的运行时操作。");
+        }
+    }
 
     public async Task<UpdateCheckResult> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
@@ -199,10 +220,16 @@ public sealed class RuntimeService : IDisposable
         }
     }
 
-    public Task SetStartupAsync(string component, bool enabled, CancellationToken cancellationToken = default) =>
-        RunManagementScriptAsync(
-            ["-Action", "set-startup", "-Component", component, "-Enabled", enabled ? "true" : "false"],
+    public Task SetStartupAsync(string component, bool enabled, CancellationToken cancellationToken = default)
+    {
+        if (component is not ("core" or "tray"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(component), component, "不支持的开机启动组件。");
+        }
+        return RunNativeServiceAsync(
+            ["autostart", "--component", component, "--enabled", enabled ? "true" : "false"],
             cancellationToken);
+    }
 
     public async Task<UrlTestResult> TestUrlAsync(string value, CancellationToken cancellationToken = default)
     {
@@ -247,6 +274,67 @@ public sealed class RuntimeService : IDisposable
             throw new FileNotFoundException("找不到 AgentDock 核心程序，请运行 Setup.exe 修复安装。", binaryPath);
         }
         return binaryPath;
+    }
+
+    internal Task RunCoreActionAsync(string action, CancellationToken cancellationToken = default)
+    {
+        if (action is not ("start" or "stop" or "restart"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(action), action, "不支持的核心服务操作。");
+        }
+        return RunNativeServiceAsync([action], cancellationToken);
+    }
+
+    private async Task RunNativeServiceAsync(IReadOnlyCollection<string> arguments, CancellationToken cancellationToken)
+    {
+        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
+        var binaryPath = await ResolveCoreBinaryAsync(cancellationToken);
+        var commandArguments = new List<string> { "service" };
+        commandArguments.AddRange(arguments);
+        commandArguments.AddRange(["--runtime-root", RuntimeRoot]);
+
+        var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
+        foreach (var argument in commandArguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        try
+        {
+            _ = await RunProcessAsync(startInfo, cancellationToken);
+        }
+        catch (InvalidOperationException) when (
+            string.Equals(manifest.PrivilegeMode, "elevated", StringComparison.OrdinalIgnoreCase))
+        {
+            // 最高权限计划任务启动的核心进程不能保证允许普通托盘终止。
+            // 只有原生命令实际失败时才请求 UAC，普通用户安装不会出现提权提示。
+            await RunElevatedProcessAsync(binaryPath, commandArguments, cancellationToken);
+        }
+    }
+
+    private static async Task RunElevatedProcessAsync(
+        string binaryPath,
+        IReadOnlyCollection<string> arguments,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = binaryPath,
+            UseShellExecute = true,
+            Verb = "runas",
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 AgentDock 管理程序。");
+        await process.WaitForExitAsync(cancellationToken);
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"AgentDock 管理程序执行失败，退出码：{process.ExitCode}。");
+        }
     }
 
     private async Task RunManagementScriptAsync(IReadOnlyCollection<string> arguments, CancellationToken cancellationToken)

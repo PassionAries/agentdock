@@ -36,3 +36,10 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRunServiceLaunchCoreRequiresRuntimeRoot(t *testing.T) {
+	err := run(context.Background(), []string{"service", "launch-core"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "--runtime-root") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

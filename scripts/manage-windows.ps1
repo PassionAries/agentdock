@@ -5,6 +5,8 @@ param(
         'start',
         'stop',
         'restart',
+        'start-tunnel',
+        'stop-tunnel',
         'update',
         'set-mode',
         'regenerate-quick',
@@ -426,12 +428,13 @@ function Write-Launchers {
     $escapedAgentDockBinary = Escape-SingleQuoted -Value $AgentDockBinary
     $escapedCloudflaredBinary = Escape-SingleQuoted -Value $CloudflaredBinary
 
-    # 启动脚本只保留自更新识别所需的二进制和端口，其余环境变量统一由管理脚本生成。
+    # 旧版本升级仍可能由自更新逻辑识别该文件，因此暂时保留兼容启动器。
+    # 新安装和桌面端均直接调用 agentdock service；支持的旧版本淘汰后可删除此文件。
     $coreLauncher = @"
 `$ErrorActionPreference = 'Stop'
 `$env:AGENTDOCK_PORT = '$($settings.port)'
 `$agentDockBinary = '$escapedAgentDockBinary'
-& '$escapedManager' -Action launch-core -RuntimeRoot '$escapedRoot'
+& '$escapedAgentDockBinary' service launch-core --runtime-root '$escapedRoot'
 exit `$LASTEXITCODE
 "@
     Write-TextAtomically -Path $AgentDockLauncher -Value $coreLauncher
@@ -471,7 +474,7 @@ function Remove-RunValue {
 }
 
 function Get-CoreStartupCommand {
-    return "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$AgentDockLauncher`""
+    return "`"$TrayBinary`" --start-core --runtime-root `"$RuntimeRoot`""
 }
 
 function Get-TunnelStartupCommand {
@@ -581,38 +584,25 @@ function Invoke-LaunchCore {
     return $LASTEXITCODE
 }
 
+function Invoke-NativeCoreCommand {
+    param([ValidateSet('start', 'stop', 'restart')] [string] $Command)
+
+    & $AgentDockBinary service $Command --runtime-root $RuntimeRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "AgentDock 原生服务命令执行失败：$Command，退出码：$LASTEXITCODE"
+    }
+}
+
 function Start-Core {
-    $settings = Get-ControlPanelSettings
-    if (Test-AgentDockHealth -HealthPort $settings.port) {
-        return
-    }
-    Write-Launchers
-    if ($PrivilegeMode -eq 'elevated') {
-        Invoke-TaskOperation -Operation start
-    } else {
-        Start-HiddenLauncher -Path $AgentDockLauncher
-    }
-    Wait-AgentDockHealth -HealthPort $settings.port
+    Invoke-NativeCoreCommand -Command start
 }
 
 function Stop-Core {
-    if ($PrivilegeMode -eq 'elevated') {
-        Invoke-TaskOperation -Operation stop
-        Start-Sleep -Milliseconds 500
-    }
-    try {
-        Stop-ProcessesAtPath -ProcessName 'agentdock' -BinaryPath $AgentDockBinary
-    } catch {
-        if ($PrivilegeMode -ne 'elevated' -or (Test-IsAdministrator)) {
-            throw
-        }
-        Invoke-ElevatedManagerAction -InternalAction 'task-stop'
-    }
+    Invoke-NativeCoreCommand -Command stop
 }
 
 function Restart-Core {
-    Stop-Core
-    Start-Core
+    Invoke-NativeCoreCommand -Command restart
 }
 
 function Wait-CloudflaredRunning {
@@ -885,31 +875,13 @@ function Set-ComponentStartup {
         [bool] $ShouldEnable
     )
 
-    Write-Launchers
-    switch ($TargetComponent) {
-        'core' {
-            if ($PrivilegeMode -eq 'elevated') {
-                Set-TaskStartupState -ShouldEnable $ShouldEnable
-            } elseif ($ShouldEnable) {
-                Set-RunValue -Name $CoreStartupValueName -Value (Get-CoreStartupCommand)
-            } else {
-                Remove-RunValue -Name $CoreStartupValueName
-            }
-        }
-        'tray' {
-            if ($ShouldEnable) {
-                Set-RunValue -Name $TrayStartupValueName -Value (Get-TrayStartupCommand)
-                if ((Test-Path -LiteralPath $TrayBinary -PathType Leaf) -and
-                    @(Get-ProcessesAtPath -ProcessName 'agentdock-tray' -BinaryPath $TrayBinary).Count -eq 0) {
-                    Start-Process -FilePath $TrayBinary -ArgumentList '--background' | Out-Null
-                }
-            } else {
-                Remove-RunValue -Name $TrayStartupValueName
-            }
-        }
-        default {
-            throw "不支持的开机启动组件：$TargetComponent"
-        }
+    $enabledValue = $ShouldEnable.ToString().ToLowerInvariant()
+    & $AgentDockBinary service autostart `
+        --runtime-root $RuntimeRoot `
+        --component $TargetComponent `
+        --enabled $enabledValue
+    if ($LASTEXITCODE -ne 0) {
+        throw "AgentDock 原生开机启动命令执行失败，退出码：$LASTEXITCODE"
     }
 }
 
@@ -977,6 +949,12 @@ switch ($Action) {
     }
     'restart' {
         Restart-AgentDockRuntime
+    }
+    'start-tunnel' {
+        Start-Tunnel
+    }
+    'stop-tunnel' {
+        Stop-Tunnel
     }
     'update' {
         if (-not (Test-Path -LiteralPath $AgentDockBinary -PathType Leaf)) {

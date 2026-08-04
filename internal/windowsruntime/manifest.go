@@ -13,19 +13,25 @@ import (
 const SchemaVersion = 1
 
 type Manifest struct {
-	SchemaVersion       int    `json:"schema_version"`
-	AgentDockBinary     string `json:"agentdock_binary"`
-	TrayBinary          string `json:"tray_binary,omitempty"`
-	AgentDockLauncher   string `json:"agentdock_launcher,omitempty"`
-	AgentDockTaskName   string `json:"agentdock_task_name,omitempty"`
-	PrivilegeMode       string `json:"privilege_mode,omitempty"`
-	CloudflaredLauncher string `json:"cloudflared_launcher,omitempty"`
-	Host                string `json:"host"`
-	Port                int    `json:"port"`
-	LocalMCPURL         string `json:"local_mcp_url"`
-	TunnelMode          string `json:"tunnel_mode"`
-	PublicURL           string `json:"public_url,omitempty"`
-	InstallChannel      string `json:"install_channel"`
+	SchemaVersion               int    `json:"schema_version"`
+	Version                     string `json:"version,omitempty"`
+	InstallRoot                 string `json:"install_root,omitempty"`
+	AgentDockBinary             string `json:"agentdock_binary"`
+	TrayBinary                  string `json:"tray_binary,omitempty"`
+	AgentDockLauncher           string `json:"agentdock_launcher,omitempty"`
+	AgentDockTaskName           string `json:"agentdock_task_name,omitempty"`
+	PrivilegeMode               string `json:"privilege_mode,omitempty"`
+	CloudflaredBinary           string `json:"cloudflared_binary,omitempty"`
+	CloudflaredLauncher         string `json:"cloudflared_launcher,omitempty"`
+	StartupValueName            string `json:"startup_value_name,omitempty"`
+	TrayStartupValueName        string `json:"tray_startup_value_name,omitempty"`
+	CloudflaredStartupValueName string `json:"cloudflared_startup_value_name,omitempty"`
+	Host                        string `json:"host"`
+	Port                        int    `json:"port"`
+	LocalMCPURL                 string `json:"local_mcp_url"`
+	TunnelMode                  string `json:"tunnel_mode"`
+	PublicURL                   string `json:"public_url,omitempty"`
+	InstallChannel              string `json:"install_channel"`
 }
 
 func PathForBinary(binaryPath string) string {

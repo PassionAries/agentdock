@@ -29,6 +29,7 @@ param(
     [string] $TaskAdminAction = 'none',
     [string] $TaskBackupDirectory = '',
     [string] $TaskLauncherPath = '',
+    [string] $TaskRuntimeRoot = '',
     [string] $TaskUserSid = '',
     [string] $TaskUserName = ''
 )
@@ -603,19 +604,20 @@ function Set-AgentDockTaskSecurity {
 function New-ElevatedAgentDockScheduledTask {
     param(
         [string] $LauncherPath,
+        [string] $RuntimeRoot,
         [string] $UserSid,
         [string] $UserName
     )
 
     if ([string]::IsNullOrWhiteSpace($LauncherPath) -or
+        [string]::IsNullOrWhiteSpace($RuntimeRoot) -or
         [string]::IsNullOrWhiteSpace($UserSid) -or
         [string]::IsNullOrWhiteSpace($UserName)) {
         throw 'Elevated AgentDock task configuration is incomplete.'
     }
 
-    $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $taskArguments = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$LauncherPath`""
-    $action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $taskArguments
+    $taskArguments = "--start-core --runtime-root `"$RuntimeRoot`""
+    $action = New-ScheduledTaskAction -Execute $LauncherPath -Argument $taskArguments
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserName
     $principal = New-ScheduledTaskPrincipal `
         -UserId $UserSid `
@@ -650,6 +652,7 @@ function Invoke-AgentDockTaskAdminAction {
         [string] $Action,
         [string] $BackupDirectory,
         [string] $LauncherPath,
+        [string] $RuntimeRoot,
         [string] $UserSid,
         [string] $UserName
     )
@@ -675,6 +678,7 @@ function Invoke-AgentDockTaskAdminAction {
         try {
             New-ElevatedAgentDockScheduledTask `
                 -LauncherPath $LauncherPath `
+                -RuntimeRoot $RuntimeRoot `
                 -UserSid $UserSid `
                 -UserName $UserName
         } catch {
@@ -694,6 +698,7 @@ function Start-ElevatedAgentDockTaskAction {
         [string] $Action,
         [string] $BackupDirectory,
         [string] $LauncherPath,
+        [string] $RuntimeRoot,
         [pscustomobject] $TaskUser
     )
 
@@ -706,6 +711,9 @@ function Start-ElevatedAgentDockTaskAction {
     }
     if (-not [string]::IsNullOrWhiteSpace($LauncherPath)) {
         $arguments += " -TaskLauncherPath `"$LauncherPath`""
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+        $arguments += " -TaskRuntimeRoot `"$RuntimeRoot`""
     }
     if ($null -ne $TaskUser) {
         $arguments += " -TaskUserSid `"$($TaskUser.Sid)`" -TaskUserName `"$($TaskUser.Name)`""
@@ -1009,6 +1017,7 @@ if ($TaskAdminAction -ne 'none') {
         -Action $TaskAdminAction `
         -BackupDirectory $TaskBackupDirectory `
         -LauncherPath $TaskLauncherPath `
+        -RuntimeRoot $TaskRuntimeRoot `
         -UserSid $TaskUserSid `
         -UserName $TaskUserName
     return
@@ -1202,7 +1211,8 @@ try {
         Start-ElevatedAgentDockTaskAction `
             -Action $taskAction `
             -BackupDirectory $taskBackupDirectory `
-            -LauncherPath $launcherPath `
+            -LauncherPath $destinationTrayBinary `
+            -RuntimeRoot $runtimeDir `
             -TaskUser $taskUser
         $taskTransactionPrepared = $true
         Write-Host "Prepared AgentDock scheduled task transaction: $taskAction"
@@ -1325,40 +1335,13 @@ try {
             Remove-Item -LiteralPath $quickTunnelUrlPath -Force -ErrorAction SilentlyContinue
         }
 
-        $escapedTokenPath = $tokenPath.Replace("'", "''")
-        $escapedOAuthPasswordPath = $oauthPasswordPath.Replace("'", "''")
-        $escapedOAuthTokenSecretPath = $oauthTokenSecretPath.Replace("'", "''")
-        $escapedServerUrlPath = $serverUrlPath.Replace("'", "''")
         $escapedBinaryPath = $destinationBinary.Replace("'", "''")
+        $escapedRuntimeDir = $runtimeDir.Replace("'", "''")
+        # Keep the compatibility launcher only for legacy updates and rollback. New startup entries use the WinExe tray proxy.
         $launcher = @"
 `$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Security
-function Read-ProtectedValue {
-    param([string] `$Path, [string] `$Entropy)
-    `$protectedBytes = [Convert]::FromBase64String([IO.File]::ReadAllText(`$Path).Trim())
-    `$plainBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
-        `$protectedBytes,
-        [Text.Encoding]::UTF8.GetBytes(`$Entropy),
-        [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-    )
-    return [Text.Encoding]::UTF8.GetString(`$plainBytes)
-}
-`$env:AGENTDOCK_AUTH_TOKEN = Read-ProtectedValue -Path '$escapedTokenPath' -Entropy 'agentdock.startup.v1'
-`$env:AGENTDOCK_HOST = '127.0.0.1'
-`$env:AGENTDOCK_PORT = '$Port'
-`$serverUrl = ''
-if (Test-Path -LiteralPath '$escapedServerUrlPath' -PathType Leaf) {
-    `$serverUrl = [IO.File]::ReadAllText('$escapedServerUrlPath').Trim()
-}
-if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
-    (Test-Path -LiteralPath '$escapedOAuthPasswordPath' -PathType Leaf) -and
-    (Test-Path -LiteralPath '$escapedOAuthTokenSecretPath' -PathType Leaf)) {
-    `$env:AGENTDOCK_SERVER_URL = `$serverUrl
-    `$env:AGENTDOCK_OAUTH_ENABLED = 'true'
-    `$env:AGENTDOCK_OAUTH_PASSWORD = Read-ProtectedValue -Path '$escapedOAuthPasswordPath' -Entropy 'agentdock.oauth.password.v1'
-    `$env:AGENTDOCK_OAUTH_TOKEN_SECRET = Read-ProtectedValue -Path '$escapedOAuthTokenSecretPath' -Entropy 'agentdock.oauth.secret.v1'
-}
-& '$escapedBinaryPath'
+& '$escapedBinaryPath' service launch-core --runtime-root '$escapedRuntimeDir'
+exit `$LASTEXITCODE
 "@
         [IO.File]::WriteAllText($launcherPath, $launcher, $Utf8NoBom)
 
@@ -1367,9 +1350,12 @@ if (-not [string]::IsNullOrWhiteSpace(`$serverUrl) -and
             Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             Enable-And-StartAgentDockTask
         } else {
-            $startupCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcherPath`""
+            $startupCommand = "`"$destinationTrayBinary`" --start-core --runtime-root `"$runtimeDir`""
             New-ItemProperty -Path $runKey -Name $runValueName -Value $startupCommand -PropertyType String -Force | Out-Null
-            Start-AgentDockLauncher -LauncherPath $launcherPath
+            & $destinationBinary service start --runtime-root $runtimeDir
+            if ($LASTEXITCODE -ne 0) {
+                throw "AgentDock native service start failed with exit code $LASTEXITCODE."
+            }
         }
         $startupRegistrationChanged = $true
         $trayStartupCommand = "`"$destinationTrayBinary`" --background"
@@ -1597,9 +1583,12 @@ exit `$process.ExitCode
         $trayStartupRegistrationChanged = $true
     }
 
-    $mustRestartExistingProcess = (-not $RegisterStartup) -and $processWasRunning -and (Test-Path -LiteralPath $launcherPath -PathType Leaf)
+    $mustRestartExistingProcess = (-not $RegisterStartup) -and $processWasRunning
     if ($mustRestartExistingProcess) {
-        Start-AgentDockLauncher -LauncherPath $launcherPath
+        & $destinationBinary service start --runtime-root $runtimeDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "AgentDock native service restart failed with exit code $LASTEXITCODE."
+        }
     }
 
     $localMCPUrl = "http://127.0.0.1:$Port/mcp"

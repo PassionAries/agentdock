@@ -17,6 +17,10 @@ func TestLoadForBinary(t *testing.T) {
   "agentdock_binary": "` + filepath.ToSlash(binary) + `",
   "tray_binary": "` + filepath.ToSlash(filepath.Join(root, "bin", "agentdock-tray.exe")) + `",
   "agentdock_launcher": "` + filepath.ToSlash(filepath.Join(root, "start-agentdock.ps1")) + `",
+  "cloudflared_binary": "` + filepath.ToSlash(filepath.Join(root, "bin", "cloudflared.exe")) + `",
+  "startup_value_name": "AgentDockCore",
+  "tray_startup_value_name": "AgentDockTray",
+  "cloudflared_startup_value_name": "AgentDockCloudflared",
   "host": "127.0.0.1",
   "port": 8765,
   "local_mcp_url": "http://127.0.0.1:8765/mcp",
@@ -32,6 +36,12 @@ func TestLoadForBinary(t *testing.T) {
 	}
 	if got := loaded.HealthURL(); got != "http://127.0.0.1:8765/healthz" {
 		t.Fatalf("unexpected health URL: %s", got)
+	}
+	if loaded.StartupValueName != "AgentDockCore" || loaded.TrayStartupValueName != "AgentDockTray" {
+		t.Fatalf("startup names were not loaded: %#v", loaded)
+	}
+	if got := filepath.Base(loaded.CloudflaredBinary); got != "cloudflared.exe" {
+		t.Fatalf("unexpected cloudflared binary: %s", got)
 	}
 }
 

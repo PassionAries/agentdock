@@ -39,6 +39,14 @@ public partial class App : System.Windows.Application
     {
         // 使用稳定的 AppUserModelID，避免升级后任务栏沿用旧版本的隐式图标缓存。
         _ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+        base.OnStartup(e);
+
+        if (TryGetCoreStartupRuntimeRoot(e.Args, out var runtimeRoot))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = StartCoreAndExitAsync(runtimeRoot);
+            return;
+        }
 
         _singleInstanceMutex = new Mutex(true, MutexName, out var createdNew);
         _ownsSingleInstanceMutex = createdNew;
@@ -50,7 +58,6 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         Runtime = new RuntimeService();
         ControlPanelWindow = new MainWindow(Runtime);
@@ -63,6 +70,57 @@ public partial class App : System.Windows.Application
         if (!background)
         {
             ShowControlPanel();
+        }
+    }
+
+    private static bool TryGetCoreStartupRuntimeRoot(string[] arguments, out string runtimeRoot)
+    {
+        runtimeRoot = "";
+        if (!arguments.Any(argument => string.Equals(argument, "--start-core", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < arguments.Length - 1; index++)
+        {
+            if (string.Equals(arguments[index], "--runtime-root", StringComparison.OrdinalIgnoreCase))
+            {
+                runtimeRoot = arguments[index + 1];
+                break;
+            }
+        }
+        return !string.IsNullOrWhiteSpace(runtimeRoot);
+    }
+
+    private async Task StartCoreAndExitAsync(string runtimeRoot)
+    {
+        try
+        {
+            using var runtime = new RuntimeService(runtimeRoot);
+            await runtime.RunCoreActionAsync("start");
+        }
+        catch (Exception ex)
+        {
+            RecordBackgroundStartupFailure(runtimeRoot, ex);
+        }
+        finally
+        {
+            Shutdown();
+        }
+    }
+
+    private static void RecordBackgroundStartupFailure(string runtimeRoot, Exception exception)
+    {
+        try
+        {
+            var logsDirectory = Path.Combine(runtimeRoot, "logs");
+            Directory.CreateDirectory(logsDirectory);
+            var message = $"{DateTimeOffset.Now:O} core startup failed: {exception.Message}{Environment.NewLine}";
+            File.AppendAllText(Path.Combine(logsDirectory, "control-panel.err.log"), message, new System.Text.UTF8Encoding(false));
+        }
+        catch
+        {
+            // 登录启动必须静默退出；无法写日志时不再制造第二个失败窗口。
         }
     }
 

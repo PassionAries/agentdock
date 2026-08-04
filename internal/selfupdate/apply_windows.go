@@ -31,6 +31,7 @@ type windowsUpdatePlan struct {
 	CurrentVersion string   `json:"current_version"`
 	TargetVersion  string   `json:"target_version"`
 	RestartMode    string   `json:"restart_mode"`
+	RuntimeRoot    string   `json:"runtime_root,omitempty"`
 	LauncherPath   string   `json:"launcher_path,omitempty"`
 	TaskName       string   `json:"task_name,omitempty"`
 	HealthURLs     []string `json:"health_urls,omitempty"`
@@ -63,15 +64,18 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 	}
 
 	restartMode := "none"
-	launcherPath := filepath.Join(filepath.Dir(filepath.Dir(request.CurrentPath)), "start-agentdock.ps1")
+	runtimeRoot := filepath.Dir(filepath.Dir(request.CurrentPath))
+	launcherPath := filepath.Join(runtimeRoot, "start-agentdock.ps1")
 	taskName := ""
+	manifest, manifestErr := windowsruntime.LoadForBinary(request.CurrentPath)
 	if serviceManagesTarget(ctx, request.CurrentPath) {
 		restartMode = "service"
-	} else if manifest, err := windowsruntime.LoadForBinary(request.CurrentPath); err == nil &&
-		manifest.UsesScheduledTask() && scheduledTaskManagesTarget(ctx, manifest.AgentDockTaskName, manifest.AgentDockLauncher) {
+	} else if manifestErr == nil && manifest.UsesScheduledTask() &&
+		scheduledTaskManagesTarget(ctx, manifest.AgentDockTaskName, manifest.TrayBinary) {
 		restartMode = "task"
 		taskName = manifest.AgentDockTaskName
-		launcherPath = manifest.AgentDockLauncher
+	} else if manifestErr == nil && nativeStartupManagesTarget(ctx, manifest, runtimeRoot) {
+		restartMode = "native"
 	} else if launcherManagesTarget(ctx, launcherPath, request.CurrentPath) {
 		restartMode = "launcher"
 	}
@@ -87,6 +91,7 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 		CurrentVersion: request.CurrentVersion,
 		TargetVersion:  request.TargetVersion,
 		RestartMode:    restartMode,
+		RuntimeRoot:    runtimeRoot,
 		LauncherPath:   launcherPath,
 		TaskName:       taskName,
 		HealthURLs:     healthURLs,
@@ -163,7 +168,7 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 		// executable while it is being replaced.
 		_ = runWindowsCommand(ctx, "schtasks.exe", "/End", "/TN", `\`+plan.TaskName)
 	}
-	if err := stopWindowsProcessesAtPath(ctx, plan.TargetPath); err != nil {
+	if err := windowsruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second); err != nil {
 		return fmt.Errorf("停止旧 AgentDock 进程失败: %w", err)
 	}
 
@@ -190,7 +195,7 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 	}
 
 	rollback := func(cause error) error {
-		_ = stopWindowsProcessesAtPath(ctx, plan.TargetPath)
+		_ = windowsruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second)
 		if err := moveFileReplace(backupPath, plan.TargetPath); err != nil {
 			return fmt.Errorf("%v；自动恢复 Windows 旧版本失败: %w", cause, err)
 		}
@@ -273,6 +278,33 @@ func launcherManagesTarget(ctx context.Context, launcherPath, targetPath string)
 	return strings.Contains(strings.ToLower(string(output)), strings.ToLower(filepath.Clean(launcherPath)))
 }
 
+func nativeStartupManagesTarget(ctx context.Context, manifest windowsruntime.Manifest, runtimeRoot string) bool {
+	if strings.TrimSpace(manifest.TrayBinary) == "" {
+		return false
+	}
+	valueName := strings.TrimSpace(manifest.StartupValueName)
+	if valueName == "" {
+		valueName = "AgentDock"
+	}
+	output, err := exec.CommandContext(
+		ctx,
+		"reg.exe",
+		"query",
+		`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
+		"/v",
+		valueName,
+	).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	normalized := strings.ToLower(strings.ReplaceAll(string(output), "/", `\`))
+	trayPath := strings.ToLower(strings.ReplaceAll(filepath.Clean(manifest.TrayBinary), "/", `\`))
+	rootPath := strings.ToLower(strings.ReplaceAll(filepath.Clean(runtimeRoot), "/", `\`))
+	return strings.Contains(normalized, trayPath) &&
+		strings.Contains(normalized, "--start-core") &&
+		strings.Contains(normalized, rootPath)
+}
+
 func scheduledTaskManagesTarget(ctx context.Context, taskName, launcherPath string) bool {
 	if strings.TrimSpace(taskName) == "" || strings.TrimSpace(launcherPath) == "" {
 		return false
@@ -311,6 +343,14 @@ func restartWindowsMode(ctx context.Context, plan windowsUpdatePlan) error {
 			return fmt.Errorf("启动 Windows AgentDock 计划任务失败: %w", err)
 		}
 		return nil
+	case "native":
+		if strings.TrimSpace(plan.RuntimeRoot) == "" {
+			return errors.New("Windows 原生启动计划缺少运行目录")
+		}
+		if err := runWindowsCommand(ctx, plan.TargetPath, "service", "start", "--runtime-root", plan.RuntimeRoot); err != nil {
+			return fmt.Errorf("通过原生服务命令启动 Windows AgentDock 失败: %w", err)
+		}
+		return nil
 	case "launcher":
 		if _, err := os.Stat(plan.LauncherPath); err != nil {
 			return fmt.Errorf("Windows 启动脚本不可用: %w", err)
@@ -326,25 +366,6 @@ func restartWindowsMode(ctx context.Context, plan windowsUpdatePlan) error {
 	default:
 		return fmt.Errorf("未知 Windows 重启模式: %s", plan.RestartMode)
 	}
-}
-
-func stopWindowsProcessesAtPath(ctx context.Context, targetPath string) error {
-	escapedPath := strings.ReplaceAll(filepath.Clean(targetPath), "'", "''")
-	script := fmt.Sprintf(`$target=[IO.Path]::GetFullPath('%s'); Get-Process -Name agentdock -ErrorAction SilentlyContinue | ForEach-Object { try { if ([IO.Path]::GetFullPath($_.Path) -eq $target) { Stop-Process -Id $_.Id -Force } } catch {} }`, escapedPath)
-	command := exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		check := fmt.Sprintf(`$target=[IO.Path]::GetFullPath('%s'); $found=$false; Get-Process -Name agentdock -ErrorAction SilentlyContinue | ForEach-Object { try { if ([IO.Path]::GetFullPath($_.Path) -eq $target) { $found=$true } } catch {} }; if ($found) { exit 1 }`, escapedPath)
-		if exec.CommandContext(ctx, "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", check).Run() == nil {
-			return nil
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	return errors.New("旧 AgentDock 进程在 15 秒内未退出")
 }
 
 func waitForWindowsProcessExit(pid int, timeout time.Duration) error {

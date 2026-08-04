@@ -23,6 +23,7 @@ import (
 	skills "github.com/uvwt/agentdock/internal/skill"
 	skillbundle "github.com/uvwt/agentdock/internal/skill/bundle"
 	skillstate "github.com/uvwt/agentdock/internal/skill/state"
+	"github.com/uvwt/agentdock/internal/windowsruntime"
 )
 
 func main() {
@@ -56,10 +57,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			return errors.New("用法：agentdock update [--check]")
 		}
 	}
+	if len(args) > 0 && args[0] == "service" {
+		return runServiceCommand(ctx, args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "skill" {
 		return runSkillCommand(ctx, args[1:], stdout, stderr)
 	}
 	return runServer(ctx, args, stderr)
+}
+
+func runServiceCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "launch-core" {
+		flags := flag.NewFlagSet("agentdock service launch-core", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		runtimeRoot := flags.String("runtime-root", "", "AgentDock 桌面运行目录")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 || strings.TrimSpace(*runtimeRoot) == "" {
+			return errors.New("用法：agentdock service launch-core --runtime-root <目录>")
+		}
+		// launch-core 是桌面安装内部入口：先由原生代码恢复配置与 DPAPI 凭据，
+		// 再在当前进程直接运行服务，避免 PowerShell 启动脚本长期参与运行链路。
+		if err := windowsruntime.PrepareCoreEnvironment(*runtimeRoot); err != nil {
+			return err
+		}
+		return runServer(ctx, nil, stderr)
+	}
+	return windowsruntime.RunServiceCommand(ctx, args, stdout, stderr)
 }
 
 func runSkillCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -126,6 +151,7 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "  agentdock [服务参数]")
 		fmt.Fprintln(stderr, "  agentdock --version")
 		fmt.Fprintln(stderr, "  agentdock update [--check]")
+		fmt.Fprintln(stderr, "  agentdock service <status|start|stop|restart|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock skill bootstrap --bundle <目录>")
 		fmt.Fprintln(stderr, "\n服务参数：")
 		flags.PrintDefaults()

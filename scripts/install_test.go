@@ -244,7 +244,11 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
 		"New-ItemProperty -Path $runKey -Name $runValueName",
 		"New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName",
-		"Start-AgentDockLauncher -LauncherPath $launcherPath",
+		"service launch-core --runtime-root",
+		"--start-core --runtime-root",
+		"& $destinationBinary service start --runtime-root $runtimeDir",
+		"New-ScheduledTaskAction -Execute $LauncherPath",
+		"[string] $TaskRuntimeRoot = ''",
 		"Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath",
 		"Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)",
 		"Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl",
@@ -256,8 +260,6 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"RedirectStandardOutput = '$escapedCloudflaredStdoutLogPath'",
 		"RedirectStandardError = '$escapedCloudflaredStderrLogPath'",
 		"RuntimeInformation]::OSArchitecture",
-		"$env:AGENTDOCK_OAUTH_ENABLED = 'true'",
-		"$env:AGENTDOCK_SERVER_URL = `$serverUrl",
 		"Authentication: Bearer Token and OAuth are both enabled.",
 		"$coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)",
 		"-ErrorCode $installErrorCode",
@@ -278,8 +280,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 
 	const securityAssemblyLoad = "Add-Type -AssemblyName System.Security"
-	if got := strings.Count(script, securityAssemblyLoad); got != 3 {
-		t.Fatalf("install.ps1 must load System.Security in the installer and both generated launchers; got %d occurrences", got)
+	if got := strings.Count(script, securityAssemblyLoad); got != 2 {
+		t.Fatalf("install.ps1 must load System.Security in the installer and generated tunnel launcher; got %d occurrences", got)
 	}
 	if !strings.Contains(script, "-Verb RunAs") {
 		t.Fatal("Windows installer must elevate only the scheduled-task helper")
@@ -341,6 +343,8 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 		"'regenerate-quick'",
 		"'save-settings'",
 		"'set-startup'",
+		"'start-tunnel'",
+		"'stop-tunnel'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("manage-windows.ps1 missing %q", want)
