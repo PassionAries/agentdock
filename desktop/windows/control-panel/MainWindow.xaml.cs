@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
 using Application = System.Windows.Application;
 using Clipboard = System.Windows.Clipboard;
 using Color = System.Windows.Media.Color;
@@ -14,7 +13,6 @@ namespace AgentDock.ControlPanel;
 public partial class MainWindow : Window
 {
     private readonly RuntimeService _runtime;
-    private readonly DispatcherTimer _refreshTimer;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly Dictionary<PasswordBox, Stack<string>> _passwordHistory = new();
     private RuntimeSnapshot? _snapshot;
@@ -31,13 +29,6 @@ public partial class MainWindow : Window
     {
         _runtime = runtime;
         InitializeComponent();
-        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        _refreshTimer.Tick += async (_, _) => await RefreshAsync();
-        Loaded += async (_, _) =>
-        {
-            _refreshTimer.Start();
-            await RefreshAsync();
-        };
         Closing += MainWindow_Closing;
     }
 
