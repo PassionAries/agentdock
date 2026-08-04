@@ -1,0 +1,157 @@
+//go:build windows
+
+package desktopruntime
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/uvwt/agentdock/internal/fs/atomicfile"
+)
+
+type fileSnapshot struct {
+	path   string
+	data   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+func snapshotFile(path string) (fileSnapshot, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return fileSnapshot{path: path}, nil
+	}
+	if err != nil {
+		return fileSnapshot{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return fileSnapshot{}, fmt.Errorf("配置文件不是普通文件: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fileSnapshot{}, err
+	}
+	return fileSnapshot{path: path, data: data, mode: info.Mode().Perm(), exists: true}, nil
+}
+
+func restoreSnapshots(snapshots []fileSnapshot) error {
+	var restoreErr error
+	for _, snapshot := range snapshots {
+		if snapshot.exists {
+			mode := snapshot.mode
+			if mode == 0 {
+				mode = 0o600
+			}
+			if err := atomicfile.Write(snapshot.path, snapshot.data, mode); err != nil {
+				restoreErr = errors.Join(restoreErr, err)
+			}
+		} else if err := os.Remove(snapshot.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			restoreErr = errors.Join(restoreErr, err)
+		}
+	}
+	return restoreErr
+}
+
+func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) error {
+	runtime, err := loadTunnelRuntime(request.RuntimeRoot)
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(runtime.root, "control-panel-settings.json")
+	nexusTokenPath := filepath.Join(runtime.root, "nexus-token.dpapi")
+	snapshotPaths := []string{
+		settingsPath,
+		nexusTokenPath,
+		runtime.files.manifest,
+		runtime.files.serverURL,
+		runtime.files.quickURL,
+	}
+	snapshots := make([]fileSnapshot, 0, len(snapshotPaths))
+	for _, path := range snapshotPaths {
+		snapshot, snapshotErr := snapshotFile(path)
+		if snapshotErr != nil {
+			return fmt.Errorf("备份配置失败: %w", snapshotErr)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+
+	if err := stopTunnel(ctx, runtime); err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		restoreErr := restoreSnapshots(snapshots)
+		oldRuntime, loadErr := loadTunnelRuntime(request.RuntimeRoot)
+		if loadErr == nil {
+			_ = platformServiceAction(ctx, oldRuntime.root, "restart")
+			if oldRuntime.mode != "none" {
+				_ = startTunnel(ctx, oldRuntime)
+			}
+		}
+		if restoreErr != nil {
+			return fmt.Errorf("%w；同时恢复配置失败: %v", cause, restoreErr)
+		}
+		return cause
+	}
+
+	settings := controlPanelSettings{
+		Port:             request.Port,
+		LogLevel:         request.LogLevel,
+		NexusEndpoint:    request.NexusEndpoint,
+		BrowserEnabled:   request.BrowserEnabled,
+		BrowserRunnerDir: request.BrowserRunnerDir,
+		BrowserNodePath:  request.BrowserNodePath,
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return rollback(err)
+	}
+	data = append(data, '\n')
+	if err := atomicfile.Write(settingsPath, data, 0o600); err != nil {
+		return rollback(fmt.Errorf("保存控制面板设置失败: %w", err))
+	}
+
+	if request.NexusTokenFile != "" {
+		token, tokenErr := readSecretFile(request.NexusTokenFile)
+		if tokenErr != nil {
+			return rollback(tokenErr)
+		}
+		if strings.TrimSpace(token) != "" {
+			if err := writeProtectedText(nexusTokenPath, token, "agentdock.nexus.token.v1"); err != nil {
+				return rollback(fmt.Errorf("保存 Nexus Token 失败: %w", err))
+			}
+		}
+	}
+
+	runtime.settings = settings
+	publicURL := ""
+	manifestMode := runtime.mode
+	switch runtime.mode {
+	case "quick":
+		if err := clearActivePublicURL(runtime.files); err != nil {
+			return rollback(err)
+		}
+		manifestMode = "none"
+	case "named":
+		publicURL, err = readTrimmedText(runtime.files.namedServerURL)
+		if err != nil {
+			return rollback(err)
+		}
+	}
+	if err := runtime.updateManifest(manifestMode, publicURL); err != nil {
+		return rollback(err)
+	}
+	if err := platformServiceAction(ctx, runtime.root, "restart"); err != nil {
+		return rollback(err)
+	}
+	if runtime.mode != "none" {
+		if err := startTunnel(ctx, runtime); err != nil {
+			return rollback(err)
+		}
+	}
+	return nil
+}

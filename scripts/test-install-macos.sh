@@ -123,7 +123,7 @@ test -d "$app_support"
 test -d "$log_dir"
 test "$(mode_of "$app_support")" = "700"
 test "$(mode_of "$agentdock_env")" = "600"
-test "$(mode_of "$start_script")" = "700"
+test ! -e "$start_script"
 test "$(mode_of "$log_dir")" = "700"
 test "$(mode_of "$log_dir/agentdock.out.log")" = "600"
 test "$(mode_of "$log_dir/agentdock.err.log")" = "600"
@@ -131,12 +131,12 @@ test "$(mode_of "$log_dir/agentdock.err.log")" = "600"
 assert_file_contains "$agentdock_env" 'AGENTDOCK_HOST=127.0.0.1'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_PORT=18766'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_AUTH_TOKEN=initial\ token\ with\ spaces'
-assert_file_contains "$start_script" 'USER_HOME="$HOME"'
-assert_file_contains "$start_script" 'export HOME="$USER_HOME"'
-assert_file_contains "$start_script" 'exec "$USER_HOME/.local/bin/agentdock"'
-assert_file_contains "$start_script" 'source "$AGENTDOCK_ENV"'
 plutil -lint "$plist" >/dev/null
-test "$(plutil -extract ProgramArguments.0 raw -o - "$plist")" = "$start_script"
+test "$(plutil -extract ProgramArguments.0 raw -o - "$plist")" = "$binary"
+test "$(plutil -extract ProgramArguments.1 raw -o - "$plist")" = "service"
+test "$(plutil -extract ProgramArguments.2 raw -o - "$plist")" = "launch-core"
+test "$(plutil -extract ProgramArguments.3 raw -o - "$plist")" = "--runtime-root"
+test "$(plutil -extract ProgramArguments.4 raw -o - "$plist")" = "$app_support"
 test "$(plutil -extract WorkingDirectory raw -o - "$plist")" = "$work_dir"
 test "$(plutil -extract StandardOutPath raw -o - "$plist")" = "$log_dir/agentdock.out.log"
 test "$(plutil -extract StandardErrorPath raw -o - "$plist")" = "$log_dir/agentdock.err.log"
@@ -324,14 +324,18 @@ test -x "$home_dir/.local/bin/cloudflared"
 test ! -L "$home_dir/.local/bin/cloudflared"
 cmp "$fake_cloudflared" "$home_dir/.local/bin/cloudflared"
 test "$(mode_of "$tunnel_env")" = "600"
-test "$(mode_of "$tunnel_start")" = "700"
+test ! -e "$tunnel_start"
 assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=named'
 assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_SERVER_URL=https://agent.example.test'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_OAUTH_ENABLED=true'
 assert_file_not_contains "$agentdock_env" 'named-token-value'
-assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate run'
 plutil -lint "$tunnel_plist" >/dev/null
+test "$(plutil -extract ProgramArguments.0 raw -o - "$tunnel_plist")" = "$binary"
+test "$(plutil -extract ProgramArguments.1 raw -o - "$tunnel_plist")" = "tunnel"
+test "$(plutil -extract ProgramArguments.2 raw -o - "$tunnel_plist")" = "launch"
+test "$(plutil -extract ProgramArguments.3 raw -o - "$tunnel_plist")" = "--runtime-root"
+test "$(plutil -extract ProgramArguments.4 raw -o - "$tunnel_plist")" = "$app_support"
 named_oauth_password="$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)"
 named_oauth_secret="$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)"
 (( ${#named_oauth_password} >= 12 ))
@@ -368,13 +372,8 @@ assert_file_contains "$agentdock_env" 'AGENTDOCK_OAUTH_ENABLED=false'
 test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)" = "$named_oauth_password"
 test "$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)" = "$named_oauth_secret"
 assert_file_not_contains "$tunnel_env" 'named-token-value'
-assert_file_contains "$tunnel_start" 'tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET"'
-assert_file_contains "$tunnel_start" 'write_quick_public_auth "$public_url"'
-assert_file_contains "$tunnel_start" '"$LAUNCHCTL_BIN" kickstart -k "$domain/$AGENTDOCK_LABEL"'
-assert_file_contains "$tunnel_start" 'QUICK_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"'
-assert_file_contains "$tunnel_start" 'QUICK_LOG="$LOG_DIR/cloudflared-quick-current.log"'
 
-# 真实执行登录后 Quick Tunnel 启动脚本：新地址必须原子回写、健康验证后发布，已有凭据不得轮换。
+# 真实执行登录后原生 Quick Tunnel 入口：新地址必须原子回写、健康验证后发布，已有凭据不得轮换。
 quick_runtime_home="$TMP_ROOT/quick runtime home"
 quick_runtime_bin="$TMP_ROOT/quick runtime bin"
 quick_runtime_support="$quick_runtime_home/Library/Application Support/AgentDock"
@@ -400,12 +399,12 @@ AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef
 ENV
 cat > "$quick_runtime_support/cloudflared.env" <<'ENV'
 AGENTDOCK_TUNNEL_MODE=quick
-AGENTDOCK_TUNNEL_TARGET=http://127.0.0.1:18766
+AGENTDOCK_TUNNEL_TARGET=http://127.0.0.1:$quick_runtime_port
 TUNNEL_TOKEN=''
 ENV
-cp "$tunnel_start" "$quick_runtime_support/start-cloudflared.sh"
+cp "$binary" "$quick_runtime_home/.local/bin/agentdock"
 chmod 0600 "$quick_runtime_env" "$quick_runtime_support/cloudflared.env"
-chmod 0700 "$quick_runtime_support/start-cloudflared.sh"
+chmod 0755 "$quick_runtime_home/.local/bin/agentdock"
 cat > "$quick_runtime_home/.local/bin/cloudflared" <<'SCRIPT'
 #!/bin/zsh
 print -u2 -- 'INF Quick Tunnel available at https://rebooted.trycloudflare.com'
@@ -458,25 +457,24 @@ if ! env -i \
   HOME="$quick_runtime_home" \
   PATH="$quick_runtime_bin:$TEST_PATH" \
   AGENTDOCK_LAUNCHCTL_BIN="$quick_runtime_bin/launchctl" \
-  zsh "$quick_runtime_support/start-cloudflared.sh"; then
+  "$quick_runtime_home/.local/bin/agentdock" tunnel launch --runtime-root "$quick_runtime_support"; then
   kill "$quick_health_pid" >/dev/null 2>&1 || true
   wait "$quick_health_pid" 2>/dev/null || true
-  print -u2 -- "Quick Tunnel startup wrapper failed"
+  print -u2 -- "Quick Tunnel native launch failed"
   exit 1
 fi
 kill "$quick_health_pid" >/dev/null 2>&1 || true
 wait "$quick_health_pid" 2>/dev/null || true
-assert_file_contains "$quick_runtime_env" 'AGENTDOCK_SERVER_URL=https://rebooted.trycloudflare.com'
-assert_file_contains "$quick_runtime_env" 'AGENTDOCK_OAUTH_ENABLED=true'
-assert_file_contains "$quick_runtime_env" 'AGENTDOCK_AUTH_TOKEN=stable-bearer-token'
-assert_file_contains "$quick_runtime_env" 'AGENTDOCK_OAUTH_PASSWORD=stable-oauth-password'
-assert_file_contains "$quick_runtime_env" 'AGENTDOCK_OAUTH_TOKEN_SECRET=stable-oauth-secret-0123456789abcdef'
+test "$(read_env_key "$quick_runtime_env" AGENTDOCK_SERVER_URL)" = "https://rebooted.trycloudflare.com"
+test "$(read_env_key "$quick_runtime_env" AGENTDOCK_OAUTH_ENABLED)" = "true"
+test "$(read_env_key "$quick_runtime_env" AGENTDOCK_AUTH_TOKEN)" = "stable-bearer-token"
+test "$(read_env_key "$quick_runtime_env" AGENTDOCK_OAUTH_PASSWORD)" = "stable-oauth-password"
+test "$(read_env_key "$quick_runtime_env" AGENTDOCK_OAUTH_TOKEN_SECRET)" = "stable-oauth-secret-0123456789abcdef"
 test "$(cat "$quick_runtime_url_file")" = "https://rebooted.trycloudflare.com"
 test "$(mode_of "$quick_runtime_url_file")" = "600"
 
 # Tunnel 配置失败时必须恢复旧 Tunnel 文件与旧公网认证状态，不能留下半更新状态。
 old_tunnel_env_sha="$(sha256_of "$tunnel_env")"
-old_tunnel_start_sha="$(sha256_of "$tunnel_start")"
 old_tunnel_plist_sha="$(sha256_of "$tunnel_plist")"
 old_cloudflared_sha="$(sha256_of "$home_dir/.local/bin/cloudflared")"
 invalid_cloudflared="$TMP_ROOT/invalid-cloudflared"
@@ -496,7 +494,7 @@ if env -i \
   exit 1
 fi
 test "$(sha256_of "$tunnel_env")" = "$old_tunnel_env_sha"
-test "$(sha256_of "$tunnel_start")" = "$old_tunnel_start_sha"
+test ! -e "$tunnel_start"
 test "$(sha256_of "$tunnel_plist")" = "$old_tunnel_plist_sha"
 test "$(sha256_of "$home_dir/.local/bin/cloudflared")" = "$old_cloudflared_sha"
 assert_file_contains "$agentdock_env" "AGENTDOCK_SERVER_URL=''"
@@ -532,7 +530,6 @@ env -i \
     snapshot_tunnel_state() { :; }
     install_cloudflared() { :; }
     write_tunnel_env() { :; }
-    write_tunnel_start_script() { :; }
     write_tunnel_launch_agent() { :; }
     register_and_start_tunnel() { TUNNEL_PUBLIC_URL=https://fresh.trycloudflare.com; }
     register_and_start_service() { print -- restarted >> "$TEST_QUICK_REFRESH_STATE/restarts"; }
@@ -561,20 +558,10 @@ if env -i HOME="$invalid_home" PATH="$TEST_PATH" AGENTDOCK_RELEASE_BASE_URL="$re
 fi
 test -d "$invalid_home/.local/bin/agentdock"
 
-# agentdock.env 不得通过 HOME/PATH 把启动脚本重定向到其他用户目录或命令路径。
-cat >> "$agentdock_env" <<'ENV'
-HOME=/tmp/agentdock-evil-home
-PATH=/tmp/agentdock-evil-path
-ENV
-cat > "$binary" <<'SCRIPT'
-#!/bin/zsh
-printf 'HOME=%s\nPATH=%s\nARGS=%s\n' "$HOME" "$PATH" "$*"
-SCRIPT
-chmod 0755 "$binary"
-startup_output="$(env -i HOME="$home_dir" PATH="$TEST_PATH" /bin/zsh "$start_script")"
-assert_file_contains <(print -r -- "$startup_output") "HOME=$home_dir"
-assert_file_contains <(print -r -- "$startup_output") "PATH=$home_dir/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-assert_file_contains <(print -r -- "$startup_output") 'ARGS=--host 127.0.0.7 --port 18888 --log-level info'
+# LaunchAgent 必须直接调用固定二进制和原生 launch-core，不经 shell 读取 HOME/PATH。
+test "$(plutil -extract ProgramArguments.0 raw -o - "$plist")" = "$binary"
+test "$(plutil -extract ProgramArguments.1 raw -o - "$plist")" = "service"
+test "$(plutil -extract ProgramArguments.2 raw -o - "$plist")" = "launch-core"
 
 # 用完全隔离的 launchctl/lsof/ps/curl 替身验证 bootstrap、kickstart 和新 PID 检查。
 service_home="$TMP_ROOT/service home with spaces"
@@ -734,11 +721,9 @@ PYURI
 )"
 service_binary="$service_home/.local/bin/agentdock"
 service_env="$service_home/Library/Application Support/AgentDock/agentdock.env"
-service_start="$service_home/Library/Application Support/AgentDock/start-agentdock.sh"
 service_plist="$service_home/Library/LaunchAgents/com.uvwt.agentdock.plist"
 old_binary_sha="$(sha256_of "$service_binary")"
 old_env_sha="$(sha256_of "$service_env")"
-old_start_sha="$(sha256_of "$service_start")"
 old_plist_sha="$(sha256_of "$service_plist")"
 : > "$fake_state/fail-bootstrap-once"
 if env -i \
@@ -758,7 +743,7 @@ test ! -e "$fake_state/fail-bootstrap-once"
 test -f "$fake_state/pid"
 test "$(sha256_of "$service_binary")" = "$old_binary_sha"
 test "$(sha256_of "$service_env")" = "$old_env_sha"
-test "$(sha256_of "$service_start")" = "$old_start_sha"
+test ! -e "$service_home/Library/Application Support/AgentDock/start-agentdock.sh"
 test "$(sha256_of "$service_plist")" = "$old_plist_sha"
 assert_file_contains "$fake_state/curl.calls" 'http://127.0.0.1:18767/healthz'
 assert_file_not_contains "$fake_state/curl.calls" 'http://127.0.0.8:18888/healthz'
@@ -783,7 +768,7 @@ fi
 test "$(cat "$fake_state/pid")" = "$old_pid"
 test "$(sha256_of "$service_binary")" = "$old_binary_sha"
 test "$(sha256_of "$service_env")" = "$old_env_sha"
-test "$(sha256_of "$service_start")" = "$old_start_sha"
+test ! -e "$service_home/Library/Application Support/AgentDock/start-agentdock.sh"
 test "$(sha256_of "$service_plist")" = "$old_plist_sha"
 assert_file_contains "$fake_state/curl.calls" 'http://127.0.0.1:18767/healthz'
 assert_file_not_contains "$fake_state/curl.calls" 'http://127.0.0.8:18888/healthz'
@@ -797,7 +782,7 @@ fi
 test -f "$fake_state/pid"
 test -x "$service_binary"
 test -f "$service_env"
-test -x "$service_start"
+test ! -e "$service_home/Library/Application Support/AgentDock/start-agentdock.sh"
 test -f "$service_plist"
 rm -f "$fake_state/fail-bootout"
 

@@ -123,7 +123,10 @@ APP_DIR="$OUTPUT_DIR/AgentDock.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+LOGIN_ITEM_APP="$CONTENTS_DIR/Library/LoginItems/AgentDockLoginHelper.app"
+LOGIN_ITEM_CONTENTS="$LOGIN_ITEM_APP/Contents"
+LOGIN_ITEM_MACOS="$LOGIN_ITEM_CONTENTS/MacOS"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$LOGIN_ITEM_MACOS"
 
 if (( ${#compiled_binaries[@]} == 1 )); then
   cp -p "$compiled_binaries[1]" "$MACOS_DIR/AgentDock"
@@ -133,11 +136,39 @@ fi
 chmod 0755 "$MACOS_DIR/AgentDock"
 
 if (( ${#login_helper_binaries[@]} == 1 )); then
-  cp -p "$login_helper_binaries[1]" "$MACOS_DIR/AgentDockLoginHelper"
+  cp -p "$login_helper_binaries[1]" "$LOGIN_ITEM_MACOS/AgentDockLoginHelper"
 else
-  lipo -create "${login_helper_binaries[@]}" -output "$MACOS_DIR/AgentDockLoginHelper"
+  lipo -create "${login_helper_binaries[@]}" -output "$LOGIN_ITEM_MACOS/AgentDockLoginHelper"
 fi
-chmod 0755 "$MACOS_DIR/AgentDockLoginHelper"
+chmod 0755 "$LOGIN_ITEM_MACOS/AgentDockLoginHelper"
+
+cat > "$LOGIN_ITEM_CONTENTS/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>AgentDockLoginHelper</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.uvwt.agentdock.login-helper</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>AgentDockLoginHelper</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$VERSION</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>$MIN_VERSION</string>
+  <key>LSUIElement</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+plutil -lint "$LOGIN_ITEM_CONTENTS/Info.plist" >/dev/null
 
 cp -p "$INSTALLER_SCRIPT" "$RESOURCES_DIR/install-macos-platform.sh"
 cp -p "$BROWSER_INSTALLER_SCRIPT" "$RESOURCES_DIR/install-browser-runner-macos.sh"
@@ -253,6 +284,7 @@ PLIST
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 
 print -- "==> ad-hoc 签名 AgentDock.app"
+codesign --force --sign - --identifier "com.uvwt.agentdock.login-helper" "$LOGIN_ITEM_APP"
 codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 

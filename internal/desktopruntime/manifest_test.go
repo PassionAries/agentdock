@@ -1,4 +1,4 @@
-package windowsruntime
+package desktopruntime
 
 import (
 	"os"

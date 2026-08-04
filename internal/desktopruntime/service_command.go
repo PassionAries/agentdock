@@ -1,4 +1,4 @@
-package windowsruntime
+package desktopruntime
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/uvwt/agentdock/internal/desktopcontrol"
 )
 
 // ServiceStatus 是桌面端和 CLI 共享的结构化运行状态。
@@ -34,7 +36,11 @@ func RunServiceCommand(ctx context.Context, args []string, stdout, stderr io.Wri
 		if err != nil {
 			return err
 		}
-		status, err := platformServiceStatus(ctx, runtimeRoot)
+		var status ServiceStatus
+		err = desktopcontrol.Call(ctx, runtimeRoot, "service.status", controlActionParams{RuntimeRoot: runtimeRoot}, &status)
+		if err != nil {
+			status, err = platformServiceStatus(ctx, runtimeRoot)
+		}
 		if err != nil {
 			return err
 		}

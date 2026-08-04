@@ -17,13 +17,14 @@ import (
 	"github.com/uvwt/agentdock/cmd/agentdock/internal/logx"
 	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/desktopcontrol"
+	"github.com/uvwt/agentdock/internal/desktopruntime"
 	"github.com/uvwt/agentdock/internal/httpx"
 	"github.com/uvwt/agentdock/internal/mcp"
 	"github.com/uvwt/agentdock/internal/selfupdate"
 	skills "github.com/uvwt/agentdock/internal/skill"
 	skillbundle "github.com/uvwt/agentdock/internal/skill/bundle"
 	skillstate "github.com/uvwt/agentdock/internal/skill/state"
-	"github.com/uvwt/agentdock/internal/windowsruntime"
 )
 
 func main() {
@@ -61,7 +62,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runServiceCommand(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "tunnel" {
-		return windowsruntime.RunTunnelCommand(ctx, args[1:], stdout, stderr)
+		return desktopruntime.RunTunnelCommand(ctx, args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "config" {
+		return desktopruntime.RunConfigCommand(ctx, args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "skill" {
 		return runSkillCommand(ctx, args[1:], stdout, stderr)
@@ -82,12 +86,12 @@ func runServiceCommand(ctx context.Context, args []string, stdout, stderr io.Wri
 		}
 		// launch-core 是桌面安装内部入口：先由原生代码恢复配置与 DPAPI 凭据，
 		// 再在当前进程直接运行服务，避免 PowerShell 启动脚本长期参与运行链路。
-		if err := windowsruntime.PrepareCoreEnvironment(*runtimeRoot); err != nil {
+		if err := desktopruntime.PrepareCoreEnvironment(*runtimeRoot); err != nil {
 			return err
 		}
 		return runServer(ctx, nil, stderr)
 	}
-	return windowsruntime.RunServiceCommand(ctx, args, stdout, stderr)
+	return desktopruntime.RunServiceCommand(ctx, args, stdout, stderr)
 }
 
 func runSkillCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -196,7 +200,24 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	if cfg.Stdio {
 		return serveStdio(ctx, server)
 	}
-	return httpx.Serve(ctx, server, cfg)
+	runtimeRoot := strings.TrimSpace(os.Getenv("AGENTDOCK_RUNTIME_ROOT"))
+	if runtimeRoot == "" {
+		return httpx.Serve(ctx, server, cfg)
+	}
+
+	// 桌面控制端点与 HTTP/MCP 服务共享同一生命周期；任一端点异常退出时，
+	// 取消另一个端点并返回明确错误，避免后台只剩半套控制面。
+	runtimeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 2)
+	go func() { done <- httpx.Serve(runtimeCtx, server, cfg) }()
+	go func() {
+		done <- desktopcontrol.Serve(runtimeCtx, runtimeRoot, desktopruntime.DispatchControlRequest)
+	}()
+	err = <-done
+	cancel()
+	<-done
+	return err
 }
 
 func serveStdio(ctx context.Context, server *mcp.Server) error {

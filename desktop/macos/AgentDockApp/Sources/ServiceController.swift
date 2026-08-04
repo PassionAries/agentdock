@@ -6,6 +6,18 @@ struct HealthPayload: Decodable {
     let version: String
 }
 
+private struct NativeServiceStatus: Decodable {
+    let running: Bool
+    let healthy: Bool
+    let startupEnabled: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case running
+        case healthy
+        case startupEnabled = "startup_enabled"
+    }
+}
+
 struct ServiceStatus {
     let installed: Bool
     let loaded: Bool
@@ -39,14 +51,16 @@ final class ServiceController: @unchecked Sendable {
             && fileManager.fileExists(atPath: paths.launchAgent.path)
         guard installed else { return .missing }
 
-        let loaded = isLoaded()
         let configuration = ServiceConfiguration.load(from: paths.environment)
-        let autostart = isAutostartEnabled()
-        guard loaded, let healthURL = configuration?.healthURL else {
+        let nativeStatus = try? await runInBackground { try self.readNativeStatus() }
+        let loaded = nativeStatus?.running ?? isLoaded()
+        let autostart = nativeStatus?.startupEnabled ?? isAutostartEnabled()
+        let healthy = nativeStatus?.healthy ?? false
+        guard loaded, healthy, let healthURL = configuration?.healthURL else {
             return ServiceStatus(
                 installed: true,
                 loaded: loaded,
-                healthy: false,
+                healthy: healthy,
                 version: nil,
                 configuration: configuration,
                 autostartEnabled: autostart
@@ -66,82 +80,52 @@ final class ServiceController: @unchecked Sendable {
 
     func start() async throws {
         try await runInBackground {
-            let preserveDisabled = !self.isAutostartEnabled()
-            if preserveDisabled {
-                try self.setLaunchctlDisabled(false)
-            }
-            do {
-                try self.bootstrapIfNeeded()
-                try self.kickstart()
-                guard let configuration = ServiceConfiguration.load(from: self.paths.environment),
-                      self.waitForHealthSynchronously(configuration: configuration, timeout: 30) else {
-                    throw ValidationError("AgentDock 已启动，但健康检查没有通过。")
-                }
-                if preserveDisabled {
-                    try self.setLaunchctlDisabled(true)
-                }
-            } catch {
-                if preserveDisabled { try? self.setLaunchctlDisabled(true) }
-                throw error
-            }
+            try self.runNativeService(arguments: ["start"])
         }
     }
 
     func stop() async throws {
         try await runInBackground {
-            guard self.isLoaded() else { return }
-            let result = try runProcess(
-                executable: "/bin/launchctl",
-                arguments: ["bootout", self.serviceTarget]
-            )
-            guard result.status == 0 else {
-                throw ValidationError(self.commandError(result.output, action: "停止"))
-            }
+            try self.runNativeService(arguments: ["stop"])
         }
     }
 
     func restart() async throws {
-        if !isLoaded() {
-            try await start()
-            return
-        }
         try await runInBackground {
-            try self.kickstart()
-            guard let configuration = ServiceConfiguration.load(from: self.paths.environment),
-                  self.waitForHealthSynchronously(configuration: configuration, timeout: 30) else {
-                throw ValidationError("AgentDock 重启后健康检查没有通过。")
-            }
+            try self.runNativeService(arguments: ["restart"])
         }
     }
 
     func setAutostart(enabled: Bool) async throws {
         try await runInBackground {
-            let previous = self.isAutostartEnabled()
-            guard previous != enabled else { return }
-            if enabled {
-                do {
-                    try self.setLaunchctlDisabled(false)
-                    try self.bootstrapIfNeeded()
-                    try self.kickstart()
-                    guard let configuration = ServiceConfiguration.load(from: self.paths.environment),
-                          self.waitForHealthSynchronously(configuration: configuration, timeout: 30) else {
-                        throw ValidationError("已启用登录启动，但 AgentDock 健康检查没有通过。")
-                    }
-                } catch {
-                    try? self.stopSynchronously()
-                    try? self.setLaunchctlDisabled(true)
-                    throw error
-                }
-            } else {
-                do {
-                    try self.setLaunchctlDisabled(true)
-                    try self.stopSynchronously()
-                } catch {
-                    try? self.setLaunchctlDisabled(false)
-                    throw error
-                }
-            }
+            try self.runNativeService(arguments: [
+                "autostart",
+                "--component", "core",
+                "--enabled", enabled ? "true" : "false"
+            ])
         }
+    }
+
+    private func runNativeService(arguments: [String]) throws {
+        let result = try runProcess(
+            executable: paths.binary.path,
+            arguments: ["service"] + arguments + ["--runtime-root", paths.appSupport.path]
+        )
+        guard result.status == 0 else {
+            throw ValidationError(commandError(result.output, action: arguments.first ?? "管理"))
+        }
+    }
+
+    private func readNativeStatus() throws -> NativeServiceStatus {
+        let result = try runProcess(
+            executable: paths.binary.path,
+            arguments: ["service", "status", "--runtime-root", paths.appSupport.path]
+        )
+        guard result.status == 0,
+              let data = result.output.data(using: .utf8) else {
+            throw ValidationError(commandError(result.output, action: "读取状态"))
+        }
+        return try JSONDecoder().decode(NativeServiceStatus.self, from: data)
     }
 
     func isAutostartEnabled() -> Bool {

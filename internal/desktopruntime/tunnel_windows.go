@@ -1,6 +1,6 @@
 //go:build windows
 
-package windowsruntime
+package desktopruntime
 
 import (
 	"context"
@@ -15,6 +15,10 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+func platformLaunchTunnel(context.Context, string) error {
+	return errors.New("Windows Tunnel 使用后台进程启动，不支持 launch 内部入口")
+}
 
 var quickTunnelURLPattern = regexp.MustCompile(`https://[A-Za-z0-9-]+\.trycloudflare\.com`)
 

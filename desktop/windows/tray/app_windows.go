@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/uvwt/agentdock/internal/windowsruntime"
+	"github.com/uvwt/agentdock/internal/desktopruntime"
 )
 
 const (
@@ -57,6 +57,9 @@ const (
 	imageIcon      = 1
 	lrLoadFromFile = 0x0010
 	lrDefaultSize  = 0x0040
+	cfUnicodeText  = 13
+	gmemMoveable   = 0x0002
+	swShow         = 5
 
 	menuStatus          = 1001
 	menuCopyLocal       = 1002
@@ -95,10 +98,19 @@ var (
 	procPostMessageW        = user32.NewProc("PostMessageW")
 	procSetTimer            = user32.NewProc("SetTimer")
 	procKillTimer           = user32.NewProc("KillTimer")
+	procOpenClipboard       = user32.NewProc("OpenClipboard")
+	procCloseClipboard      = user32.NewProc("CloseClipboard")
+	procEmptyClipboard      = user32.NewProc("EmptyClipboard")
+	procSetClipboardData    = user32.NewProc("SetClipboardData")
 	procRegisterWindowMsgW  = user32.NewProc("RegisterWindowMessageW")
 	procShellNotifyIconW    = shell32.NewProc("Shell_NotifyIconW")
+	procShellExecuteW       = shell32.NewProc("ShellExecuteW")
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 	procCreateMutexW        = kernel32.NewProc("CreateMutexW")
+	procGlobalAlloc         = kernel32.NewProc("GlobalAlloc")
+	procGlobalLock          = kernel32.NewProc("GlobalLock")
+	procGlobalUnlock        = kernel32.NewProc("GlobalUnlock")
+	procGlobalFree          = kernel32.NewProc("GlobalFree")
 
 	activeTray            *trayApp
 	taskbarCreatedMessage uint32
@@ -158,7 +170,7 @@ type healthResponse struct {
 }
 
 type trayState struct {
-	Manifest windowsruntime.Manifest
+	Manifest desktopruntime.Manifest
 	Healthy  bool
 	Version  string
 	Err      error
@@ -198,7 +210,7 @@ func Run() error {
 		return fmt.Errorf("resolve tray executable: %w", err)
 	}
 	app := &trayApp{
-		manifestPath: windowsruntime.PathForBinary(filepath.Join(filepath.Dir(executable), "agentdock.exe")),
+		manifestPath: desktopruntime.PathForBinary(filepath.Join(filepath.Dir(executable), "agentdock.exe")),
 		httpClient:   &http.Client{Timeout: 1500 * time.Millisecond},
 	}
 	activeTray = app
@@ -394,14 +406,14 @@ func (app *trayApp) showMenu() {
 	if state.Manifest.TunnelMode == "quick" {
 		appendMenu(
 			menu,
-			menuFlags(state.Manifest.CloudflaredLauncher != ""),
+			menuFlags(state.Manifest.AgentDockBinary != ""),
 			menuRefreshQuickURL,
 			"重新生成临时公网地址",
 		)
 	}
 	appendMenu(menu, mfSeparator, 0, "")
-	appendMenu(menu, menuFlags(!state.Healthy && state.Manifest.AgentDockLauncher != ""), menuStart, "启动 AgentDock")
-	appendMenu(menu, menuFlags(state.Manifest.AgentDockLauncher != ""), menuRestart, "重启 AgentDock")
+	appendMenu(menu, menuFlags(!state.Healthy && state.Manifest.AgentDockBinary != ""), menuStart, "启动 AgentDock")
+	appendMenu(menu, menuFlags(state.Manifest.AgentDockBinary != ""), menuRestart, "重启 AgentDock")
 	appendMenu(menu, menuFlags(state.Manifest.AgentDockBinary != ""), menuUpdate, "检查并安装更新")
 	appendMenu(menu, mfSeparator, 0, "")
 	appendMenu(menu, mfString, menuOpenFolder, "打开运行目录")
@@ -477,7 +489,7 @@ func (app *trayApp) handleMenu(command uint16) {
 }
 
 func (app *trayApp) readState() trayState {
-	manifest, err := windowsruntime.Load(app.manifestPath)
+	manifest, err := desktopruntime.Load(app.manifestPath)
 	if err != nil {
 		return trayState{Err: err}
 	}
@@ -548,173 +560,116 @@ func setClipboardText(value string) error {
 	if strings.TrimSpace(value) == "" {
 		return errors.New("没有可复制的地址")
 	}
-	command := exec.Command(
-		"powershell.exe",
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-Command", "Set-Clipboard -Value $args[0]",
-		value,
-	)
+	encoded := windows.StringToUTF16(value)
+	size := uintptr(len(encoded) * 2)
+	memory, _, allocErr := procGlobalAlloc.Call(gmemMoveable, size)
+	if memory == 0 {
+		return fmt.Errorf("分配剪贴板内存失败: %w", allocErr)
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			procGlobalFree.Call(memory)
+		}
+	}()
+
+	pointer, _, lockErr := procGlobalLock.Call(memory)
+	if pointer == 0 {
+		return fmt.Errorf("锁定剪贴板内存失败: %w", lockErr)
+	}
+	buffer := unsafe.Slice((*uint16)(unsafe.Pointer(pointer)), len(encoded))
+	copy(buffer, encoded)
+	procGlobalUnlock.Call(memory)
+
+	opened := false
+	for attempt := 0; attempt < 10; attempt++ {
+		result, _, _ := procOpenClipboard.Call(0)
+		if result != 0 {
+			opened = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !opened {
+		return errors.New("剪贴板正被其他程序占用")
+	}
+	defer procCloseClipboard.Call()
+	if result, _, emptyErr := procEmptyClipboard.Call(); result == 0 {
+		return fmt.Errorf("清空剪贴板失败: %w", emptyErr)
+	}
+	if result, _, setErr := procSetClipboardData.Call(cfUnicodeText, memory); result == 0 {
+		return fmt.Errorf("写入剪贴板失败: %w", setErr)
+	}
+	transferred = true
+	return nil
+}
+
+func runtimeRootForManifest(manifest desktopruntime.Manifest) (string, error) {
+	binary := strings.TrimSpace(manifest.AgentDockBinary)
+	if binary == "" {
+		return "", errors.New("AgentDock 运行信息不完整")
+	}
+	return filepath.Dir(desktopruntime.PathForBinary(binary)), nil
+}
+
+func runNativeAgentDock(manifest desktopruntime.Manifest, arguments ...string) error {
+	runtimeRoot, err := runtimeRootForManifest(manifest)
+	if err != nil {
+		return err
+	}
+	binary := strings.TrimSpace(manifest.AgentDockBinary)
+	if _, err := os.Stat(binary); err != nil {
+		return fmt.Errorf("AgentDock 核心不可用: %w", err)
+	}
+	arguments = append(arguments, "--runtime-root", runtimeRoot)
+	command := exec.Command(binary, arguments...)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("set clipboard: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("原生控制命令失败: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
 
-func regenerateQuickTunnel(manifest windowsruntime.Manifest) error {
+func regenerateQuickTunnel(manifest desktopruntime.Manifest) error {
 	if manifest.TunnelMode != "quick" {
 		return errors.New("当前未使用临时公网地址")
 	}
-	if strings.TrimSpace(manifest.AgentDockBinary) == "" || strings.TrimSpace(manifest.CloudflaredLauncher) == "" {
-		return errors.New("Quick Tunnel 运行信息不完整")
-	}
-	cloudflaredBinary := filepath.Join(filepath.Dir(manifest.AgentDockBinary), "cloudflared.exe")
-	if _, err := os.Stat(cloudflaredBinary); err != nil {
-		return fmt.Errorf("cloudflared 不可用: %w", err)
-	}
-	if _, err := os.Stat(manifest.CloudflaredLauncher); err != nil {
-		return fmt.Errorf("Quick Tunnel 启动器不可用: %w", err)
-	}
-
-	// 先停止当前 cloudflared。旧 launcher 会随子进程退出，随后启动同一个
-	// launcher；它负责生成新 URL、原子回写配置并按当前权限模式重启核心。
-	target := quotePowerShellLiteral(cloudflaredBinary)
-	script := fmt.Sprintf(
-		`$target=[IO.Path]::GetFullPath('%s'); $deadline=[DateTime]::UtcNow.AddSeconds(15); do { Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 250; $remaining=@(Get-CimInstance Win32_Process -Filter "Name = 'cloudflared.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase) }); if ($remaining.Count -eq 0) { exit 0 } } while ([DateTime]::UtcNow -lt $deadline); throw 'cloudflared did not stop within 15 seconds.'`,
-		target,
-	)
-	command := exec.Command(
-		"powershell.exe",
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-WindowStyle", "Hidden",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", script,
-	)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("停止旧 Quick Tunnel: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	time.Sleep(750 * time.Millisecond)
-	return startPowerShellScript(manifest.CloudflaredLauncher)
+	return runNativeAgentDock(manifest, "tunnel", "regenerate")
 }
 
-func startPowerShellScript(path string) error {
-	if strings.TrimSpace(path) == "" {
-		return errors.New("AgentDock launcher is unavailable")
+func startAgentDock(manifest desktopruntime.Manifest) error {
+	return runNativeAgentDock(manifest, "service", "start")
+}
+
+func restartAgentDock(manifest desktopruntime.Manifest) error {
+	return runNativeAgentDock(manifest, "service", "restart")
+}
+
+func launchUpdate(manifest desktopruntime.Manifest) error {
+	binary := strings.TrimSpace(manifest.AgentDockBinary)
+	if binary == "" {
+		return errors.New("AgentDock 核心不可用")
 	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(binary); err != nil {
 		return err
 	}
-	command := exec.Command(
-		"powershell.exe",
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-WindowStyle", "Hidden",
-		"-ExecutionPolicy", "Bypass",
-		"-File", path,
+	verb := "open"
+	if manifest.UsesScheduledTask() {
+		verb = "runas"
+	}
+	verbPointer, _ := windows.UTF16PtrFromString(verb)
+	binaryPointer, _ := windows.UTF16PtrFromString(binary)
+	parametersPointer, _ := windows.UTF16PtrFromString("update")
+	result, _, _ := procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(verbPointer)),
+		uintptr(unsafe.Pointer(binaryPointer)),
+		uintptr(unsafe.Pointer(parametersPointer)),
+		0,
+		swShow,
 	)
-	command.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
-	}
-	return command.Start()
-}
-
-func runScheduledTask(taskName string) error {
-	if strings.TrimSpace(taskName) == "" {
-		return errors.New("AgentDock scheduled task is unavailable")
-	}
-	command := exec.Command("schtasks.exe", "/Run", "/TN", `\`+taskName)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("run scheduled task: %w: %s", err, strings.TrimSpace(string(output)))
+	if result <= 32 {
+		return fmt.Errorf("启动更新程序失败，ShellExecute 错误码 %d", result)
 	}
 	return nil
-}
-
-func startAgentDock(manifest windowsruntime.Manifest) error {
-	if manifest.UsesScheduledTask() {
-		return runScheduledTask(manifest.AgentDockTaskName)
-	}
-	return startPowerShellScript(manifest.AgentDockLauncher)
-}
-
-// restartAgentDock keeps the launcher as the single owner of DPAPI settings.
-// Elevated installations are restarted through Task Scheduler so the tray
-// remains a normal user process.
-func restartAgentDock(manifest windowsruntime.Manifest) error {
-	if manifest.AgentDockBinary == "" || manifest.AgentDockLauncher == "" {
-		return errors.New("AgentDock runtime manifest is incomplete")
-	}
-	if manifest.UsesScheduledTask() {
-		end := exec.Command("schtasks.exe", "/End", "/TN", `\`+manifest.AgentDockTaskName)
-		end.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		_ = end.Run()
-		time.Sleep(300 * time.Millisecond)
-		return runScheduledTask(manifest.AgentDockTaskName)
-	}
-
-	target := quotePowerShellLiteral(manifest.AgentDockBinary)
-	launcher := quotePowerShellLiteral(manifest.AgentDockLauncher)
-	script := fmt.Sprintf(
-		`$target=[IO.Path]::GetFullPath('%s'); Get-Process -Name agentdock -ErrorAction SilentlyContinue | ForEach-Object { try { if ([IO.Path]::GetFullPath($_.Path) -eq $target) { Stop-Process -Id $_.Id -Force } } catch {} }; Start-Sleep -Milliseconds 300; & '%s'`,
-		target,
-		launcher,
-	)
-	command := exec.Command(
-		"powershell.exe",
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-WindowStyle", "Hidden",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", script,
-	)
-	command.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
-	}
-	return command.Start()
-}
-
-// launchUpdate delegates replacement, health verification, and rollback to
-// the existing core updater. Elevated runtimes request UAC for the updater so
-// it can stop and replace the privileged core process safely.
-func launchUpdate(manifest windowsruntime.Manifest) error {
-	binaryPath := manifest.AgentDockBinary
-	if strings.TrimSpace(binaryPath) == "" {
-		return errors.New("AgentDock binary is unavailable")
-	}
-	if _, err := os.Stat(binaryPath); err != nil {
-		return err
-	}
-	binary := quotePowerShellLiteral(binaryPath)
-	var script string
-	if manifest.UsesScheduledTask() {
-		script = fmt.Sprintf(
-			`$p=Start-Process -FilePath '%s' -ArgumentList 'update' -Verb RunAs -Wait -PassThru; Write-Host ''; Read-Host 'Press Enter to close'; exit $p.ExitCode`,
-			binary,
-		)
-	} else {
-		script = fmt.Sprintf(
-			`& '%s' update; Write-Host ''; Read-Host 'Press Enter to close'`,
-			binary,
-		)
-	}
-	return exec.Command(
-		"powershell.exe",
-		"-NoLogo",
-		"-NoProfile",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", script,
-	).Start()
-}
-
-func quotePowerShellLiteral(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
 }

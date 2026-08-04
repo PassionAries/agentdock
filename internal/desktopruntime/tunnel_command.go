@@ -1,4 +1,4 @@
-package windowsruntime
+package desktopruntime
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"flag"
 	"io"
 	"strings"
+
+	"github.com/uvwt/agentdock/internal/desktopcontrol"
 )
 
 // TunnelStatus 是桌面端和 CLI 共享的结构化 Tunnel 状态。
@@ -31,12 +33,22 @@ func RunTunnelCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 
 	switch args[0] {
+	case "launch":
+		runtimeRoot, err := parseRuntimeRoot("agentdock tunnel launch", args[1:], stderr)
+		if err != nil {
+			return err
+		}
+		return platformLaunchTunnel(ctx, runtimeRoot)
 	case "status":
 		runtimeRoot, err := parseRuntimeRoot("agentdock tunnel status", args[1:], stderr)
 		if err != nil {
 			return err
 		}
-		status, err := platformTunnelStatus(ctx, runtimeRoot)
+		var status TunnelStatus
+		err = desktopcontrol.Call(ctx, runtimeRoot, "tunnel.status", controlActionParams{RuntimeRoot: runtimeRoot}, &status)
+		if err != nil {
+			status, err = platformTunnelStatus(ctx, runtimeRoot)
+		}
 		if err != nil {
 			return err
 		}
@@ -47,6 +59,8 @@ func RunTunnelCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		if err != nil {
 			return err
 		}
+		// 写操作可能重启当前核心，必须由独立控制进程直接调用系统适配器；
+		// IPC 仅用于不会改变服务生命周期的状态读取。
 		if err := platformTunnelAction(ctx, runtimeRoot, action); err != nil {
 			return err
 		}
@@ -114,5 +128,5 @@ func parseCommandBoolean(command, value string) (bool, error) {
 }
 
 func tunnelCommandUsageError() error {
-	return errors.New("用法：agentdock tunnel <status|start|stop|restart|regenerate|configure|autostart> --runtime-root <目录>")
+	return errors.New("用法：agentdock tunnel <launch|status|start|stop|restart|regenerate|configure|autostart> --runtime-root <目录>")
 }

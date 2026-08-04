@@ -10,7 +10,6 @@ param(
         'update',
         'set-mode',
         'regenerate-quick',
-        'save-settings',
         'set-startup',
         'launch-core',
         'launch-tunnel',
@@ -24,15 +23,6 @@ param(
     [string] $Mode = 'none',
     [string] $ServerUrl = '',
     [string] $TunnelTokenFile = '',
-    [int] $Port = 0,
-    [ValidateSet('debug', 'info', 'warn', 'error')]
-    [string] $LogLevel = 'info',
-    [string] $NexusEndpoint = '',
-    [string] $NexusTokenFile = '',
-    [ValidateSet('true', 'false')]
-    [string] $BrowserEnabled = 'false',
-    [string] $BrowserRunnerDir = '',
-    [string] $BrowserNodePath = '',
     [ValidateSet('core', 'tray')]
     [string] $Component = 'core',
     [ValidateSet('true', 'false')]
@@ -652,51 +642,6 @@ function Regenerate-QuickTunnel {
     Invoke-NativeTunnelCommand -Command regenerate
 }
 
-function Save-ControlPanelSettings {
-    if ($Port -lt 1 -or $Port -gt 65535) {
-        throw '端口必须是 1 到 65535 之间的整数。'
-    }
-
-    $settings = [pscustomobject][ordered]@{
-        port = $Port
-        log_level = $LogLevel
-        nexus_endpoint = $NexusEndpoint.Trim()
-        browser_enabled = Convert-ToBoolean -Value $BrowserEnabled
-        browser_runner_dir = $BrowserRunnerDir.Trim()
-        browser_node_path = $BrowserNodePath.Trim()
-    }
-    Write-JsonAtomically -Path $SettingsPath -Value $settings
-
-    $nexusToken = Read-SecretFile -Path $NexusTokenFile
-    if (-not [string]::IsNullOrWhiteSpace($nexusToken)) {
-        Write-ProtectedText -Path $NexusTokenPath -Value $nexusToken -Entropy 'agentdock.nexus.token.v1'
-    }
-
-    $modeValue = (Read-TextFile -Path $TunnelModePath).ToLowerInvariant()
-    if (@('none', 'quick', 'named') -notcontains $modeValue) {
-        $modeValue = 'none'
-    }
-
-    Stop-Tunnel
-    $publicUrl = ''
-    if ($modeValue -eq 'named') {
-        $publicUrl = Read-TextFile -Path $ServerUrlPath
-    }
-    if ($modeValue -eq 'quick') {
-        Clear-ActivePublicUrl
-    }
-    $manifestMode = if ($modeValue -eq 'quick') { 'none' } else { $modeValue }
-    Update-RuntimeManifest -RuntimePort $Port -RuntimeMode $manifestMode -PublicUrl $publicUrl
-    Write-Launchers
-    Restart-Core
-    if ($modeValue -ne 'none') {
-        Start-Tunnel
-    }
-    if ($modeValue -eq 'quick') {
-        [void] (Wait-QuickTunnelReady)
-    }
-}
-
 function Set-ComponentStartup {
     param(
         [string] $TargetComponent,
@@ -798,9 +743,6 @@ switch ($Action) {
     }
     'regenerate-quick' {
         Regenerate-QuickTunnel
-    }
-    'save-settings' {
-        Save-ControlPanelSettings
     }
     'set-startup' {
         Set-ComponentStartup -TargetComponent $Component -ShouldEnable (Convert-ToBoolean -Value $Enabled)

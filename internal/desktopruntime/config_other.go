@@ -1,0 +1,12 @@
+//go:build !windows
+
+package desktopruntime
+
+import (
+	"context"
+	"errors"
+)
+
+func platformUpdateConfig(context.Context, ConfigUpdateRequest) error {
+	return errors.New("当前平台的桌面配置由原生配置文件控制器管理")
+}

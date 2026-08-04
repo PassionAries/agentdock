@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"github.com/uvwt/agentdock/internal/windowsruntime"
+	"github.com/uvwt/agentdock/internal/desktopruntime"
 )
 
 const windowsServiceName = "agentdock"
@@ -67,7 +67,7 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 	runtimeRoot := filepath.Dir(filepath.Dir(request.CurrentPath))
 	launcherPath := filepath.Join(runtimeRoot, "start-agentdock.ps1")
 	taskName := ""
-	manifest, manifestErr := windowsruntime.LoadForBinary(request.CurrentPath)
+	manifest, manifestErr := desktopruntime.LoadForBinary(request.CurrentPath)
 	if serviceManagesTarget(ctx, request.CurrentPath) {
 		restartMode = "service"
 	} else if manifestErr == nil && manifest.UsesScheduledTask() &&
@@ -168,7 +168,7 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 		// executable while it is being replaced.
 		_ = runWindowsCommand(ctx, "schtasks.exe", "/End", "/TN", `\`+plan.TaskName)
 	}
-	if err := windowsruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second); err != nil {
+	if err := desktopruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second); err != nil {
 		return fmt.Errorf("停止旧 AgentDock 进程失败: %w", err)
 	}
 
@@ -195,7 +195,7 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 	}
 
 	rollback := func(cause error) error {
-		_ = windowsruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second)
+		_ = desktopruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second)
 		if err := moveFileReplace(backupPath, plan.TargetPath); err != nil {
 			return fmt.Errorf("%v；自动恢复 Windows 旧版本失败: %w", cause, err)
 		}
@@ -238,7 +238,7 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 }
 
 func platformHealthCandidates(_ context.Context, targetPath string) []string {
-	if manifest, err := windowsruntime.LoadForBinary(targetPath); err == nil {
+	if manifest, err := desktopruntime.LoadForBinary(targetPath); err == nil {
 		return []string{manifest.HealthURL()}
 	}
 
@@ -257,7 +257,7 @@ func platformHealthCandidates(_ context.Context, targetPath string) []string {
 }
 
 func launcherManagesTarget(ctx context.Context, launcherPath, targetPath string) bool {
-	if manifest, err := windowsruntime.LoadForBinary(targetPath); err == nil {
+	if manifest, err := desktopruntime.LoadForBinary(targetPath); err == nil {
 		launcherPath = manifest.AgentDockLauncher
 	}
 	data, err := os.ReadFile(launcherPath)
@@ -278,7 +278,7 @@ func launcherManagesTarget(ctx context.Context, launcherPath, targetPath string)
 	return strings.Contains(strings.ToLower(string(output)), strings.ToLower(filepath.Clean(launcherPath)))
 }
 
-func nativeStartupManagesTarget(ctx context.Context, manifest windowsruntime.Manifest, runtimeRoot string) bool {
+func nativeStartupManagesTarget(ctx context.Context, manifest desktopruntime.Manifest, runtimeRoot string) bool {
 	if strings.TrimSpace(manifest.TrayBinary) == "" {
 		return false
 	}

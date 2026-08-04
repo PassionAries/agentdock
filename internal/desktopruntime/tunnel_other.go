@@ -1,6 +1,6 @@
-//go:build !windows
+//go:build !windows && !darwin && !linux
 
-package windowsruntime
+package desktopruntime
 
 import (
 	"context"
@@ -21,4 +21,8 @@ func platformConfigureTunnel(context.Context, TunnelConfigureRequest) error {
 
 func platformSetTunnelAutostart(context.Context, string, bool) error {
 	return errors.New("Windows Tunnel 管理仅支持 Windows")
+}
+
+func platformLaunchTunnel(context.Context, string) error {
+	return errors.New("当前平台不支持 Tunnel 管理")
 }

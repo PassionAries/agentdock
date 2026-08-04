@@ -17,7 +17,7 @@ func TestStandardMacOSPaths(t *testing.T) {
 	want := map[string]string{
 		"binary":       filepath.Join(home, ".local", "bin", "agentdock"),
 		"service env":  filepath.Join(home, "Library", "Application Support", "AgentDock", "agentdock.env"),
-		"start script": filepath.Join(home, "Library", "Application Support", "AgentDock", "start-agentdock.sh"),
+		"runtime root": filepath.Join(home, "Library", "Application Support", "AgentDock"),
 		"launch agent": filepath.Join(home, "Library", "LaunchAgents", "com.uvwt.agentdock.plist"),
 		"work dir":     filepath.Join(home, "AgentDock"),
 		"backup dir":   filepath.Join(home, ".agentdock", "backups", "bin"),
@@ -27,7 +27,7 @@ func TestStandardMacOSPaths(t *testing.T) {
 	got := map[string]string{
 		"binary":       paths.binary,
 		"service env":  paths.serviceEnv,
-		"start script": paths.startScript,
+		"runtime root": paths.runtimeRoot,
 		"launch agent": paths.launchAgent,
 		"work dir":     paths.workDir,
 		"backup dir":   paths.backupDir,

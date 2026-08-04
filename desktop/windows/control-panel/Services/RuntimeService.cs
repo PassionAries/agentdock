@@ -204,13 +204,13 @@ public sealed class RuntimeService : IDisposable
     {
         var arguments = new List<string>
         {
-            "-Action", "save-settings",
-            "-Port", settings.Port.ToString(),
-            "-LogLevel", settings.LogLevel,
-            "-NexusEndpoint", settings.NexusEndpoint ?? "",
-            "-BrowserEnabled", settings.BrowserEnabled ? "true" : "false",
-            "-BrowserRunnerDir", settings.BrowserRunnerDir ?? "",
-            "-BrowserNodePath", settings.BrowserNodePath ?? ""
+            "update",
+            "--port", settings.Port.ToString(),
+            "--log-level", settings.LogLevel,
+            "--nexus-endpoint", settings.NexusEndpoint ?? "",
+            $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
+            "--browser-runner-dir", settings.BrowserRunnerDir ?? "",
+            "--browser-node-path", settings.BrowserNodePath ?? ""
         };
         string? secretFile = null;
         try
@@ -218,10 +218,10 @@ public sealed class RuntimeService : IDisposable
             if (!string.IsNullOrWhiteSpace(nexusToken))
             {
                 secretFile = await WriteSecretFileAsync(nexusToken, cancellationToken);
-                arguments.AddRange(["-NexusTokenFile", secretFile]);
+                arguments.AddRange(["--nexus-token-file", secretFile]);
             }
 
-            await RunManagementScriptAsync(arguments, cancellationToken);
+            await RunNativeAgentDockAsync("config", arguments, cancellationToken);
         }
         finally
         {
@@ -367,32 +367,6 @@ public sealed class RuntimeService : IDisposable
         }
     }
 
-    private async Task RunManagementScriptAsync(IReadOnlyCollection<string> arguments, CancellationToken cancellationToken)
-    {
-        var script = ResolveManagementScript();
-        if (!File.Exists(script))
-        {
-            throw new FileNotFoundException("找不到 Windows 管理脚本，请运行 Setup.exe 修复安装。", script);
-        }
-
-        var startInfo = CreateRedirectedProcessStartInfo("powershell.exe");
-        startInfo.ArgumentList.Add("-NoLogo");
-        startInfo.ArgumentList.Add("-NoProfile");
-        startInfo.ArgumentList.Add("-NonInteractive");
-        startInfo.ArgumentList.Add("-ExecutionPolicy");
-        startInfo.ArgumentList.Add("Bypass");
-        startInfo.ArgumentList.Add("-File");
-        startInfo.ArgumentList.Add(script);
-        startInfo.ArgumentList.Add("-RuntimeRoot");
-        startInfo.ArgumentList.Add(RuntimeRoot);
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        _ = await RunProcessAsync(startInfo, cancellationToken);
-    }
-
     private static ProcessStartInfo CreateRedirectedProcessStartInfo(string fileName)
     {
         var utf8 = new UTF8Encoding(false);
@@ -493,34 +467,6 @@ public sealed class RuntimeService : IDisposable
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .LastOrDefault();
         return string.IsNullOrWhiteSpace(line) ? fallback : line;
-    }
-
-    private string ResolveManagementScript()
-    {
-        var installed = Path.Combine(RuntimeRoot, "installer", "manage-windows.ps1");
-        if (File.Exists(installed))
-        {
-            return installed;
-        }
-
-        var overridePath = Environment.GetEnvironmentVariable("AGENTDOCK_MANAGE_SCRIPT");
-        if (!string.IsNullOrWhiteSpace(overridePath))
-        {
-            return overridePath;
-        }
-
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            var candidate = Path.Combine(current.FullName, "scripts", "manage-windows.ps1");
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-            current = current.Parent;
-        }
-
-        return installed;
     }
 
     private static string ResolveRuntimeRoot()

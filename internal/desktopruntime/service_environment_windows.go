@@ -1,6 +1,6 @@
 //go:build windows
 
-package windowsruntime
+package desktopruntime
 
 import (
 	"encoding/base64"
@@ -65,6 +65,7 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	}
 
 	managed := map[string]string{
+		"AGENTDOCK_RUNTIME_ROOT":    root,
 		"AGENTDOCK_AUTH_TOKEN":      authToken,
 		"AGENTDOCK_HOST":            "127.0.0.1",
 		"AGENTDOCK_PORT":            strconv.Itoa(settings.Port),

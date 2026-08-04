@@ -537,34 +537,6 @@ ENV
   chmod 0600 "$AGENTDOCK_ENV"
 }
 
-write_start_script() {
-  if [[ -e "$START_SCRIPT" || -L "$START_SCRIPT" ]]; then
-    [[ -f "$START_SCRIPT" && ! -L "$START_SCRIPT" ]] || die "启动脚本必须是普通文件：$START_SCRIPT"
-  fi
-  cat > "$START_SCRIPT" <<'SCRIPT'
-#!/bin/zsh
-set -euo pipefail
-
-USER_HOME="$HOME"
-APP_SUPPORT_DIR="$USER_HOME/Library/Application Support/AgentDock"
-AGENTDOCK_ENV="$APP_SUPPORT_DIR/agentdock.env"
-[[ -r "$AGENTDOCK_ENV" ]] || { print -u2 -- "AgentDock agentdock.env 不可读：$AGENTDOCK_ENV"; exit 1; }
-
-set -a
-source "$AGENTDOCK_ENV"
-set +a
-
-# 服务配置只提供 AgentDock 参数，不得改变 LaunchAgent 的用户目录或命令搜索路径。
-export HOME="$USER_HOME"
-export PATH="$USER_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-exec "$USER_HOME/.local/bin/agentdock" \
-  --host "${AGENTDOCK_HOST:-127.0.0.1}" \
-  --port "${AGENTDOCK_PORT:-8765}" \
-  --log-level "${AGENTDOCK_LOG_LEVEL:-info}"
-SCRIPT
-  chmod 0700 "$START_SCRIPT"
-}
-
 xml_escape() {
   print -nr -- "$1" | sed \
     -e 's/&/\&amp;/g' \
@@ -581,7 +553,8 @@ write_launch_agent() {
   chmod 0600 "$STDOUT_LOG" "$STDERR_LOG"
 
   local plist_tmp="$PLIST_PATH.tmp.$$"
-  local start_script_xml="$(xml_escape "$START_SCRIPT")"
+  local binary_xml="$(xml_escape "$TARGET")"
+  local runtime_root_xml="$(xml_escape "$APP_SUPPORT_DIR")"
   local work_dir_xml="$(xml_escape "$WORK_DIR")"
   local stdout_xml="$(xml_escape "$STDOUT_LOG")"
   local stderr_xml="$(xml_escape "$STDERR_LOG")"
@@ -594,7 +567,11 @@ write_launch_agent() {
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$start_script_xml</string>
+    <string>$binary_xml</string>
+    <string>service</string>
+    <string>launch-core</string>
+    <string>--runtime-root</string>
+    <string>$runtime_root_xml</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$work_dir_xml</string>
@@ -612,6 +589,8 @@ PLIST
   plutil -lint "$plist_tmp" >/dev/null
   chmod 0600 "$plist_tmp"
   mv -f "$plist_tmp" "$PLIST_PATH"
+  # 新版本直接启动二进制；旧 launcher 只在回滚快照中保留。
+  rm -f "$START_SCRIPT"
 }
 
 resolve_cloudflared_binary() {
@@ -739,162 +718,14 @@ ENV
   mv -f "$tmp_file" "$TUNNEL_ENV"
 }
 
-write_tunnel_start_script() {
-  local tmp_file="$TUNNEL_START_SCRIPT.tmp.$$"
-  cat > "$tmp_file" <<'SCRIPT'
-#!/bin/zsh
-set -euo pipefail
-
-USER_HOME="$HOME"
-APP_SUPPORT_DIR="$USER_HOME/Library/Application Support/AgentDock"
-LOG_DIR="$USER_HOME/Library/Logs/AgentDock"
-AGENTDOCK_ENV="$APP_SUPPORT_DIR/agentdock.env"
-TUNNEL_ENV="$APP_SUPPORT_DIR/cloudflared.env"
-QUICK_URL_FILE="$APP_SUPPORT_DIR/quick-tunnel-url.txt"
-QUICK_LOG="$LOG_DIR/cloudflared-quick-current.log"
-AGENTDOCK_LABEL="com.uvwt.agentdock"
-LAUNCHCTL_BIN="${AGENTDOCK_LAUNCHCTL_BIN:-/bin/launchctl}"
-[[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || { print -u2 -- "AgentDock agentdock.env 不可用：$AGENTDOCK_ENV"; exit 1; }
-[[ -f "$TUNNEL_ENV" && ! -L "$TUNNEL_ENV" ]] || { print -u2 -- "AgentDock cloudflared.env 不可用：$TUNNEL_ENV"; exit 1; }
-[[ -f "$LAUNCHCTL_BIN" && ! -L "$LAUNCHCTL_BIN" && -x "$LAUNCHCTL_BIN" ]] || { print -u2 -- "launchctl 不可用：$LAUNCHCTL_BIN"; exit 1; }
-
-unset AGENTDOCK_TUNNEL_MODE AGENTDOCK_TUNNEL_TARGET TUNNEL_TOKEN
-set -a
-source "$TUNNEL_ENV"
-set +a
-
-export HOME="$USER_HOME"
-export PATH="$USER_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-read_agentdock_env_key() {
-  local key="$1"
-  [[ -f "$AGENTDOCK_ENV" && ! -L "$AGENTDOCK_ENV" ]] || return 0
-  /bin/zsh -c '
-    source "$1" >/dev/null
-    print -r -- "${(P)2:-}"
-  ' _ "$AGENTDOCK_ENV" "$key"
-}
-
-write_quick_public_auth() {
-  local public_url="$1"
-  local url_quoted enabled_quoted tmp_file
-  printf -v url_quoted '%q' "$public_url"
-  printf -v enabled_quoted '%q' true
-  tmp_file="$AGENTDOCK_ENV.tmp.$$"
-
-  # Quick Tunnel 重启后地址会变化。一次性替换两个公开配置字段，
-  # 保留 Bearer、OAuth 密码和签名密钥，避免重启造成凭据轮换。
-  grep -Ev \
-    '^[[:space:]]*(export[[:space:]]+)?(AGENTDOCK_SERVER_URL|AGENTDOCK_OAUTH_ENABLED)[[:space:]]*=' \
-    "$AGENTDOCK_ENV" > "$tmp_file" || true
-  print -r -- "AGENTDOCK_SERVER_URL=$url_quoted" >> "$tmp_file"
-  print -r -- "AGENTDOCK_OAUTH_ENABLED=$enabled_quoted" >> "$tmp_file"
-  chmod 0600 "$tmp_file"
-  mv -f "$tmp_file" "$AGENTDOCK_ENV"
-}
-
-wait_for_agentdock() {
-  local host port health_url attempts=60
-  host="$(read_agentdock_env_key AGENTDOCK_HOST)"
-  port="$(read_agentdock_env_key AGENTDOCK_PORT)"
-  [[ -n "$host" ]] || host=127.0.0.1
-  [[ "$port" == <1-65535> ]] || port=8765
-  case "$host" in
-    0.0.0.0) host=127.0.0.1 ;;
-    ::|\[::\]) host='[::1]' ;;
-    *:*) host="[$host]" ;;
-  esac
-  health_url="http://$host:$port/healthz"
-  while (( attempts-- > 0 )); do
-    /usr/bin/curl -fsS --max-time 1 "$health_url" >/dev/null 2>&1 && return 0
-    sleep 0.5
-  done
-  return 1
-}
-
-sync_quick_url() {
-  local public_url="$1"
-  local current_url="$(read_agentdock_env_key AGENTDOCK_SERVER_URL)"
-  if [[ "$current_url" != "$public_url" ]]; then
-    write_quick_public_auth "$public_url"
-  fi
-
-  local domain="gui/$(id -u)"
-  local attempts=20
-  while (( attempts-- > 0 )); do
-    if "$LAUNCHCTL_BIN" kickstart -k "$domain/$AGENTDOCK_LABEL" >/dev/null 2>&1 && wait_for_agentdock; then
-      local tmp_file="$QUICK_URL_FILE.tmp.$$"
-      print -r -- "$public_url" > "$tmp_file"
-      chmod 0600 "$tmp_file"
-      mv -f "$tmp_file" "$QUICK_URL_FILE"
-      print -- "Quick Tunnel 地址已同步：$public_url/mcp"
-      return 0
-    fi
-    sleep 0.5
-  done
-  print -u2 -- "Quick Tunnel 地址已生成，但 AgentDock 重启验证失败"
-  return 1
-}
-
-start_quick_tunnel() {
-  mkdir -p "$LOG_DIR"
-  chmod 0700 "$LOG_DIR"
-  rm -f "$QUICK_URL_FILE"
-  : > "$QUICK_LOG"
-  chmod 0600 "$QUICK_LOG"
-
-  "$USER_HOME/.local/bin/cloudflared" tunnel --no-autoupdate --url "$AGENTDOCK_TUNNEL_TARGET" \
-    > "$QUICK_LOG" 2>&1 &
-  local cloudflared_pid=$!
-  trap 'kill "$cloudflared_pid" >/dev/null 2>&1 || true' HUP INT TERM
-
-  local attempts=120 public_url=""
-  while (( attempts-- > 0 )); do
-    kill -0 "$cloudflared_pid" >/dev/null 2>&1 || break
-    public_url="$(grep -Eho 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$QUICK_LOG" 2>/dev/null | tail -n 1 || true)"
-    if [[ -n "$public_url" ]]; then
-      sync_quick_url "$public_url" || {
-        kill "$cloudflared_pid" >/dev/null 2>&1 || true
-        wait "$cloudflared_pid" || true
-        return 1
-      }
-      wait "$cloudflared_pid"
-      return $?
-    fi
-    sleep 0.5
-  done
-
-  print -u2 -- "未能从 cloudflared 输出中取得临时公网地址，请检查 $QUICK_LOG"
-  kill "$cloudflared_pid" >/dev/null 2>&1 || true
-  wait "$cloudflared_pid" || true
-  return 1
-}
-
-case "${AGENTDOCK_TUNNEL_MODE:-}" in
-  quick)
-    start_quick_tunnel
-    ;;
-  named)
-    [[ -n "${TUNNEL_TOKEN:-}" ]] || { print -u2 -- "TUNNEL_TOKEN 未配置"; exit 1; }
-    exec "$USER_HOME/.local/bin/cloudflared" tunnel --no-autoupdate run
-    ;;
-  *)
-    print -u2 -- "不支持的 Tunnel 模式：${AGENTDOCK_TUNNEL_MODE:-空}"
-    exit 1
-    ;;
-esac
-SCRIPT
-  chmod 0700 "$tmp_file"
-  mv -f "$tmp_file" "$TUNNEL_START_SCRIPT"
-}
-
 write_tunnel_launch_agent() {
   mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
   touch "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"
   chmod 0600 "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"
 
   local plist_tmp="$TUNNEL_PLIST_PATH.tmp.$$"
-  local start_script_xml="$(xml_escape "$TUNNEL_START_SCRIPT")"
+  local binary_xml="$(xml_escape "$TARGET")"
+  local runtime_root_xml="$(xml_escape "$APP_SUPPORT_DIR")"
   local work_dir_xml="$(xml_escape "$WORK_DIR")"
   local stdout_xml="$(xml_escape "$TUNNEL_STDOUT_LOG")"
   local stderr_xml="$(xml_escape "$TUNNEL_STDERR_LOG")"
@@ -907,7 +738,11 @@ write_tunnel_launch_agent() {
   <string>$TUNNEL_LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$start_script_xml</string>
+    <string>$binary_xml</string>
+    <string>tunnel</string>
+    <string>launch</string>
+    <string>--runtime-root</string>
+    <string>$runtime_root_xml</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$work_dir_xml</string>
@@ -927,6 +762,7 @@ PLIST
   plutil -lint "$plist_tmp" >/dev/null
   chmod 0600 "$plist_tmp"
   mv -f "$plist_tmp" "$TUNNEL_PLIST_PATH"
+  rm -f "$TUNNEL_START_SCRIPT"
 }
 
 snapshot_tunnel_file() {
@@ -1130,7 +966,6 @@ configure_tunnel() {
   if ! (
     install_cloudflared
     write_tunnel_env "$TUNNEL_MODE" "$target_url"
-    write_tunnel_start_script
     write_tunnel_launch_agent
   ); then
     restore_tunnel_state || die "生成 Tunnel 服务文件失败，且旧 Tunnel 配置恢复失败"
@@ -1628,7 +1463,6 @@ mv -f "$staged_target" "$TARGET"
 if [[ "$REGISTER_SERVICE" == true ]]; then
   if ! (
     write_service_env
-    write_start_script
     write_launch_agent
   ); then
     if ! restore_service_files; then

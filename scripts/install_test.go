@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -347,9 +348,7 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 		"Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'none' -PublicUrl ''",
 		"named-server-url.txt",
 		"quick-tunnel-url.txt",
-		"agentdock.nexus.token.v1",
 		"'regenerate-quick'",
-		"'save-settings'",
 		"'set-startup'",
 		"'start-tunnel'",
 		"'stop-tunnel'",
@@ -390,6 +389,8 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 		`allowElevation: false`,
 		`"configure"`,
 		`"--token-file"`,
+		`RunNativeAgentDockAsync("config"`,
+		`"--nexus-token-file"`,
 	} {
 		if !strings.Contains(app, want) && !strings.Contains(runtimeService, want) {
 			t.Fatalf("Windows control panel missing native Tunnel behavior %q", want)
@@ -399,9 +400,60 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 		`RunManagementScriptAsync(["-Action", "start-tunnel"]`,
 		`RunManagementScriptAsync(["-Action", "stop-tunnel"]`,
 		`RunManagementScriptAsync(["-Action", "regenerate-quick"]`,
+		`powershell.exe`,
+		`manage-windows.ps1`,
 	} {
 		if strings.Contains(runtimeService, forbidden) {
 			t.Fatalf("Windows control panel still invokes PowerShell for Tunnel lifecycle %q", forbidden)
+		}
+	}
+}
+
+func TestDesktopRuntimeSurfacesDoNotUseLegacyLaunchers(t *testing.T) {
+	trayData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "tray", "app_windows.go"))
+	if err != nil {
+		t.Fatalf("read Windows tray: %v", err)
+	}
+	tray := string(trayData)
+	for _, want := range []string{
+		"runNativeAgentDock",
+		"procSetClipboardData",
+		"procShellExecuteW",
+		`"tunnel", "regenerate"`,
+		`"service", "restart"`,
+	} {
+		if !strings.Contains(tray, want) {
+			t.Fatalf("Windows tray missing native runtime behavior %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"powershell.exe",
+		"startPowerShellScript",
+		"AgentDockLauncher",
+		"CloudflaredLauncher",
+	} {
+		if strings.Contains(tray, forbidden) {
+			t.Fatalf("Windows tray still depends on legacy launcher %q", forbidden)
+		}
+	}
+
+	selfUpdateData, err := os.ReadFile(filepath.Join("..", "internal", "selfupdate", "service_darwin.go"))
+	if err != nil {
+		t.Fatalf("read macOS self-update service adapter: %v", err)
+	}
+	selfUpdate := string(selfUpdateData)
+	for _, want := range []string{
+		`"ProgramArguments.0": paths.binary`,
+		`"ProgramArguments.2": "launch-core"`,
+		`"ProgramArguments.4": paths.runtimeRoot`,
+	} {
+		if !strings.Contains(selfUpdate, want) {
+			t.Fatalf("macOS self-update adapter missing native LaunchAgent contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{"start-agentdock.sh", "startScript"} {
+		if strings.Contains(selfUpdate, forbidden) {
+			t.Fatalf("macOS self-update adapter still depends on legacy launcher %q", forbidden)
 		}
 	}
 }
@@ -483,8 +535,10 @@ func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.
 		"AGENTDOCK_TUNNEL_MODE=$mode",
 		"TUNNEL_TOKEN=$token",
 		"EnvironmentFile=$cloudflared_env_file",
-		"tunnel --no-autoupdate --url $target_url",
-		"tunnel --no-autoupdate run",
+		"service launch-core --runtime-root $runtime_root",
+		"tunnel launch --runtime-root $runtime_root",
+		"write_runtime_manifest",
+		`"service_manager": "$service_manager"`,
 		"AGENTDOCK_SERVER_URL=%s\\n",
 		"AGENTDOCK_OAUTH_ENABLED=%s\\n",
 		"AGENTDOCK_OAUTH_PASSWORD=%s\\n",
@@ -499,9 +553,21 @@ func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.
 	if strings.Contains(script, "--token $token") || strings.Contains(script, "--token \\$TUNNEL_TOKEN") {
 		t.Fatal("cloudflared token must be provided through its private environment file, not process arguments")
 	}
+	for _, legacy := range []string{
+		"ExecStart=$cloudflared_binary tunnel",
+		`command="$cloudflared_binary"`,
+		"ExecStart=$source_dir/bin/agentdock \\",
+	} {
+		if strings.Contains(script, legacy) {
+			t.Fatalf("installer still emits legacy direct runtime command %q", legacy)
+		}
+	}
 }
 
 func TestLinuxInstallerPreservesCredentialsAndCapturesQuickURL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Linux installer shell behavior is covered by the Alpine native runtime E2E")
+	}
 	tempDir := t.TempDir()
 	envFile := filepath.Join(tempDir, "agentdock.env")
 	initial := strings.Join([]string{

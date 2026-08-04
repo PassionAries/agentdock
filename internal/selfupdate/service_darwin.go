@@ -19,7 +19,7 @@ const macOSLaunchAgentLabel = "com.uvwt.agentdock"
 type macOSPaths struct {
 	binary      string
 	serviceEnv  string
-	startScript string
+	runtimeRoot string
 	launchAgent string
 	workDir     string
 	backupDir   string
@@ -39,7 +39,7 @@ func standardMacOSPaths(home string) macOSPaths {
 	return macOSPaths{
 		binary:      filepath.Join(home, ".local", "bin", "agentdock"),
 		serviceEnv:  filepath.Join(appSupport, "agentdock.env"),
-		startScript: filepath.Join(appSupport, "start-agentdock.sh"),
+		runtimeRoot: appSupport,
 		launchAgent: filepath.Join(home, "Library", "LaunchAgents", macOSLaunchAgentLabel+".plist"),
 		workDir:     filepath.Join(home, "AgentDock"),
 		backupDir:   filepath.Join(home, ".agentdock", "backups", "bin"),
@@ -187,14 +187,15 @@ func detectManagedService(ctx context.Context, targetPath string) managedService
 	if filepath.Clean(targetPath) != paths.binary {
 		return nil
 	}
-	if !regularFile(paths.launchAgent) || !executableRegularFile(paths.startScript) || !regularFile(paths.serviceEnv) {
+	if !regularFile(paths.launchAgent) || !regularFile(paths.serviceEnv) {
 		return nil
 	}
 	if err := exec.CommandContext(ctx, "plutil", "-lint", paths.launchAgent).Run(); err != nil {
 		return nil
 	}
 	plistPaths := map[string]string{
-		"ProgramArguments.0": paths.startScript,
+		"ProgramArguments.0": paths.binary,
+		"ProgramArguments.4": paths.runtimeRoot,
 		"WorkingDirectory":   paths.workDir,
 		"StandardOutPath":    paths.stdoutLog,
 		"StandardErrorPath":  paths.stderrLog,
@@ -202,6 +203,17 @@ func detectManagedService(ctx context.Context, targetPath string) managedService
 	for key, expected := range plistPaths {
 		value, valueErr := readPlistString(ctx, paths.launchAgent, key)
 		if valueErr != nil || filepath.Clean(value) != expected {
+			return nil
+		}
+	}
+	plistArguments := map[string]string{
+		"ProgramArguments.1": "service",
+		"ProgramArguments.2": "launch-core",
+		"ProgramArguments.3": "--runtime-root",
+	}
+	for key, expected := range plistArguments {
+		value, valueErr := readPlistString(ctx, paths.launchAgent, key)
+		if valueErr != nil || value != expected {
 			return nil
 		}
 	}

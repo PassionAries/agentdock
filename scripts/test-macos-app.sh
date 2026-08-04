@@ -84,7 +84,11 @@ APP="$TMP_ROOT/output/AgentDock.app"
 DMG="$TMP_ROOT/output/AgentDock-macos-universal.dmg"
 ZIP="$TMP_ROOT/output/AgentDock-macos-universal.zip"
 test -x "$APP/Contents/MacOS/AgentDock"
-test -x "$APP/Contents/MacOS/AgentDockLoginHelper"
+LOGIN_HELPER_APP="$APP/Contents/Library/LoginItems/AgentDockLoginHelper.app"
+test -x "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper"
+plutil -lint "$LOGIN_HELPER_APP/Contents/Info.plist" >/dev/null
+test "$(plutil -extract CFBundleIdentifier raw -o - "$LOGIN_HELPER_APP/Contents/Info.plist")" = \
+  "com.uvwt.agentdock.login-helper"
 test -x "$APP/Contents/Resources/install-macos-platform.sh"
 test -x "$APP/Contents/Resources/install-browser-runner-macos.sh"
 test -f "$APP/Contents/Resources/AgentDock.icns"
@@ -124,7 +128,9 @@ test -L "$MOUNT_POINT/Applications"
 test "$(readlink "$MOUNT_POINT/Applications")" = "/Applications"
 codesign --verify --deep --strict --verbose=2 "$MOUNT_POINT/AgentDock.app"
 cmp "$APP/Contents/MacOS/AgentDock" "$MOUNT_POINT/AgentDock.app/Contents/MacOS/AgentDock"
-cmp "$APP/Contents/MacOS/AgentDockLoginHelper" "$MOUNT_POINT/AgentDock.app/Contents/MacOS/AgentDockLoginHelper"
+cmp \
+  "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper" \
+  "$MOUNT_POINT/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
 cmp \
   "$APP/Contents/Resources/offline-payload/$agentdock_archive" \
   "$MOUNT_POINT/AgentDock.app/Contents/Resources/offline-payload/$agentdock_archive"

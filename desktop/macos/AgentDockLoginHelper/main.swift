@@ -1,8 +1,9 @@
 import Foundation
 
-let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
-let appBundle = executable
-    .deletingLastPathComponent() // MacOS
+let helperBundle = Bundle.main.bundleURL.standardizedFileURL
+let appBundle = helperBundle
+    .deletingLastPathComponent() // LoginItems
+    .deletingLastPathComponent() // Library
     .deletingLastPathComponent() // Contents
     .deletingLastPathComponent() // AgentDock.app
 

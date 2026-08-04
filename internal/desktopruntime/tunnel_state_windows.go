@@ -1,6 +1,6 @@
 //go:build windows
 
-package windowsruntime
+package desktopruntime
 
 import (
 	"crypto/rand"

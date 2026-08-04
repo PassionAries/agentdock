@@ -623,6 +623,8 @@ write_systemd_unit() {
   local service_group="$3"
   local source_dir="$4"
   local env_file="$5"
+  local runtime_root
+  runtime_root="$(dirname "$env_file")"
   local unit_file="/etc/systemd/system/${service_name}.service"
   local tmp_file
   tmp_file="$(mktemp)"
@@ -638,10 +640,7 @@ User=$service_user
 Group=$service_group
 WorkingDirectory=$source_dir
 EnvironmentFile=$env_file
-ExecStart=$source_dir/bin/agentdock \\
-  --host \${AGENTDOCK_HOST} \\
-  --port \${AGENTDOCK_PORT} \\
-  --log-level \${AGENTDOCK_LOG_LEVEL}
+ExecStart=$source_dir/bin/agentdock service launch-core --runtime-root $runtime_root
 Restart=on-failure
 RestartSec=3
 
@@ -658,6 +657,8 @@ write_openrc_service() {
   local service_group="$3"
   local source_dir="$4"
   local env_file="$5"
+  local runtime_root
+  runtime_root="$(dirname "$env_file")"
   local init_file="/etc/init.d/${service_name}"
   local tmp_file
   tmp_file="$(mktemp)"
@@ -666,7 +667,7 @@ write_openrc_service() {
 name="AgentDock MCP server"
 description="AgentDock MCP server"
 command="$source_dir/bin/agentdock"
-command_args=""
+command_args="service launch-core --runtime-root $runtime_root"
 command_user="$service_user:$service_group"
 directory="$source_dir"
 pidfile="/run/${service_name}.pid"
@@ -683,7 +684,6 @@ start_pre() {
     set -a
     . "\$agentdock_env_file"
     set +a
-    command_args="--host \${AGENTDOCK_HOST} --port \${AGENTDOCK_PORT} --log-level \${AGENTDOCK_LOG_LEVEL}"
   else
     eerror "env file not readable: \$agentdock_env_file"
     return 1
@@ -696,6 +696,34 @@ depend() {
 }
 OPENRC
   run_root install -m 755 -o root -g root "$tmp_file" "$init_file"
+  rm -f "$tmp_file"
+}
+
+write_runtime_manifest() {
+  local service_manager="$1"
+  local service_name="$2"
+  local tunnel_service_name="$3"
+  local source_dir="$4"
+  local env_file="$5"
+  local cloudflared_binary="$6"
+  local cloudflared_env_file="$7"
+  local runtime_root tmp_file
+  runtime_root="$(dirname "$env_file")"
+  tmp_file="$(mktemp)"
+  cat >"$tmp_file" <<JSON
+{
+  "schema_version": 1,
+  "service_manager": "$service_manager",
+  "service_name": "$service_name",
+  "tunnel_service_name": "$tunnel_service_name",
+  "agentdock_binary": "$source_dir/bin/agentdock",
+  "cloudflared_binary": "$cloudflared_binary",
+  "environment_file": "$env_file",
+  "tunnel_environment": "$cloudflared_env_file"
+}
+JSON
+  run_root mkdir -p "$runtime_root"
+  run_root install -m 0644 -o root -g root "$tmp_file" "$runtime_root/desktop-runtime.json"
   rm -f "$tmp_file"
 }
 
@@ -834,14 +862,10 @@ write_cloudflared_systemd_unit() {
   local cloudflared_env_file="$6"
   local mode="$7"
   local target_url="$8"
+  local agentdock_binary="$9"
+  local runtime_root="${10}"
   local unit_file="/etc/systemd/system/${tunnel_service_name}.service"
-  local exec_start tmp_file
-
-  case "$mode" in
-    quick) exec_start="$cloudflared_binary tunnel --no-autoupdate --url $target_url" ;;
-    named) exec_start="$cloudflared_binary tunnel --no-autoupdate run" ;;
-    *) die "无法为模式生成 cloudflared systemd 服务：$mode" ;;
-  esac
+  local tmp_file
   tmp_file="$(mktemp)"
   cat >"$tmp_file" <<UNIT
 [Unit]
@@ -855,7 +879,7 @@ User=$service_user
 Group=$service_group
 WorkingDirectory=$data_dir
 EnvironmentFile=$cloudflared_env_file
-ExecStart=$exec_start
+ExecStart=$agentdock_binary tunnel launch --runtime-root $runtime_root
 Restart=on-failure
 RestartSec=5
 
@@ -875,21 +899,17 @@ write_cloudflared_openrc_service() {
   local cloudflared_env_file="$6"
   local mode="$7"
   local target_url="$8"
+  local agentdock_binary="$9"
+  local runtime_root="${10}"
   local init_file="/etc/init.d/${tunnel_service_name}"
-  local command_args tmp_file
-
-  case "$mode" in
-    quick) command_args="tunnel --no-autoupdate --url $target_url" ;;
-    named) command_args="tunnel --no-autoupdate run" ;;
-    *) die "无法为模式生成 cloudflared OpenRC 服务：$mode" ;;
-  esac
+  local tmp_file
   tmp_file="$(mktemp)"
   cat >"$tmp_file" <<OPENRC
 #!/sbin/openrc-run
 name="AgentDock Cloudflare Tunnel"
 description="AgentDock Cloudflare Tunnel"
-command="$cloudflared_binary"
-command_args="$command_args"
+command="$agentdock_binary"
+command_args="tunnel launch --runtime-root $runtime_root"
 command_user="$service_user:$service_group"
 directory="$data_dir"
 pidfile="/run/${tunnel_service_name}.pid"
@@ -1042,17 +1062,22 @@ configure_cloudflared() {
   local target_url="$9"
   local token="${10}"
   local server_url="${11}"
+  local agentdock_binary="${12}"
+  local runtime_root="${13}"
 
   install_cloudflared "$cloudflared_binary"
   write_cloudflared_env "$cloudflared_env_file" "$mode" "$target_url" "$token"
+  run_root chown "$service_user:$service_group" "$cloudflared_env_file"
   case "$service_manager" in
     systemd)
       write_cloudflared_systemd_unit "$tunnel_service_name" "$service_user" "$service_group" \
-        "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$mode" "$target_url"
+        "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$mode" "$target_url" \
+        "$agentdock_binary" "$runtime_root"
       ;;
     openrc)
       write_cloudflared_openrc_service "$tunnel_service_name" "$service_user" "$service_group" \
-        "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$mode" "$target_url"
+        "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$mode" "$target_url" \
+        "$agentdock_binary" "$runtime_root"
       ;;
     *) die "Cloudflare Tunnel 需要 systemd 或 OpenRC" ;;
   esac
@@ -1442,6 +1467,11 @@ SUMMARY
   run_root chown -R "$service_user:$service_group" "$data_dir"
   write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" \
     "$server_url" "$configure_oauth" "$oauth_enabled" "$oauth_password" "$oauth_token_secret"
+  # 原生运行时需要在服务用户身份下读取并原子更新公网地址；目录仅允许该服务用户访问。
+  run_root chown "$service_user:$service_group" "$(dirname "$env_file")" "$env_file"
+  run_root chmod 0700 "$(dirname "$env_file")"
+  write_runtime_manifest "$service_manager" "$service_name" "$tunnel_service_name" \
+    "$source_dir" "$env_file" "$cloudflared_binary" "$cloudflared_env_file"
   case "$service_manager" in
     systemd) write_systemd_unit "$service_name" "$service_user" "$service_group" "$source_dir" "$env_file" ;;
     openrc) write_openrc_service "$service_name" "$service_user" "$service_group" "$source_dir" "$env_file" ;;
@@ -1479,12 +1509,13 @@ SUMMARY
     tunnel_target_url="http://$health_host:$port"
     configure_cloudflared "$service_manager" "$tunnel_service_name" "$service_user" "$service_group" \
       "$data_dir" "$cloudflared_binary" "$cloudflared_env_file" "$tunnel_mode" \
-      "$tunnel_target_url" "$tunnel_token" "$server_url"
+      "$tunnel_target_url" "$tunnel_token" "$server_url" "$source_dir/bin/agentdock" "$(dirname "$env_file")"
     if [[ "$tunnel_mode" == quick ]]; then
       server_url="$TUNNEL_PUBLIC_URL"
       oauth_enabled="true"
       write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" \
         "$server_url" yes true "$oauth_password" "$oauth_token_secret"
+      run_root chown "$service_user:$service_group" "$env_file"
       log "已将临时公网地址写入 AgentDock OAuth 配置并重启服务"
       start_service "$service_manager" "$service_name"
       curl -fsS "$smoke_url/healthz" >/dev/null
