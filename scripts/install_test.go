@@ -1212,13 +1212,17 @@ func TestReleaseWorkflowChecksOutRequestedTag(t *testing.T) {
 		`internal/buildinfo.Commit=${source_commit}`,
 		`$sourceCommit = (git rev-parse HEAD).Trim()`,
 		`internal/buildinfo.Commit=$sourceCommit`,
+		`echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"`,
+		`BUILD_COMMIT=${{ steps.build.outputs.commit }}`,
+		`cache-to: type=gha,mode=max,scope=${{ matrix.variant }},ignore-error=true`,
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("release.yml missing checked-out source commit behavior %q", want)
 		}
 	}
 	if strings.Contains(workflow, "internal/buildinfo.Commit=${GITHUB_SHA}") ||
-		strings.Contains(workflow, "internal/buildinfo.Commit=$env:GITHUB_SHA") {
+		strings.Contains(workflow, "internal/buildinfo.Commit=$env:GITHUB_SHA") ||
+		strings.Contains(workflow, "BUILD_COMMIT=${{ github.sha }}") {
 		t.Fatal("release build metadata must describe the checked-out tag, not the workflow dispatch commit")
 	}
 }
