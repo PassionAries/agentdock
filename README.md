@@ -2,13 +2,13 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-# AgentDock
+<img src="./docs/assets/agentdock-logo.png" alt="AgentDock logo" width="128" />
+
+# AgentDock MCP
 
 **Give AI agents secure, controlled access to every machine you operate.**
 
 Open ChatGPT in your browser and manage multiple computers and servers from one conversation. Write code, change configuration, run commands, and deploy in the real environment where the work belongs—without consuming a dedicated Codex coding quota.
-
-AgentDock is an independent tool runtime for AI agents. It exposes unified, secure, and controlled file, command, Git, Skill, MCP, browser automation, and task execution capabilities across local computers, remote servers, and containers. Connect multiple AgentDock instances to coordinate work across devices without constantly switching between machines.
 
 [Quick Start](https://uvwt.github.io/agentdock-docs/docs/getting-started/install) · [Documentation](https://uvwt.github.io/agentdock-docs/) · [Releases](https://github.com/uvwt/agentdock/releases) · [Issues](https://github.com/uvwt/agentdock/issues)
 
@@ -32,9 +32,7 @@ AgentDock is an independent tool runtime for AI agents. It exposes unified, secu
 
 AgentDock is an independent tool runtime for AI agents.
 
-It packages file-system access, command execution, Git, Skills, dynamic MCP, browser automation, and recoverable tasks into a unified MCP interface. MCP-compatible clients such as ChatGPT, Claude, and Codex can then operate local computers, remote servers, and container environments through the same tool model.
-
-In addition to project development and device operations similar to Codex, you can deploy AgentDock on several machines and connect all of them to the same AI conversation for cross-device control.
+It provides unified, secure, and controlled file, command, Git, Skill, MCP, browser automation, and task execution across local computers, remote servers, and containers. Connect multiple AgentDock instances to coordinate work across devices and finish multi-machine workflows in a single conversation.
 
 AgentDock does not provide a chat interface or perform model inference. It focuses on one responsibility:
 
@@ -66,6 +64,7 @@ AgentDock does not provide a chat interface or perform model inference. It focus
 - Extend capabilities through Skills and dynamic MCP servers
 - Persist long-running task state and continue after an interruption
 - Use the same tool model across macOS, Linux, Windows, and containers
+- And more
 
 ## Use case: complete a tunnel across devices
 
@@ -77,21 +76,6 @@ Suppose you have a computer behind NAT. Making it reachable externally usually r
 Previously, you had to log in to both machines and switch back and forth. With AgentDock installed on each device and connected to the same ChatGPT conversation, the AI can operate both environments and complete the entire workflow.
 
 The same pattern applies to multi-host deployments, local-to-public integration testing, cross-environment troubleshooting, batch configuration, and status inspection.
-
-## Why AgentDock?
-
-| Capability | Description |
-| --- | --- |
-| Operate devices from the web | Connect through MCP from ChatGPT or another client and work with real computers and servers in a conversation |
-| Multi-device coordination | Connect multiple AgentDock instances to the same conversation and execute across devices |
-| Unified tool entry point | Expose files, commands, Git, Skills, tasks, and browser capabilities through one MCP service |
-| Consistent local and remote behavior | Use the same tool model on macOS, Linux, Windows, VPS hosts, and Docker |
-| Execution outside coding quotas | Code changes, commands, and configuration run on your own devices rather than through a dedicated coding-agent execution quota |
-| Explicit execution boundaries | Constrain paths, permissions, timeouts, output size, and sensitive data |
-| Structured results | Keep tool-call state, command exit state, stdout, and stderr distinct |
-| Extensible runtime | Add independent Skills and dynamic MCP servers without placing every integration in the core binary |
-| Recoverable tasks | Track steps, checkpoints, blockers, recovery, final review, and completion conditions |
-| Production-oriented deployment | Provide Docker, systemd, macOS, and Windows installation options with regularly published artifacts |
 
 ## Quick start
 
@@ -236,29 +220,9 @@ Official and community Skill sources live in [uvwt/agentdock-skills](https://git
 - Search tools, inspect schemas, and perform controlled calls
 - Configuration isolation between MCP servers
 
-### Native ACP runtime
+### Native ACP
 
-AgentDock can optionally act as a native ACP client and host a local coding-agent adapter. ACP is not modeled as a dynamic MCP server: the adapter process, bidirectional JSON-RPC connection, sessions, long-running prompt events, permission interactions, and recovery metadata all belong to the AgentDock Runtime lifecycle.
-
-- `acp_session` inspects or authenticates the ACP agent and creates, loads, resumes, forks, configures, closes, and deletes persistent sessions
-- `acp_prompt` starts turns asynchronously and exposes ordered event polling, steering, and cancellation
-- `acp_interaction` handles permission requests initiated by the agent
-- Windows uses a Job Object; Linux and macOS use a dedicated process group to reclaim the adapter process tree
-- Every session working directory and additional root must remain inside host-configured allowed roots
-- Optional ACP methods are enabled only when the `initialize` response advertises the corresponding capability
-- Restart recovery preserves session metadata but never replays a potentially mutating prompt automatically
-
-ACP is disabled by default. The macOS and Windows control panels provide Codex, Claude, and Grok Build presets and only use locally installed executables. Grok Build runs as `grok agent stdio`; `--always-approve` is never enabled by default. Enabling ACP requires at least an absolute adapter executable and allowed workspace roots:
-
-```bash
-AGENTDOCK_ACP_ENABLED=true
-AGENTDOCK_ACP_AGENT=claude
-AGENTDOCK_ACP_COMMAND=/absolute/path/to/node
-AGENTDOCK_ACP_ARGS_JSON='["/absolute/path/to/claude-agent-acp/dist/index.js"]'
-AGENTDOCK_ACP_ALLOWED_ROOTS=/srv/code,/srv/worktrees
-```
-
-Map sensitive variables explicitly from the host with `AGENTDOCK_ACP_ENV_FROM_ENV_JSON`; their values are not written to AgentDock state. See [Native ACP Runtime](docs/native-acp-runtime.md) for the architecture and [Native ACP Acceptance](docs/native-acp-acceptance.md) for the Claude, Codex, and Grok Build validation sequence.
+AgentDock can optionally act as a native ACP client and host a local coding-agent adapter.
 
 ### Browser and desktop automation
 

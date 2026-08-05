@@ -2,13 +2,14 @@
 
 [English](./README.md) | 简体中文
 
-# AgentDock
+<img src="./docs/assets/agentdock-logo.png" alt="AgentDock logo" width="128" />
+
+# AgentDock MCP
 
 **让 AI 的双手，真正触达你的每一台设备。**
 
 打开网页版 ChatGPT，即可管理多台电脑与服务器：在真实设备上写代码、改配置、跑命令与部署，执行发生在你的机器上，不消耗Codex额度。
 
-AgentDock是面向 AI Agent 的独立工具运行层，为本地电脑、远程服务器与容器环境提供统一、安全、可控的文件、命令、Git、Skill、MCP、浏览器自动化和任务执行能力。配置多台 AgentDock，还能跨设备协同，把原本要在多机之间来回切换的工作，收敛到一次对话里完成。
 
 [快速开始](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/install) · [在线文档](https://uvwt.github.io/agentdock-docs/zh-CN/) · [版本发布](https://github.com/uvwt/agentdock/releases) · [问题反馈](https://github.com/uvwt/agentdock/issues)
 
@@ -32,9 +33,7 @@ AgentDock是面向 AI Agent 的独立工具运行层，为本地电脑、远程�
 
 AgentDock 是一个面向 AI Agent 的独立工具运行层。
 
-它将设备上的文件系统、命令执行、Git、Skill、动态 MCP、浏览器自动化和可恢复任务封装为统一的 MCP 能力，让网页版 ChatGPT、Claude、Codex 等支持 MCP 的客户端，以一致的方式操作本地电脑、远程服务器和容器环境。
-
-除了类似 Codex 的项目开发与设备操作能力之外，你还可以在多台机器上分别部署 AgentDock，在同一个 AI 对话中同时接入，实现跨设备控制。
+它为本地电脑、远程服务器与容器环境提供统一、安全、可控的文件、命令、Git、Skill、MCP、浏览器自动化和任务执行能力。配置多台 AgentDock，还能跨设备协同，把原本要在多机之间来回切换的工作，收敛到一次对话里完成。
 
 AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决一件事：
 
@@ -48,7 +47,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
           ▼             ▼             ▼
    ┌───────────┐ ┌───────────┐ ┌───────────┐
    │ AgentDock │ │ AgentDock │ │ AgentDock │
-   │  本机电脑 │ │  内网机器 │ │  云服务器 │
+   │  本机电脑  │ │  内网机器   │ │  云服务器  │
    └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
          │             │             │
          ▼             ▼             ▼
@@ -66,6 +65,7 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 - 通过 Skill 和动态 MCP 扩展外部能力
 - 保存长时间任务的执行状态，并在中断后继续
 - 用同一套工具模型连接 macOS、Linux、Windows 与容器环境
+- 等等
 
 ## 典型场景：跨设备完成内网穿透
 
@@ -78,20 +78,6 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 这类能力可以继续扩展到更多实际场景：多机部署、本地开发联调公网服务、跨环境排障、批量配置与状态巡检等。
 
-## 为什么使用 AgentDock
-
-| 能力 | 说明 |
-| --- | --- |
-| 网页即可操控设备 | 通过 MCP 接入 ChatGPT 等客户端，在对话中操作真实电脑与服务器 |
-| 多机协同 | 配置多台 AgentDock，在同一对话中跨设备执行任务 |
-| 统一工具入口 | 通过一个 MCP 服务提供文件、命令、Git、Skill、任务和浏览器等能力 |
-| 本地与远程一致 | 同一套工具模型可运行在 macOS、Linux、Windows、VPS 和 Docker 环境 |
-| 执行不占编程额度 | 写代码、跑命令、改配置发生在你的设备上，不依赖专用编程 Agent 额度 |
-| 明确执行边界 | 对路径、权限、超时、输出长度和敏感信息进行约束 |
-| 结构化执行结果 | 区分工具调用状态、命令退出状态、标准输出和错误信息 |
-| 可扩展运行时 | 支持独立 Skill 和动态 MCP Server，无需将所有能力写入核心程序 |
-| 可恢复任务 | 支持任务步骤、检查点、阻塞、恢复、最终审查和完成条件 |
-| 面向正式部署 | 提供 Docker、systemd、macOS 和 Windows 安装方式，并持续发布正式镜像 |
 
 ## 快速开始
 
@@ -236,29 +222,9 @@ agentdock update
 - 工具搜索、Schema 检查和受控调用
 - MCP Server 之间的配置隔离
 
-### 原生 ACP 运行时
+### 原生 ACP 
 
-AgentDock 可以选择作为 ACP Client 原生托管本地 Coding Agent adapter。ACP 不是动态 MCP：adapter 进程、双向 JSON-RPC 连接、会话、长任务事件、权限交互和恢复状态都由 AgentDock Runtime 统一管理。
-
-- `acp_session`：检查或认证 ACP Agent，并创建、加载、恢复、分叉、配置、关闭和删除持久会话
-- `acp_prompt`：异步启动 Agent turn，通过有序事件增量观察、steer 或取消
-- `acp_interaction`：处理 Agent 发起的权限请求
-- Windows 使用 Job Object，Linux 与 macOS 使用独立进程组回收 adapter 及其子进程
-- 所有会话工作目录和附加目录必须位于宿主机配置的允许根目录内
-- 可选 ACP 方法严格按 `initialize` 返回的 capability 开启
-- 重启后只恢复会话元数据，不自动重放可能产生副作用的 Prompt
-
-ACP 默认关闭。macOS 与 Windows 控制面板提供 Codex、Claude 和 Grok Build 三个预设，只会使用本机已安装的可执行入口；Grok Build 使用 `grok agent stdio`，不会默认开启 `--always-approve`。启用时至少配置绝对 adapter 可执行路径和允许根目录：
-
-```bash
-AGENTDOCK_ACP_ENABLED=true
-AGENTDOCK_ACP_AGENT=claude
-AGENTDOCK_ACP_COMMAND=/absolute/path/to/node
-AGENTDOCK_ACP_ARGS_JSON='["/absolute/path/to/claude-agent-acp/dist/index.js"]'
-AGENTDOCK_ACP_ALLOWED_ROOTS=/srv/code,/srv/worktrees
-```
-
-敏感变量通过 `AGENTDOCK_ACP_ENV_FROM_ENV_JSON` 从宿主环境显式映射，不写入 AgentDock 状态。架构与安全边界见 [Native ACP Runtime](docs/native-acp-runtime.md)，Claude、Codex 与 Grok Build 验收顺序见 [Native ACP Acceptance](docs/native-acp-acceptance.md)。
+AgentDock 可以选择作为 ACP Client 原生托管本地 Coding Agent adapter。
 
 ### 浏览器与桌面自动化
 
