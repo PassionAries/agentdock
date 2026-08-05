@@ -30,6 +30,7 @@ import (
 
 const (
 	defaultOAuthAccessTokenTTLSeconds = int64(time.Hour / time.Second)
+	neverOAuthClientExpiresInSeconds  = int64(999999 * 24 * 60 * 60)
 	oauthRefreshTokenTTL              = 90 * 24 * time.Hour
 	oauthFormBodyLimit                = 64 << 10
 )
@@ -834,7 +835,9 @@ func newOAuthProtocolServer(cfg config.Config, store *auth.OAuthStore) *oauthser
 	protocol.SetResponseTokenHandler(func(w http.ResponseWriter, data map[string]interface{}, header http.Header, statusCode ...int) error {
 		if _, issued := data["access_token"]; issued {
 			if cfg.OAuthAccessTokenNeverExpires {
-				delete(data, "expires_in")
+				// ChatGPT 当前不会持久保存缺少 expires_in 的 OAuth 令牌。
+				// 服务端仍按永久令牌校验，这个极远的有限值只用于客户端兼容。
+				data["expires_in"] = neverOAuthClientExpiresInSeconds
 			} else {
 				data["expires_in"] = accessTokenTTLSeconds
 			}

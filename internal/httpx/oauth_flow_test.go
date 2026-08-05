@@ -590,19 +590,18 @@ func TestOAuthAccessTokenCanBeConfiguredToNeverExpire(t *testing.T) {
 	cfg.OAuthAccessTokenTTLSeconds = 0
 	store := auth.NewOAuthStore()
 	response := issueOAuthTokenForTTLTest(t, cfg, store)
-	var payload map[string]json.RawMessage
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := payload["expires_in"]; exists {
-		t.Fatalf("token response = %s, want expires_in omitted", response.Body.String())
-	}
-	var accessToken string
-	if err := json.Unmarshal(payload["access_token"], &accessToken); err != nil {
-		t.Fatal(err)
+	if payload.ExpiresIn != neverOAuthClientExpiresInSeconds {
+		t.Fatalf("expires_in = %d, want compatibility value %d", payload.ExpiresIn, neverOAuthClientExpiresInSeconds)
 	}
 	request := httptest.NewRequest(http.MethodPost, cfg.OAuthServerURL+"/mcp", nil)
-	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Authorization", "Bearer "+payload.AccessToken)
 	ctx := auth.WithOAuthRequest(request.Context(), cfg.OAuthServerURL, cfg.OAuthServerURL+"/mcp", "")
 	if _, err := newOAuthProtocolServer(cfg, store).ValidationBearerToken(request.WithContext(ctx)); err != nil {
 		t.Fatalf("ValidationBearerToken() error = %v", err)
