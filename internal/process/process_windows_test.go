@@ -4,9 +4,41 @@ package process
 
 import (
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
+
+func TestConfigureHidesConsoleWindow(t *testing.T) {
+	cmd := exec.Command("cmd.exe")
+
+	Configure(cmd)
+
+	if cmd.SysProcAttr == nil {
+		t.Fatal("Configure did not initialize Windows process attributes")
+	}
+	if !cmd.SysProcAttr.HideWindow {
+		t.Fatal("Configure did not hide the child process window")
+	}
+	if cmd.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
+		t.Fatalf("creation flags = %#x, want CREATE_NO_WINDOW", cmd.SysProcAttr.CreationFlags)
+	}
+}
+
+func TestConfigurePreservesExistingCreationFlags(t *testing.T) {
+	existingFlags := uint32(windows.CREATE_NEW_PROCESS_GROUP)
+	cmd := exec.Command("cmd.exe")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: existingFlags}
+
+	Configure(cmd)
+
+	wantFlags := existingFlags | uint32(windows.CREATE_NO_WINDOW)
+	if cmd.SysProcAttr.CreationFlags != wantFlags {
+		t.Fatalf("creation flags = %#x, want %#x", cmd.SysProcAttr.CreationFlags, wantFlags)
+	}
+}
 
 func TestWindowsJobObjectTerminatesAttachedProcess(t *testing.T) {
 	cmd := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -18,9 +19,18 @@ type Controller struct {
 	job windows.Handle
 }
 
-// Configure is intentionally empty. Job Object ownership is attached immediately
-// after Start because os/exec does not expose the suspended primary thread handle.
-func Configure(_ *exec.Cmd) {}
+// Configure 在后台子进程启动前禁用控制台窗口，同时保留调用方已有的创建标志。
+// 标准命令、ACP 和 stdio MCP 都通过该入口启动；交互式 ConPTY 使用独立路径。
+func Configure(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+}
 
 func Attach(cmd *exec.Cmd) (*Controller, error) {
 	if cmd == nil || cmd.Process == nil {
