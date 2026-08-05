@@ -300,7 +300,7 @@ AGENTDOCK_OAUTH_ENABLED=true
 AGENTDOCK_SERVER_URL=https://agentdock.example.com
 AGENTDOCK_OAUTH_PASSWORD=***
 AGENTDOCK_OAUTH_TOKEN_SECRET=***
-# Optional Go duration; defaults to 1h and accepts 1m through 2160h
+# Optional; defaults to 1h. Accepts Go durations, integer days such as 999999d, or never.
 AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL=1h
 ```
 

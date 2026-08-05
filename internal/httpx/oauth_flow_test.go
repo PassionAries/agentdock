@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/uvwt/agentdock/internal/auth"
 	"github.com/uvwt/agentdock/internal/config"
@@ -569,8 +568,49 @@ func TestOAuthAccessTokenTTLUsesConfiguration(t *testing.T) {
 	t.Setenv("AGENTDOCK_OAUTH_PASSWORD", "")
 	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-signing-secret")
 	cfg := oauthTestConfig(t)
-	cfg.OAuthAccessTokenTTL = 24 * time.Hour
+	cfg.OAuthAccessTokenTTLSeconds = int64(999999 * 24 * 60 * 60)
 	store := auth.NewOAuthStore()
+	response := issueOAuthTokenForTTLTest(t, cfg, store)
+	var payload struct {
+		ExpiresIn int64 `json:"expires_in"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ExpiresIn != cfg.OAuthAccessTokenTTLSeconds {
+		t.Fatalf("expires_in = %d, want %d", payload.ExpiresIn, cfg.OAuthAccessTokenTTLSeconds)
+	}
+}
+
+func TestOAuthAccessTokenCanBeConfiguredToNeverExpire(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_PASSWORD", "")
+	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-signing-secret")
+	cfg := oauthTestConfig(t)
+	cfg.OAuthAccessTokenNeverExpires = true
+	cfg.OAuthAccessTokenTTLSeconds = 0
+	store := auth.NewOAuthStore()
+	response := issueOAuthTokenForTTLTest(t, cfg, store)
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["expires_in"]; exists {
+		t.Fatalf("token response = %s, want expires_in omitted", response.Body.String())
+	}
+	var accessToken string
+	if err := json.Unmarshal(payload["access_token"], &accessToken); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, cfg.OAuthServerURL+"/mcp", nil)
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	ctx := auth.WithOAuthRequest(request.Context(), cfg.OAuthServerURL, cfg.OAuthServerURL+"/mcp", "")
+	if _, err := newOAuthProtocolServer(cfg, store).ValidationBearerToken(request.WithContext(ctx)); err != nil {
+		t.Fatalf("ValidationBearerToken() error = %v", err)
+	}
+}
+
+func issueOAuthTokenForTTLTest(t *testing.T, cfg config.Config, store *auth.OAuthStore) *httptest.ResponseRecorder {
+	t.Helper()
 	clientID := oauthRegisteredClientID(t, store, oauthTestRedirect)
 	resource := cfg.OAuthServerURL + "/mcp"
 	authorizeValues := url.Values{
@@ -611,15 +651,7 @@ func TestOAuthAccessTokenTTLUsesConfiguration(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("token status = %d; body=%s", response.Code, response.Body.String())
 	}
-	var payload struct {
-		ExpiresIn int `json:"expires_in"`
-	}
-	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.ExpiresIn != int((24 * time.Hour).Seconds()) {
-		t.Fatalf("expires_in = %d, want %d", payload.ExpiresIn, int((24 * time.Hour).Seconds()))
-	}
+	return response
 }
 
 func postTokenRequest(t *testing.T, cfg config.Config, codes *auth.OAuthStore, values url.Values) *httptest.ResponseRecorder {

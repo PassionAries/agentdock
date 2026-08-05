@@ -300,7 +300,7 @@ AGENTDOCK_OAUTH_ENABLED=true
 AGENTDOCK_SERVER_URL=https://agentdock.example.com
 AGENTDOCK_OAUTH_PASSWORD=<至少-12-个字符的授权密码>
 AGENTDOCK_OAUTH_TOKEN_SECRET=<至少-32-字节的随机签名密钥>
-# 可选，Go duration 格式，默认 1h，范围 1m 至 2160h
+# 可选，默认 1h；支持 Go duration、999999d 这类整数天数，或 never（永不过期）
 AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL=1h
 ```
 

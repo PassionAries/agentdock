@@ -227,26 +227,49 @@ func TestFromEnvParsesTypedValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromEnv() error = %v", err)
 	}
-	if cfg.Port != 9876 || !cfg.BrowserEnabled || !cfg.OAuthEnabled || !cfg.Stdio || cfg.OAuthAccessTokenTTL != 24*time.Hour ||
+	if cfg.Port != 9876 || !cfg.BrowserEnabled || !cfg.OAuthEnabled || !cfg.Stdio || cfg.OAuthAccessTokenTTLSeconds != int64(24*time.Hour/time.Second) ||
 		cfg.BrowserRunnerDir != runnerDir || cfg.BrowserNodePath != nodePath {
 		t.Fatalf("config = %#v", cfg)
+	}
+}
+
+func TestFromEnvParsesLongOAuthAccessTokenTTLInDays(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "999999d")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	want := int64(999999 * 24 * 60 * 60)
+	if cfg.OAuthAccessTokenTTLSeconds != want {
+		t.Fatalf("OAuthAccessTokenTTLSeconds = %d, want %d", cfg.OAuthAccessTokenTTLSeconds, want)
+	}
+}
+
+func TestFromEnvParsesNeverExpiringOAuthAccessToken(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "never")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if !cfg.OAuthAccessTokenNeverExpires || cfg.OAuthAccessTokenTTLSeconds != 0 {
+		t.Fatalf("config = %#v, want a non-expiring OAuth access token", cfg)
 	}
 }
 
 func TestNormalizeValidatesOAuthAccessTokenTTL(t *testing.T) {
 	home := t.TempDir()
 	for _, test := range []struct {
-		name string
-		ttl  time.Duration
+		name       string
+		ttlSeconds int64
 	}{
-		{name: "too short", ttl: time.Second},
-		{name: "too long", ttl: 90*24*time.Hour + time.Second},
+		{name: "too short", ttlSeconds: 1},
+		{name: "too long", ttlSeconds: int64(999999*24*60*60) + 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := Config{
-				AgentDockHome:       filepath.Join(home, test.name, "home"),
-				AgentDockDefaultDir: filepath.Join(home, test.name, "workspace"),
-				OAuthAccessTokenTTL: test.ttl,
+				AgentDockHome:              filepath.Join(home, test.name, "home"),
+				AgentDockDefaultDir:        filepath.Join(home, test.name, "workspace"),
+				OAuthAccessTokenTTLSeconds: test.ttlSeconds,
 			}
 			if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL") {
 				t.Fatalf("Normalize() error = %v, want OAuth access token TTL error", err)

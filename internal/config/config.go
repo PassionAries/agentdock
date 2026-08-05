@@ -23,33 +23,37 @@ const (
 	BrowserRunnerDir   = "browser-runner"
 	BrowserArtifactDir = "browser-artifacts"
 	RecallTimeoutMS    = 30000
+
+	defaultOAuthAccessTokenTTLSeconds = int64(time.Hour / time.Second)
+	maxOAuthAccessTokenTTLSeconds     = int64(999999 * 24 * 60 * 60)
 )
 
 type Config struct {
-	AgentDockHome       string
-	AgentDockDefaultDir string
-	Host                string
-	Port                int
-	AuthToken           string
-	OAuthEnabled        bool
-	OAuthServerURL      string
-	OAuthAccessTokenTTL time.Duration
-	LogLevel            string
-	NexusEndpoint       string
-	NexusToken          string
-	BrowserEnabled      bool
-	BrowserRunnerDir    string
-	BrowserNodePath     string
-	ACPEnabled          bool
-	ACPAgentName        string
-	ACPCommand          string
-	ACPArgs             []string
-	ACPEnvFromEnv       map[string]string
-	ACPAllowedRoots     []string
-	ACPMaxPrompts       int
-	ACPInteractionMS    int
-	Stdio               bool
-	TrustedProxyCIDRs   []string
+	AgentDockHome                string
+	AgentDockDefaultDir          string
+	Host                         string
+	Port                         int
+	AuthToken                    string
+	OAuthEnabled                 bool
+	OAuthServerURL               string
+	OAuthAccessTokenTTLSeconds   int64
+	OAuthAccessTokenNeverExpires bool
+	LogLevel                     string
+	NexusEndpoint                string
+	NexusToken                   string
+	BrowserEnabled               bool
+	BrowserRunnerDir             string
+	BrowserNodePath              string
+	ACPEnabled                   bool
+	ACPAgentName                 string
+	ACPCommand                   string
+	ACPArgs                      []string
+	ACPEnvFromEnv                map[string]string
+	ACPAllowedRoots              []string
+	ACPMaxPrompts                int
+	ACPInteractionMS             int
+	Stdio                        bool
+	TrustedProxyCIDRs            []string
 }
 
 func FromEnv() (Config, error) {
@@ -65,7 +69,7 @@ func FromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	oauthAccessTokenTTL, err := getenvDuration("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", time.Hour)
+	oauthAccessTokenTTLSeconds, oauthAccessTokenNeverExpires, err := getenvOAuthAccessTokenTTL("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", defaultOAuthAccessTokenTTLSeconds)
 	if err != nil {
 		return Config{}, err
 	}
@@ -106,30 +110,31 @@ func FromEnv() (Config, error) {
 		}
 	}
 	return Config{
-		AgentDockHome:       strings.TrimSpace(os.Getenv("AGENTDOCK_HOME")),
-		AgentDockDefaultDir: strings.TrimSpace(os.Getenv("AGENTDOCK_DEFAULT_DIR")),
-		Host:                getenv("AGENTDOCK_HOST", "127.0.0.1"),
-		Port:                port,
-		AuthToken:           os.Getenv("AGENTDOCK_AUTH_TOKEN"),
-		OAuthEnabled:        oauthEnabled,
-		OAuthServerURL:      os.Getenv("AGENTDOCK_SERVER_URL"),
-		OAuthAccessTokenTTL: oauthAccessTokenTTL,
-		LogLevel:            getenv("AGENTDOCK_LOG_LEVEL", "info"),
-		NexusEndpoint:       getenv("AGENTDOCK_NEXUS_ENDPOINT", ""),
-		NexusToken:          os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
-		BrowserEnabled:      browserEnabled,
-		BrowserRunnerDir:    os.Getenv("AGENTDOCK_BROWSER_RUNNER_DIR"),
-		BrowserNodePath:     os.Getenv("AGENTDOCK_BROWSER_NODE_PATH"),
-		ACPEnabled:          acpEnabled,
-		ACPAgentName:        acpAgentName,
-		ACPCommand:          acpCommand,
-		ACPArgs:             acpArgs,
-		ACPEnvFromEnv:       acpEnvFromEnv,
-		ACPAllowedRoots:     acpAllowedRoots,
-		ACPMaxPrompts:       acpMaxPrompts,
-		ACPInteractionMS:    acpInteractionMS,
-		Stdio:               stdio,
-		TrustedProxyCIDRs:   splitCommaSeparated(os.Getenv("AGENTDOCK_TRUSTED_PROXY_CIDRS")),
+		AgentDockHome:                strings.TrimSpace(os.Getenv("AGENTDOCK_HOME")),
+		AgentDockDefaultDir:          strings.TrimSpace(os.Getenv("AGENTDOCK_DEFAULT_DIR")),
+		Host:                         getenv("AGENTDOCK_HOST", "127.0.0.1"),
+		Port:                         port,
+		AuthToken:                    os.Getenv("AGENTDOCK_AUTH_TOKEN"),
+		OAuthEnabled:                 oauthEnabled,
+		OAuthServerURL:               os.Getenv("AGENTDOCK_SERVER_URL"),
+		OAuthAccessTokenTTLSeconds:   oauthAccessTokenTTLSeconds,
+		OAuthAccessTokenNeverExpires: oauthAccessTokenNeverExpires,
+		LogLevel:                     getenv("AGENTDOCK_LOG_LEVEL", "info"),
+		NexusEndpoint:                getenv("AGENTDOCK_NEXUS_ENDPOINT", ""),
+		NexusToken:                   os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
+		BrowserEnabled:               browserEnabled,
+		BrowserRunnerDir:             os.Getenv("AGENTDOCK_BROWSER_RUNNER_DIR"),
+		BrowserNodePath:              os.Getenv("AGENTDOCK_BROWSER_NODE_PATH"),
+		ACPEnabled:                   acpEnabled,
+		ACPAgentName:                 acpAgentName,
+		ACPCommand:                   acpCommand,
+		ACPArgs:                      acpArgs,
+		ACPEnvFromEnv:                acpEnvFromEnv,
+		ACPAllowedRoots:              acpAllowedRoots,
+		ACPMaxPrompts:                acpMaxPrompts,
+		ACPInteractionMS:             acpInteractionMS,
+		Stdio:                        stdio,
+		TrustedProxyCIDRs:            splitCommaSeparated(os.Getenv("AGENTDOCK_TRUSTED_PROXY_CIDRS")),
 	}, nil
 }
 
@@ -197,11 +202,16 @@ func (c *Config) Normalize() error {
 		c.Host = "127.0.0.1"
 	}
 	c.OAuthServerURL = strings.TrimSpace(c.OAuthServerURL)
-	if c.OAuthAccessTokenTTL == 0 {
-		c.OAuthAccessTokenTTL = time.Hour
+	if c.OAuthAccessTokenNeverExpires {
+		c.OAuthAccessTokenTTLSeconds = 0
+	} else if c.OAuthAccessTokenTTLSeconds == 0 {
+		c.OAuthAccessTokenTTLSeconds = defaultOAuthAccessTokenTTLSeconds
 	}
-	if c.OAuthAccessTokenTTL < time.Minute || c.OAuthAccessTokenTTL > 90*24*time.Hour {
-		return fmt.Errorf("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL must be between 1m and 2160h: %s", c.OAuthAccessTokenTTL)
+	if !c.OAuthAccessTokenNeverExpires && (c.OAuthAccessTokenTTLSeconds < int64(time.Minute/time.Second) || c.OAuthAccessTokenTTLSeconds > maxOAuthAccessTokenTTLSeconds) {
+		return fmt.Errorf(
+			"AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL must be between 1m and 999999d: %ds",
+			c.OAuthAccessTokenTTLSeconds,
+		)
 	}
 	if c.Port == 0 {
 		c.Port = 8765
@@ -447,16 +457,29 @@ func getenvBool(key string, fallback bool) (bool, error) {
 	return parsed, nil
 }
 
-func getenvDuration(key string, fallback time.Duration) (time.Duration, error) {
+func getenvOAuthAccessTokenTTL(key string, fallback int64) (seconds int64, never bool, err error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
-		return fallback, nil
+		return fallback, false, nil
+	}
+	if strings.EqualFold(value, "never") {
+		return 0, true, nil
+	}
+	if strings.HasSuffix(strings.ToLower(value), "d") {
+		days, err := strconv.ParseInt(strings.TrimSpace(value[:len(value)-1]), 10, 64)
+		if err != nil || days <= 0 || days > maxOAuthAccessTokenTTLSeconds/(24*60*60) {
+			return 0, false, fmt.Errorf("parse %s as duration: invalid day count %q", key, value)
+		}
+		return days * 24 * 60 * 60, false, nil
 	}
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
-		return 0, fmt.Errorf("parse %s as duration: %w", key, err)
+		return 0, false, fmt.Errorf("parse %s as duration: %w", key, err)
 	}
-	return parsed, nil
+	if parsed%time.Second != 0 {
+		return 0, false, fmt.Errorf("parse %s as duration: value must use whole seconds", key)
+	}
+	return int64(parsed / time.Second), false, nil
 }
 
 func getenvStringSliceJSON(key string) ([]string, error) {

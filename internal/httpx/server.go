@@ -29,9 +29,9 @@ import (
 )
 
 const (
-	defaultOAuthAccessTokenTTL = time.Hour
-	oauthRefreshTokenTTL       = 90 * 24 * time.Hour
-	oauthFormBodyLimit         = 64 << 10
+	defaultOAuthAccessTokenTTLSeconds = int64(time.Hour / time.Second)
+	oauthRefreshTokenTTL              = 90 * 24 * time.Hour
+	oauthFormBodyLimit                = 64 << 10
 )
 
 func Serve(ctx context.Context, server *mcp.Server, cfg config.Config) error {
@@ -808,14 +808,16 @@ func authorizedOAuth(r *http.Request, cfg config.Config, store *auth.OAuthStore)
 }
 
 func newOAuthProtocolServer(cfg config.Config, store *auth.OAuthStore) *oauthserver.Server {
-	accessTokenTTL := cfg.OAuthAccessTokenTTL
-	if accessTokenTTL <= 0 {
-		accessTokenTTL = defaultOAuthAccessTokenTTL
+	accessTokenTTLSeconds := cfg.OAuthAccessTokenTTLSeconds
+	if cfg.OAuthAccessTokenNeverExpires {
+		accessTokenTTLSeconds = 0
+	} else if accessTokenTTLSeconds <= 0 {
+		accessTokenTTLSeconds = defaultOAuthAccessTokenTTLSeconds
 	}
 	manager := auth.NewOAuthManager(
 		store,
 		oauthSigningKey(),
-		accessTokenTTL,
+		accessTokenTTLSeconds,
 		oauthRefreshTokenTTL,
 	)
 	protocolConfig := oauthserver.NewConfig()
@@ -828,6 +830,27 @@ func newOAuthProtocolServer(cfg config.Config, store *auth.OAuthStore) *oauthser
 	protocol.SetClientInfoHandler(oauthserver.ClientFormHandler)
 	protocol.SetAccessTokenResolveHandler(func(request *http.Request) (string, bool) {
 		return auth.ParseBearerToken(request.Header.Get("Authorization"))
+	})
+	protocol.SetResponseTokenHandler(func(w http.ResponseWriter, data map[string]interface{}, header http.Header, statusCode ...int) error {
+		if _, issued := data["access_token"]; issued {
+			if cfg.OAuthAccessTokenNeverExpires {
+				delete(data, "expires_in")
+			} else {
+				data["expires_in"] = accessTokenTTLSeconds
+			}
+		}
+		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
+		for key := range header {
+			w.Header().Set(key, header.Get(key))
+		}
+		status := http.StatusOK
+		if len(statusCode) > 0 && statusCode[0] > 0 {
+			status = statusCode[0]
+		}
+		w.WriteHeader(status)
+		return json.NewEncoder(w).Encode(data)
 	})
 	protocol.SetClientAuthorizedHandler(func(clientID string, grant gooauth2.GrantType) (bool, error) {
 		return store.ClientAllowsGrant(clientID, grant.String()), nil
