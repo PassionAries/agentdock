@@ -29,9 +29,9 @@ import (
 )
 
 const (
-	oauthAccessTokenTTL  = time.Hour
-	oauthRefreshTokenTTL = 90 * 24 * time.Hour
-	oauthFormBodyLimit   = 64 << 10
+	defaultOAuthAccessTokenTTL = time.Hour
+	oauthRefreshTokenTTL       = 90 * 24 * time.Hour
+	oauthFormBodyLimit         = 64 << 10
 )
 
 func Serve(ctx context.Context, server *mcp.Server, cfg config.Config) error {
@@ -808,10 +808,14 @@ func authorizedOAuth(r *http.Request, cfg config.Config, store *auth.OAuthStore)
 }
 
 func newOAuthProtocolServer(cfg config.Config, store *auth.OAuthStore) *oauthserver.Server {
+	accessTokenTTL := cfg.OAuthAccessTokenTTL
+	if accessTokenTTL <= 0 {
+		accessTokenTTL = defaultOAuthAccessTokenTTL
+	}
 	manager := auth.NewOAuthManager(
 		store,
 		oauthSigningKey(),
-		oauthAccessTokenTTL,
+		accessTokenTTL,
 		oauthRefreshTokenTTL,
 	)
 	protocolConfig := oauthserver.NewConfig()

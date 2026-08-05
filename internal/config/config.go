@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/uvwt/agentdock/internal/fs/securepath"
 )
@@ -32,6 +33,7 @@ type Config struct {
 	AuthToken           string
 	OAuthEnabled        bool
 	OAuthServerURL      string
+	OAuthAccessTokenTTL time.Duration
 	LogLevel            string
 	NexusEndpoint       string
 	NexusToken          string
@@ -60,6 +62,10 @@ func FromEnv() (Config, error) {
 		return Config{}, err
 	}
 	oauthEnabled, err := getenvBool("AGENTDOCK_OAUTH_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	oauthAccessTokenTTL, err := getenvDuration("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", time.Hour)
 	if err != nil {
 		return Config{}, err
 	}
@@ -107,6 +113,7 @@ func FromEnv() (Config, error) {
 		AuthToken:           os.Getenv("AGENTDOCK_AUTH_TOKEN"),
 		OAuthEnabled:        oauthEnabled,
 		OAuthServerURL:      os.Getenv("AGENTDOCK_SERVER_URL"),
+		OAuthAccessTokenTTL: oauthAccessTokenTTL,
 		LogLevel:            getenv("AGENTDOCK_LOG_LEVEL", "info"),
 		NexusEndpoint:       getenv("AGENTDOCK_NEXUS_ENDPOINT", ""),
 		NexusToken:          os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
@@ -190,6 +197,12 @@ func (c *Config) Normalize() error {
 		c.Host = "127.0.0.1"
 	}
 	c.OAuthServerURL = strings.TrimSpace(c.OAuthServerURL)
+	if c.OAuthAccessTokenTTL == 0 {
+		c.OAuthAccessTokenTTL = time.Hour
+	}
+	if c.OAuthAccessTokenTTL < time.Minute || c.OAuthAccessTokenTTL > 90*24*time.Hour {
+		return fmt.Errorf("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL must be between 1m and 2160h: %s", c.OAuthAccessTokenTTL)
+	}
 	if c.Port == 0 {
 		c.Port = 8765
 	}
@@ -430,6 +443,18 @@ func getenvBool(key string, fallback bool) (bool, error) {
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return false, fmt.Errorf("parse %s as boolean: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func getenvDuration(key string, fallback time.Duration) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s as duration: %w", key, err)
 	}
 	return parsed, nil
 }

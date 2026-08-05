@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uvwt/agentdock/internal/auth"
 	"github.com/uvwt/agentdock/internal/config"
@@ -562,6 +563,63 @@ func oauthTestConfig(t *testing.T) config.Config {
 	cfg.OAuthEnabled = true
 	cfg.OAuthServerURL = "https://agentdock.example"
 	return cfg
+}
+
+func TestOAuthAccessTokenTTLUsesConfiguration(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_PASSWORD", "")
+	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-signing-secret")
+	cfg := oauthTestConfig(t)
+	cfg.OAuthAccessTokenTTL = 24 * time.Hour
+	store := auth.NewOAuthStore()
+	clientID := oauthRegisteredClientID(t, store, oauthTestRedirect)
+	resource := cfg.OAuthServerURL + "/mcp"
+	authorizeValues := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {clientID},
+		"redirect_uri":          {oauthTestRedirect},
+		"code_challenge":        {oauthTestChallenge},
+		"code_challenge_method": {"S256"},
+		"resource":              {resource},
+		"state":                 {"state-value"},
+	}
+	authorizeResponse := httptest.NewRecorder()
+	handleAuthorizeForTest(
+		authorizeResponse,
+		httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+authorizeValues.Encode(), nil),
+		cfg,
+		store,
+	)
+	if authorizeResponse.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d; body=%s", authorizeResponse.Code, authorizeResponse.Body.String())
+	}
+	location, err := url.Parse(authorizeResponse.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := location.Query().Get("code")
+	if code == "" {
+		t.Fatalf("authorization redirect = %s", location)
+	}
+	response := postTokenRequest(t, cfg, store, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {oauthTestRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {oauthTestVerifier},
+		"resource":      {resource},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("token status = %d; body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		ExpiresIn int `json:"expires_in"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ExpiresIn != int((24 * time.Hour).Seconds()) {
+		t.Fatalf("expires_in = %d, want %d", payload.ExpiresIn, int((24 * time.Hour).Seconds()))
+	}
 }
 
 func postTokenRequest(t *testing.T, cfg config.Config, codes *auth.OAuthStore, values url.Values) *httptest.ResponseRecorder {
