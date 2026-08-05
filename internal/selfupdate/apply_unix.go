@@ -8,8 +8,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+type desktopUpdateOutcome struct {
+	OK             bool   `json:"ok"`
+	CurrentVersion string `json:"current_version"`
+	TargetVersion  string `json:"target_version"`
+	Message        string `json:"message"`
+}
+
+type desktopUpdateTransaction interface {
+	Install(context.Context) error
+	Restore(context.Context) error
+	Finish(context.Context, desktopUpdateOutcome) error
+	Commit() error
+}
 
 func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult, error) {
 	service := detectManagedService(ctx, request.CurrentPath)
@@ -25,6 +40,16 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 		candidates = []string{healthyURL}
 	}
 
+	desktopUpdate, err := prepareDesktopUpdate(
+		ctx,
+		request.DesktopTargetPath,
+		request.DesktopStagedPath,
+		request.TargetVersion,
+	)
+	if err != nil {
+		return applyResult{}, fmt.Errorf("准备 macOS 桌面更新失败，当前版本未被修改: %w", err)
+	}
+
 	backupPath, err := platformBackupPath(request.CurrentPath)
 	if err != nil {
 		return applyResult{}, fmt.Errorf("准备更新备份路径失败，当前版本未被修改: %w", err)
@@ -36,13 +61,32 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 	previousPID := managedServicePID(ctx, service)
 	rollback := func(cause error) error {
 		failedPID := managedServicePID(ctx, service)
-		if err := restoreBackup(request.CurrentPath, backupPath); err != nil {
-			return fmt.Errorf("%v；自动恢复旧版本失败: %w", cause, err)
-		}
-		if service != nil {
-			if err := restartManagedService(ctx, service, request.CurrentPath, failedPID, candidates, request.CurrentVersion); err != nil {
-				return fmt.Errorf("%v；旧版本已恢复，但重新启动 %s 或验证失败: %w", cause, service.Name(), err)
+		rollbackErrors := make([]string, 0, 4)
+		if desktopUpdate != nil {
+			if restoreErr := desktopUpdate.Restore(ctx); restoreErr != nil {
+				rollbackErrors = append(rollbackErrors, "恢复旧控制面板失败: "+restoreErr.Error())
 			}
+		}
+		if restoreErr := restoreBackup(request.CurrentPath, backupPath); restoreErr != nil {
+			rollbackErrors = append(rollbackErrors, "恢复旧核心失败: "+restoreErr.Error())
+		} else if service != nil {
+			if restartErr := restartManagedService(ctx, service, request.CurrentPath, failedPID, candidates, request.CurrentVersion); restartErr != nil {
+				rollbackErrors = append(rollbackErrors, "重新启动 "+service.Name()+" 失败: "+restartErr.Error())
+			}
+		}
+		if desktopUpdate != nil {
+			outcome := desktopUpdateOutcome{
+				OK:             false,
+				CurrentVersion: request.CurrentVersion,
+				TargetVersion:  request.TargetVersion,
+				Message:        cause.Error() + "；已自动恢复旧版本。",
+			}
+			if finishErr := desktopUpdate.Finish(ctx, outcome); finishErr != nil {
+				rollbackErrors = append(rollbackErrors, "重新打开旧控制面板失败: "+finishErr.Error())
+			}
+		}
+		if len(rollbackErrors) > 0 {
+			return fmt.Errorf("%v；自动恢复不完整: %s", cause, strings.Join(rollbackErrors, "；"))
 		}
 		return fmt.Errorf("%v；已自动恢复旧版本", cause)
 	}
@@ -61,9 +105,31 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 		fmt.Fprintln(request.Output, "健康检查通过")
 	}
 
+	if desktopUpdate != nil {
+		fmt.Fprintln(request.Output, "正在更新 macOS 控制面板...")
+		if err := desktopUpdate.Install(ctx); err != nil {
+			return applyResult{}, rollback(fmt.Errorf("安装 macOS 控制面板失败: %w", err))
+		}
+	}
+
 	fmt.Fprintln(request.Output, "正在更新官方核心 Skill...")
 	if err := bootstrapBundledSkills(ctx, request.CurrentPath, request.BundlePath, request.Output); err != nil {
 		return applyResult{}, rollback(err)
+	}
+
+	if desktopUpdate != nil {
+		outcome := desktopUpdateOutcome{
+			OK:             true,
+			CurrentVersion: request.CurrentVersion,
+			TargetVersion:  request.TargetVersion,
+			Message:        fmt.Sprintf("AgentDock 已从 %s 更新到 %s。", request.CurrentVersion, request.TargetVersion),
+		}
+		if err := desktopUpdate.Finish(ctx, outcome); err != nil {
+			return applyResult{}, rollback(fmt.Errorf("重新打开新版 macOS 控制面板失败: %w", err))
+		}
+		if err := desktopUpdate.Commit(); err != nil {
+			fmt.Fprintf(request.Output, "警告：清理 macOS 控制面板更新备份失败: %v\n", err)
+		}
 	}
 	return applyResult{Restarted: service != nil}, nil
 }

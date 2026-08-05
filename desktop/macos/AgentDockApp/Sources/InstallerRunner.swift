@@ -44,6 +44,17 @@ final class InstallerRunner {
             throw ValidationError("应用包缺少 macOS 安装脚本。")
         }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "latest"
+        let installedBinary = AppPaths().binary
+        if FileManager.default.isExecutableFile(atPath: installedBinary.path) {
+            let installedVersion = try runProcess(executable: installedBinary.path, arguments: ["--version"])
+            guard installedVersion.status == 0 else {
+                throw ValidationError("无法确认当前 AgentDock 核心版本，已取消配置变更。")
+            }
+            try InstallerVersionGuard.validate(
+                bundleVersion: version,
+                installedVersionOutput: installedVersion.output
+            )
+        }
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentDockInstaller-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
@@ -151,16 +162,69 @@ struct ProcessExecution {
     let output: String
 }
 
-func runProcess(executable: String, arguments: [String]) throws -> ProcessExecution {
+func runProcess(
+    executable: String,
+    arguments: [String],
+    environment: [String: String] = [:]
+) throws -> ProcessExecution {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
+    if !environment.isEmpty {
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, replacement in replacement }
+    }
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe
     try process.run()
     let outputData = pipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
+    return ProcessExecution(
+        status: process.terminationStatus,
+        output: String(data: outputData, encoding: .utf8) ?? ""
+    )
+}
+
+func runUpdateProcess(
+    executable: String,
+    arguments: [String],
+    environment: [String: String],
+    outputURL: URL
+) throws -> ProcessExecution {
+    let outputDirectory = outputURL.deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+        at: outputDirectory,
+        withIntermediateDirectories: true
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: outputDirectory.path
+    )
+    guard FileManager.default.createFile(
+        atPath: outputURL.path,
+        contents: nil,
+        attributes: [.posixPermissions: 0o600]
+    ) else {
+        throw ValidationError("无法创建更新日志文件。")
+    }
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: outputURL.path
+    )
+    let outputHandle = try FileHandle(forWritingTo: outputURL)
+    defer { try? outputHandle.close() }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, replacement in replacement }
+    process.standardOutput = outputHandle
+    process.standardError = outputHandle
+    try process.run()
+    process.waitUntilExit()
+    try outputHandle.synchronize()
+
+    let outputData = (try? Data(contentsOf: outputURL)) ?? Data()
     return ProcessExecution(
         status: process.terminationStatus,
         output: String(data: outputData, encoding: .utf8) ?? ""

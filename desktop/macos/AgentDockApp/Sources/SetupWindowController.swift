@@ -296,7 +296,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func updateServiceSection(_ status: ServiceStatus) {
         if status.healthy {
-            stateLabel.stringValue = "● 运行正常 · \(status.version ?? "未知版本")"
+            stateLabel.stringValue = "● 运行正常 · 核心 \(AppVersion.display(status.version)) · 控制面板 \(AppVersion.current)"
             stateLabel.textColor = .systemGreen
         } else if status.loaded {
             stateLabel.stringValue = "● 服务异常"

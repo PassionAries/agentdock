@@ -132,8 +132,45 @@ struct InstallerConfigurationTests {
         }
 
         try testTunnelTokenStore()
+        try testVersionGuard()
+        try testDesktopUpdateResult()
         try await testPublicEndpointChecker()
         print("installer configuration tests passed")
+    }
+
+    private static func testVersionGuard() throws {
+        try InstallerVersionGuard.validate(
+            bundleVersion: "0.7.0",
+            installedVersionOutput: "AgentDock v0.6.9\ncommit: old\n"
+        )
+        try InstallerVersionGuard.validate(
+            bundleVersion: "v0.7.0",
+            installedVersionOutput: "AgentDock v0.7.0\n"
+        )
+        expectFailure("不能使用旧离线载荷覆盖") {
+            try InstallerVersionGuard.validate(
+                bundleVersion: "0.6.9",
+                installedVersionOutput: "AgentDock v0.7.0\n"
+            )
+        }
+        precondition(AppVersion.display("0.7.0") == "v0.7.0")
+        precondition(AppVersion.display("v0.7.0") == "v0.7.0")
+    }
+
+    private static func testDesktopUpdateResult() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentDockUpdateResultTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let path = root.appendingPathComponent("update-result.json")
+        let json = """
+        {"schema_version":1,"ok":true,"current_version":"v0.6.9","target_version":"v0.7.0","message":"更新完成"}
+        """
+        try Data(json.utf8).write(to: path)
+        let result = DesktopUpdateResult.consume(from: path)
+        precondition(result?.ok == true)
+        precondition(result?.targetVersion == "v0.7.0")
+        precondition(!FileManager.default.fileExists(atPath: path.path))
     }
 
     private static func testACPExecutableResolution() throws {

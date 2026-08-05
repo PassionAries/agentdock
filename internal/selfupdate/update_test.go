@@ -60,6 +60,96 @@ func TestInspectUpdateReportsAvailableVersionWithoutApplying(t *testing.T) {
 	}
 }
 
+func TestInspectUpdateRequiresMacOSDesktopAssetsWhenAppIsInstalled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.7.1",
+			Assets: []releaseAsset{
+				{Name: "agentdock_darwin_arm64.tar.gz", URL: "https://example.invalid/core"},
+				{Name: "agentdock_darwin_arm64.tar.gz.sha256", URL: "https://example.invalid/core-checksum"},
+				{Name: macOSDesktopArchiveName, URL: "https://example.invalid/app"},
+				{Name: macOSDesktopArchiveName + ".sha256", URL: "https://example.invalid/app-checksum"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	inspection, err := inspectUpdate(context.Background(), options{
+		CurrentVersion:    "0.7.0",
+		DesktopTargetPath: "/Applications/AgentDock.app",
+		GOOS:              "darwin",
+		GOARCH:            "arm64",
+		ReleaseAPI:        server.URL,
+		HTTPClient:        server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.DesktopArchiveAsset.Name != macOSDesktopArchiveName ||
+		inspection.DesktopChecksumAsset.Name != macOSDesktopArchiveName+".sha256" {
+		t.Fatalf("unexpected desktop assets: %#v", inspection)
+	}
+}
+
+func TestInspectUpdateRepairsOlderDesktopWhenCoreIsCurrent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.7.1",
+			Assets: []releaseAsset{
+				{Name: "agentdock_darwin_arm64.tar.gz", URL: "https://example.invalid/core"},
+				{Name: "agentdock_darwin_arm64.tar.gz.sha256", URL: "https://example.invalid/core-checksum"},
+				{Name: macOSDesktopArchiveName, URL: "https://example.invalid/app"},
+				{Name: macOSDesktopArchiveName + ".sha256", URL: "https://example.invalid/app-checksum"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	inspection, err := inspectUpdate(context.Background(), options{
+		CurrentVersion:        "0.7.1",
+		DesktopTargetPath:     "/Applications/AgentDock.app",
+		DesktopCurrentVersion: "0.6.1",
+		GOOS:                  "darwin",
+		GOARCH:                "arm64",
+		ReleaseAPI:            server.URL,
+		HTTPClient:            server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Result.UpdateAvailable || !inspection.Result.DesktopUpdateAvailable {
+		t.Fatalf("desktop repair was not reported: %#v", inspection.Result)
+	}
+	if inspection.Result.Message != "发现控制面板更新：v0.6.1 → v0.7.1" {
+		t.Fatalf("unexpected desktop repair message: %s", inspection.Result.Message)
+	}
+}
+
+func TestInspectUpdateRejectsMacOSReleaseWithoutDesktopAsset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.7.1",
+			Assets: []releaseAsset{
+				{Name: "agentdock_darwin_arm64.tar.gz", URL: "https://example.invalid/core"},
+				{Name: "agentdock_darwin_arm64.tar.gz.sha256", URL: "https://example.invalid/core-checksum"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	_, err := inspectUpdate(context.Background(), options{
+		CurrentVersion:    "0.7.0",
+		DesktopTargetPath: "/Applications/AgentDock.app",
+		GOOS:              "darwin",
+		GOARCH:            "arm64",
+		ReleaseAPI:        server.URL,
+		HTTPClient:        server.Client(),
+	})
+	if err == nil || !strings.Contains(err.Error(), macOSDesktopArchiveName) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestInspectUpdateReportsCurrentVersion(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(release{TagName: "v0.6.1"})
@@ -145,6 +235,78 @@ func TestRunDownloadsVerifiesAndAppliesRelease(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "更新完成并已重启：v0.4.4 → v0.4.5") {
 		t.Fatalf("unexpected output: %s", output.String())
+	}
+}
+
+func TestRunStagesMacOSDesktopAppWithCoreUpdate(t *testing.T) {
+	coreArchive := makeTarGz(t, "bin/agentdock", []byte("new-core"))
+	coreDigest := sha256.Sum256(coreArchive)
+	desktopArchive := []byte("signed-app-archive")
+	desktopDigest := sha256.Sum256(desktopArchive)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/release":
+			_ = json.NewEncoder(w).Encode(release{
+				TagName: "v0.7.1",
+				Assets: []releaseAsset{
+					{Name: "agentdock_darwin_arm64.tar.gz", URL: server.URL + "/core"},
+					{Name: "agentdock_darwin_arm64.tar.gz.sha256", URL: server.URL + "/core.sha256"},
+					{Name: macOSDesktopArchiveName, URL: server.URL + "/desktop"},
+					{Name: macOSDesktopArchiveName + ".sha256", URL: server.URL + "/desktop.sha256"},
+				},
+			})
+		case "/core":
+			_, _ = w.Write(coreArchive)
+		case "/core.sha256":
+			fmt.Fprintf(w, "%s  agentdock_darwin_arm64.tar.gz\n", hex.EncodeToString(coreDigest[:]))
+		case "/desktop":
+			_, _ = w.Write(desktopArchive)
+		case "/desktop.sha256":
+			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(desktopDigest[:]), macOSDesktopArchiveName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	extracted := false
+	applied := false
+	err := run(context.Background(), options{
+		CurrentVersion:    "0.7.0",
+		ExecutablePath:    "/tmp/agentdock",
+		DesktopTargetPath: "/Applications/AgentDock.app",
+		GOOS:              "darwin",
+		GOARCH:            "arm64",
+		ReleaseAPI:        server.URL + "/release",
+		HTTPClient:        server.Client(),
+		Output:            io.Discard,
+		VerifyBinary:      func(context.Context, string, string) error { return nil },
+		ExtractDesktop: func(_ context.Context, data []byte, tempDir, targetVersion string) (string, error) {
+			extracted = true
+			if string(data) != string(desktopArchive) || targetVersion != "v0.7.1" {
+				return "", fmt.Errorf("unexpected desktop payload")
+			}
+			path := filepath.Join(tempDir, "AgentDock.app")
+			if err := os.Mkdir(path, 0o700); err != nil {
+				return "", err
+			}
+			return path, nil
+		},
+		Apply: func(_ context.Context, request applyRequest) (applyResult, error) {
+			applied = true
+			if request.DesktopTargetPath != "/Applications/AgentDock.app" ||
+				filepath.Base(request.DesktopStagedPath) != "AgentDock.app" {
+				t.Fatalf("unexpected desktop apply request: %#v", request)
+			}
+			return applyResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !extracted || !applied {
+		t.Fatalf("desktop update flow incomplete: extracted=%v applied=%v", extracted, applied)
 	}
 }
 

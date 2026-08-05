@@ -1196,6 +1196,39 @@ func TestMacOSReleaseChecksCloudflaredFromPayloadDirectory(t *testing.T) {
 	}
 }
 
+func TestMacOSReleasePublishesDesktopUpdateArchive(t *testing.T) {
+	workflowData, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	buildData, err := os.ReadFile(filepath.Join("..", "packaging", "macos", "build-app.sh"))
+	if err != nil {
+		t.Fatalf("read macOS App build script: %v", err)
+	}
+	workflow := string(workflowData)
+	build := string(buildData)
+	for _, want := range []string{
+		"dist/macos-app/AgentDock-macos-universal.zip",
+		"dist/macos-app/AgentDock-macos-universal.zip.sha256",
+		"shasum -a 256 -c AgentDock-macos-universal.zip.sha256",
+		`curl -fL "$release_base/AgentDock-macos-universal.zip" -o "$zip"`,
+		`codesign --verify --deep --strict --verbose=2 "$zip_dir/AgentDock.app"`,
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release.yml missing macOS desktop update asset behavior %q", want)
+		}
+	}
+	for _, want := range []string{
+		`ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"`,
+		`unzip -tq "$ZIP_PATH"`,
+		`shasum -a 256 "${ZIP_PATH:t}" > "${ZIP_PATH:t}.sha256"`,
+	} {
+		if !strings.Contains(build, want) {
+			t.Fatalf("build-app.sh missing macOS desktop update archive behavior %q", want)
+		}
+	}
+}
+
 func TestReleaseWorkflowChecksOutRequestedTag(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
 	if err != nil {

@@ -18,6 +18,9 @@ swiftc \
   -swift-version 5 \
   -parse-as-library \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppVersion.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateResult.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerVersionGuard.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
@@ -106,8 +109,8 @@ test -f "$APP/Contents/Resources/offline-payload/$cloudflared_binary.sha256"
 )
 test -f "$DMG"
 test -f "$DMG.sha256"
-test ! -e "$ZIP"
-test ! -e "$ZIP.sha256"
+test -f "$ZIP"
+test -f "$ZIP.sha256"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "com.uvwt.agentdock"
 test "$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")" = "AgentDock.icns"
@@ -117,7 +120,18 @@ hdiutil verify "$DMG" >/dev/null
 (
   cd "$TMP_ROOT/output"
   shasum -a 256 -c "${DMG:t}.sha256"
+  shasum -a 256 -c "${ZIP:t}.sha256"
 )
+
+zip_extract="$TMP_ROOT/zip-extract"
+mkdir -p "$zip_extract"
+ditto -x -k "$ZIP" "$zip_extract"
+test -d "$zip_extract/AgentDock.app"
+codesign --verify --deep --strict --verbose=2 "$zip_extract/AgentDock.app"
+cmp "$APP/Contents/MacOS/AgentDock" "$zip_extract/AgentDock.app/Contents/MacOS/AgentDock"
+cmp \
+  "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper" \
+  "$zip_extract/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
 
 mkdir -p "$MOUNT_POINT"
 hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG" >/dev/null

@@ -38,7 +38,7 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-for command_name in codesign ditto file hdiutil iconutil lipo npm plutil shasum sips swiftc xcrun; do
+for command_name in codesign ditto file hdiutil iconutil lipo npm plutil shasum sips swiftc unzip xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
@@ -288,6 +288,15 @@ codesign --force --sign - --identifier "com.uvwt.agentdock.login-helper" "$LOGIN
 codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
+ZIP_PATH="$OUTPUT_DIR/AgentDock-macos-universal.zip"
+print -- "==> 创建 AgentDock App 更新 ZIP"
+ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"
+unzip -tq "$ZIP_PATH" >/dev/null
+(
+  cd "$OUTPUT_DIR"
+  shasum -a 256 "${ZIP_PATH:t}" > "${ZIP_PATH:t}.sha256"
+)
+
 DMG_STAGE_DIR="$TMP_DIR/dmg-root"
 DMG_PATH="$OUTPUT_DIR/AgentDock-macos-universal.dmg"
 mkdir -p "$DMG_STAGE_DIR"
@@ -308,5 +317,6 @@ hdiutil verify "$DMG_PATH" >/dev/null
 )
 
 print -- "built: $APP_DIR"
+print -- "zip: $ZIP_PATH"
 print -- "dmg: $DMG_PATH"
 file "$MACOS_DIR/AgentDock"

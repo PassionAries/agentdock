@@ -210,6 +210,8 @@ jobs:
           path: |
             dist/macos-app/AgentDock-macos-universal.dmg
             dist/macos-app/AgentDock-macos-universal.dmg.sha256
+            dist/macos-app/AgentDock-macos-universal.zip
+            dist/macos-app/AgentDock-macos-universal.zip.sha256
           if-no-files-found: error
 
   build-windows:
@@ -492,8 +494,9 @@ jobs:
           set -euo pipefail
           test -f dist/AgentDock-macos-universal.dmg
           test -f dist/AgentDock-macos-universal.dmg.sha256
-          test ! -e dist/AgentDock-macos-universal.zip
-          test ! -e dist/AgentDock-macos-universal.zip.sha256
+          test -f dist/AgentDock-macos-universal.zip
+          test -f dist/AgentDock-macos-universal.zip.sha256
+          (cd dist && shasum -a 256 -c AgentDock-macos-universal.zip.sha256)
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -658,6 +661,8 @@ jobs:
           installer="$RUNNER_TEMP/install.sh"
           uninstaller="$RUNNER_TEMP/uninstall-macos.sh"
           dmg="$RUNNER_TEMP/AgentDock-macos-universal.dmg"
+          zip="$RUNNER_TEMP/AgentDock-macos-universal.zip"
+          zip_dir="$RUNNER_TEMP/agentdock-zip"
           mount_dir="$RUNNER_TEMP/agentdock-dmg"
           dmg_mounted=false
           cleanup() {
@@ -669,10 +674,17 @@ jobs:
 
           curl -fL "$release_base/AgentDock-macos-universal.dmg" -o "$dmg"
           curl -fL "$release_base/AgentDock-macos-universal.dmg.sha256" -o "$dmg.sha256"
+          curl -fL "$release_base/AgentDock-macos-universal.zip" -o "$zip"
+          curl -fL "$release_base/AgentDock-macos-universal.zip.sha256" -o "$zip.sha256"
           (
             cd "$RUNNER_TEMP"
             shasum -a 256 -c AgentDock-macos-universal.dmg.sha256
+            shasum -a 256 -c AgentDock-macos-universal.zip.sha256
           )
+          mkdir -p "$zip_dir"
+          ditto -x -k "$zip" "$zip_dir"
+          test -d "$zip_dir/AgentDock.app"
+          codesign --verify --deep --strict --verbose=2 "$zip_dir/AgentDock.app"
           hdiutil verify "$dmg" >/dev/null
           mkdir -p "$mount_dir"
           hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg" >/dev/null
@@ -686,6 +698,12 @@ jobs:
           helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper")"
           [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
           [[ "$helper_arches" == *arm64* && "$helper_arches" == *x86_64* ]]
+          cmp \
+            "$zip_dir/AgentDock.app/Contents/MacOS/AgentDock" \
+            "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock"
+          cmp \
+            "$zip_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper" \
+            "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
 
           payload_dir="$mount_dir/AgentDock.app/Contents/Resources/offline-payload"
           for architecture in amd64 arm64; do

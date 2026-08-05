@@ -15,6 +15,8 @@ struct AppPaths {
     var tunnelTokenStore: URL { appSupport.appendingPathComponent("cloudflare-tunnel-token") }
     var tunnelLaunchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist") }
     var quickTunnelURL: URL { appSupport.appendingPathComponent("quick-tunnel-url.txt") }
+    var updateResult: URL { appSupport.appendingPathComponent("update-result.json") }
+    var updateLog: URL { appSupport.appendingPathComponent("update.log") }
     var menuLaunchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.menu.plist") }
     var logs: URL { home.appendingPathComponent("Library/Logs/AgentDock") }
     var workDirectory: URL { home.appendingPathComponent("AgentDock") }

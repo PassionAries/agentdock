@@ -17,9 +17,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let pendingUpdateResult = DesktopUpdateResult.consume(from: service.paths.updateResult)
         configureStatusItem()
         registerLoginItemIfNeeded()
         refreshStatus(showWindow: !launchedInBackground)
+        if let pendingUpdateResult {
+            DispatchQueue.main.async { [weak self] in
+                self?.presentUpdateResult(pendingUpdateResult)
+            }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatus()
@@ -77,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !currentStatus.installed {
             statusText = "未安装"
         } else if currentStatus.healthy {
-            statusText = "运行正常 · \(currentStatus.version ?? "未知版本")"
+            statusText = "运行正常 · 核心 \(AppVersion.display(currentStatus.version)) · 控制面板 \(AppVersion.current)"
         } else if currentStatus.loaded {
             statusText = "服务异常"
         } else {
@@ -153,6 +159,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await MainActor.run { self.presentAlert(title: "\(action)失败", message: error.localizedDescription) }
             }
         }
+    }
+
+    private func presentUpdateResult(_ result: DesktopUpdateResult) {
+        NSApp.activate(ignoringOtherApps: true)
+        let title = result.ok ? "AgentDock 更新完成" : "AgentDock 更新失败"
+        presentAlert(title: title, message: result.message)
+        refreshStatus()
     }
 
     private func presentAlert(title: String, message: String) {

@@ -1,0 +1,426 @@
+//go:build darwin
+
+package selfupdate
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+type macOSDesktopUpdate struct {
+	targetPath    string
+	stagedPath    string
+	targetVersion string
+	newPath       string
+	backupPath    string
+	appWasRunning bool
+	installed     bool
+}
+
+func prepareDesktopUpdate(
+	ctx context.Context,
+	targetPath string,
+	stagedPath string,
+	targetVersion string,
+) (desktopUpdateTransaction, error) {
+	targetPath = strings.TrimSpace(targetPath)
+	stagedPath = strings.TrimSpace(stagedPath)
+	if targetPath == "" && stagedPath == "" {
+		return nil, nil
+	}
+	if targetPath == "" || stagedPath == "" {
+		return nil, errors.New("macOS 控制面板目标路径和暂存路径必须同时存在")
+	}
+	targetPath = filepath.Clean(targetPath)
+	stagedPath = filepath.Clean(stagedPath)
+	if err := validateMacOSDesktopTarget(targetPath); err != nil {
+		return nil, fmt.Errorf("当前 macOS App 无效: %w", err)
+	}
+	if err := validateMacOSDesktopVersion(ctx, stagedPath, targetVersion); err != nil {
+		return nil, fmt.Errorf("新版 macOS App 无效: %w", err)
+	}
+	parent := filepath.Dir(targetPath)
+	parentInfo, err := os.Stat(parent)
+	if err != nil || !parentInfo.IsDir() {
+		return nil, fmt.Errorf("macOS App 父目录不可用: %s", parent)
+	}
+	probe, err := os.CreateTemp(parent, ".agentdock-update-permission-*")
+	if err != nil {
+		return nil, fmt.Errorf("macOS App 父目录不可写: %w", err)
+	}
+	probePath := probe.Name()
+	closeErr := probe.Close()
+	removeErr := os.Remove(probePath)
+	if closeErr != nil {
+		return nil, fmt.Errorf("关闭 macOS App 权限探针失败: %w", closeErr)
+	}
+	if removeErr != nil {
+		return nil, fmt.Errorf("清理 macOS App 权限探针失败: %w", removeErr)
+	}
+	suffix := strconv.Itoa(os.Getpid()) + "." + time.Now().UTC().Format("20060102150405.000000000")
+	return &macOSDesktopUpdate{
+		targetPath:    targetPath,
+		stagedPath:    stagedPath,
+		targetVersion: targetVersion,
+		newPath:       filepath.Join(parent, ".AgentDock.app.new."+suffix),
+		backupPath:    filepath.Join(parent, ".AgentDock.app.backup."+suffix),
+	}, nil
+}
+
+func (update *macOSDesktopUpdate) Install(ctx context.Context) error {
+	if err := os.RemoveAll(update.newPath); err != nil {
+		return fmt.Errorf("清理 App 暂存副本失败: %w", err)
+	}
+	if err := os.RemoveAll(update.backupPath); err != nil {
+		return fmt.Errorf("清理 App 备份路径失败: %w", err)
+	}
+	output, err := exec.CommandContext(ctx, "/usr/bin/ditto", update.stagedPath, update.newPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("复制新版 App 失败: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := validateMacOSDesktopVersion(ctx, update.newPath, update.targetVersion); err != nil {
+		return fmt.Errorf("复制后的新版 App 验证失败: %w", err)
+	}
+
+	pids, err := runningMacOSAppPIDs(ctx, update.targetPath)
+	if err != nil {
+		return err
+	}
+	update.appWasRunning = len(pids) > 0
+	var outputRedirect *processOutputRedirect
+	if update.appWasRunning {
+		outputRedirect, err = redirectProcessOutputForDesktopUpdate()
+		if err != nil {
+			return fmt.Errorf("准备独立更新日志失败: %w", err)
+		}
+	}
+	if err := terminatePIDs(ctx, pids); err != nil {
+		if outputRedirect != nil {
+			_ = outputRedirect.Restore()
+		}
+		return fmt.Errorf("关闭旧控制面板失败: %w", err)
+	}
+	if outputRedirect != nil {
+		outputRedirect.Commit()
+	}
+
+	if err := os.Rename(update.targetPath, update.backupPath); err != nil {
+		return fmt.Errorf("备份旧 App 失败: %w", err)
+	}
+	if err := os.Rename(update.newPath, update.targetPath); err != nil {
+		restoreErr := os.Rename(update.backupPath, update.targetPath)
+		if restoreErr != nil {
+			return fmt.Errorf("安装新版 App 失败: %w；恢复旧 App 也失败: %v", err, restoreErr)
+		}
+		return fmt.Errorf("安装新版 App 失败，旧 App 已恢复: %w", err)
+	}
+	update.installed = true
+	if err := validateMacOSDesktopVersion(ctx, update.targetPath, update.targetVersion); err != nil {
+		return fmt.Errorf("安装后的新版 App 验证失败: %w", err)
+	}
+	return nil
+}
+
+func (update *macOSDesktopUpdate) Restore(ctx context.Context) error {
+	var restoreErrors []string
+	if update.installed {
+		pids, err := runningMacOSAppPIDs(ctx, update.targetPath)
+		if err == nil {
+			if terminateErr := terminatePIDs(ctx, pids); terminateErr != nil {
+				restoreErrors = append(restoreErrors, terminateErr.Error())
+			}
+		}
+		if err := os.RemoveAll(update.targetPath); err != nil {
+			restoreErrors = append(restoreErrors, "删除新版 App 失败: "+err.Error())
+		} else if err := os.Rename(update.backupPath, update.targetPath); err != nil {
+			restoreErrors = append(restoreErrors, "恢复旧 App 失败: "+err.Error())
+		} else {
+			update.installed = false
+		}
+	} else if _, err := os.Stat(update.targetPath); os.IsNotExist(err) {
+		if _, backupErr := os.Stat(update.backupPath); backupErr == nil {
+			if renameErr := os.Rename(update.backupPath, update.targetPath); renameErr != nil {
+				restoreErrors = append(restoreErrors, "恢复旧 App 失败: "+renameErr.Error())
+			}
+		}
+	}
+	if err := os.RemoveAll(update.newPath); err != nil {
+		restoreErrors = append(restoreErrors, "清理 App 暂存副本失败: "+err.Error())
+	}
+	if len(restoreErrors) > 0 {
+		return errors.New(strings.Join(restoreErrors, "；"))
+	}
+	return nil
+}
+
+func (update *macOSDesktopUpdate) Finish(ctx context.Context, outcome desktopUpdateOutcome) error {
+	if !update.appWasRunning {
+		return nil
+	}
+	if err := writeMacOSDesktopUpdateResult(outcome); err != nil {
+		return err
+	}
+	executable := filepath.Join(update.targetPath, "Contents", "MacOS", "AgentDock")
+	command := exec.Command(executable, "--background")
+	command.Env = os.Environ()
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("启动 macOS 控制面板失败: %w", err)
+	}
+	_ = command.Process.Release()
+	resultPath, err := macOSDesktopUpdateResultPath()
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		pids, findErr := runningMacOSAppPIDs(ctx, update.targetPath)
+		resultConsumed := !outcome.OK
+		if outcome.OK {
+			_, statErr := os.Stat(resultPath)
+			resultConsumed = os.IsNotExist(statErr)
+		}
+		// 成功更新只有在新版 App 已启动并消费一次性结果后才提交，避免静默留下半更新状态。
+		if findErr == nil && len(pids) > 0 && resultConsumed {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return errors.New("新版 macOS 控制面板未在超时前启动并确认更新结果")
+}
+
+func (update *macOSDesktopUpdate) Commit() error {
+	var cleanupErrors []string
+	for _, path := range []string{update.backupPath, update.newPath} {
+		if err := os.RemoveAll(path); err != nil {
+			cleanupErrors = append(cleanupErrors, err.Error())
+		}
+	}
+	if len(cleanupErrors) > 0 {
+		return errors.New(strings.Join(cleanupErrors, "；"))
+	}
+	return nil
+}
+
+type processOutputRedirect struct {
+	stdout int
+	stderr int
+}
+
+func redirectProcessOutputForDesktopUpdate() (*processOutputRedirect, error) {
+	directory, err := macOSDesktopUpdateDirectory()
+	if err != nil {
+		return nil, err
+	}
+	logPath := filepath.Join(directory, "update.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("打开更新日志失败: %w", err)
+	}
+	defer logFile.Close()
+	if err := os.Chmod(logPath, 0o600); err != nil {
+		return nil, fmt.Errorf("设置更新日志权限失败: %w", err)
+	}
+
+	savedStdout, err := syscall.Dup(syscall.Stdout)
+	if err != nil {
+		return nil, fmt.Errorf("保存标准输出失败: %w", err)
+	}
+	savedStderr, err := syscall.Dup(syscall.Stderr)
+	if err != nil {
+		_ = syscall.Close(savedStdout)
+		return nil, fmt.Errorf("保存标准错误失败: %w", err)
+	}
+	redirect := &processOutputRedirect{stdout: savedStdout, stderr: savedStderr}
+	if err := syscall.Dup2(int(logFile.Fd()), syscall.Stdout); err != nil {
+		redirect.Commit()
+		return nil, fmt.Errorf("重定向标准输出失败: %w", err)
+	}
+	if err := syscall.Dup2(int(logFile.Fd()), syscall.Stderr); err != nil {
+		_ = syscall.Dup2(savedStdout, syscall.Stdout)
+		redirect.Commit()
+		return nil, fmt.Errorf("重定向标准错误失败: %w", err)
+	}
+	return redirect, nil
+}
+
+func (redirect *processOutputRedirect) Restore() error {
+	var restoreErrors []string
+	if err := syscall.Dup2(redirect.stdout, syscall.Stdout); err != nil {
+		restoreErrors = append(restoreErrors, "恢复标准输出失败: "+err.Error())
+	}
+	if err := syscall.Dup2(redirect.stderr, syscall.Stderr); err != nil {
+		restoreErrors = append(restoreErrors, "恢复标准错误失败: "+err.Error())
+	}
+	redirect.Commit()
+	if len(restoreErrors) > 0 {
+		return errors.New(strings.Join(restoreErrors, "；"))
+	}
+	return nil
+}
+
+func (redirect *processOutputRedirect) Commit() {
+	if redirect.stdout >= 0 {
+		_ = syscall.Close(redirect.stdout)
+		redirect.stdout = -1
+	}
+	if redirect.stderr >= 0 {
+		_ = syscall.Close(redirect.stderr)
+		redirect.stderr = -1
+	}
+}
+
+func runningMacOSAppPIDs(ctx context.Context, appPath string) ([]int, error) {
+	executable := filepath.Join(filepath.Clean(appPath), "Contents", "MacOS", "AgentDock")
+	output, err := exec.CommandContext(ctx, "/bin/ps", "-axo", "pid=,command=").Output()
+	if err != nil {
+		return nil, fmt.Errorf("读取 macOS 进程列表失败: %w", err)
+	}
+	var result []int
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		separator := strings.IndexByte(line, ' ')
+		if separator <= 0 {
+			continue
+		}
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(line[:separator]))
+		if parseErr != nil || pid <= 0 {
+			continue
+		}
+		command := strings.TrimSpace(line[separator+1:])
+		if command == executable || strings.HasPrefix(command, executable+" ") {
+			result = append(result, pid)
+		}
+	}
+	return result, nil
+}
+
+func terminatePIDs(ctx context.Context, pids []int) error {
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		allExited := true
+		for _, pid := range pids {
+			if processExists(pid) {
+				allExited = false
+				break
+			}
+		}
+		if allExited {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	for _, pid := range pids {
+		if processExists(pid) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+	killDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(killDeadline) {
+		allExited := true
+		for _, pid := range pids {
+			if processExists(pid) {
+				allExited = false
+				break
+			}
+		}
+		if allExited {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, pid := range pids {
+		if processExists(pid) {
+			return fmt.Errorf("进程 %d 未退出", pid)
+		}
+	}
+	return nil
+}
+
+func processExists(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func macOSDesktopUpdateDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("解析用户目录失败: %w", err)
+	}
+	directory := filepath.Join(home, "Library", "Application Support", "AgentDock")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", fmt.Errorf("创建桌面更新状态目录失败: %w", err)
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return "", fmt.Errorf("设置桌面更新状态目录权限失败: %w", err)
+	}
+	return directory, nil
+}
+
+func macOSDesktopUpdateResultPath() (string, error) {
+	directory, err := macOSDesktopUpdateDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, "update-result.json"), nil
+}
+
+func writeMacOSDesktopUpdateResult(outcome desktopUpdateOutcome) error {
+	directory, err := macOSDesktopUpdateDirectory()
+	if err != nil {
+		return err
+	}
+	payload := struct {
+		SchemaVersion  int    `json:"schema_version"`
+		OK             bool   `json:"ok"`
+		CurrentVersion string `json:"current_version"`
+		TargetVersion  string `json:"target_version"`
+		Message        string `json:"message"`
+	}{
+		SchemaVersion:  1,
+		OK:             outcome.OK,
+		CurrentVersion: outcome.CurrentVersion,
+		TargetVersion:  outcome.TargetVersion,
+		Message:        outcome.Message,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("编码更新结果失败: %w", err)
+	}
+	target := filepath.Join(directory, "update-result.json")
+	temporary := target + ".tmp." + strconv.Itoa(os.Getpid())
+	if err := os.WriteFile(temporary, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("写入更新结果失败: %w", err)
+	}
+	if err := os.Chmod(temporary, 0o600); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("设置更新结果权限失败: %w", err)
+	}
+	if err := os.Rename(temporary, target); err != nil {
+		_ = os.Remove(temporary)
+		return fmt.Errorf("提交更新结果失败: %w", err)
+	}
+	return nil
+}

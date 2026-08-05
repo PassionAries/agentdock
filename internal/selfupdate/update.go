@@ -28,7 +28,9 @@ import (
 const (
 	defaultReleaseAPI        = "https://api.github.com/repos/uvwt/agentdock/releases/latest"
 	maxReleaseArchiveBytes   = 256 << 20
+	maxDesktopArchiveBytes   = 512 << 20
 	maxExtractedPayloadBytes = 64 << 20
+	macOSDesktopArchiveName  = "AgentDock-macos-universal.zip"
 	coreSkillBundlePrefix    = "share/agentdock/core-skills/"
 )
 
@@ -43,39 +45,48 @@ type releaseAsset struct {
 }
 
 type CheckResult struct {
-	CurrentVersion  string `json:"current_version"`
-	LatestVersion   string `json:"latest_version"`
-	UpdateAvailable bool   `json:"update_available"`
-	Message         string `json:"message"`
+	CurrentVersion         string `json:"current_version"`
+	LatestVersion          string `json:"latest_version"`
+	DesktopCurrentVersion  string `json:"desktop_current_version,omitempty"`
+	UpdateAvailable        bool   `json:"update_available"`
+	DesktopUpdateAvailable bool   `json:"desktop_update_available,omitempty"`
+	Message                string `json:"message"`
 }
 
 type updateInspection struct {
-	Result         CheckResult
-	ArchiveName    string
-	ExecutableName string
-	ArchiveAsset   releaseAsset
-	ChecksumAsset  releaseAsset
+	Result               CheckResult
+	ArchiveName          string
+	ExecutableName       string
+	ArchiveAsset         releaseAsset
+	ChecksumAsset        releaseAsset
+	DesktopArchiveAsset  releaseAsset
+	DesktopChecksumAsset releaseAsset
 }
 
 type options struct {
-	CurrentVersion string
-	ExecutablePath string
-	GOOS           string
-	GOARCH         string
-	ReleaseAPI     string
-	HTTPClient     *http.Client
-	Output         io.Writer
-	Apply          func(context.Context, applyRequest) (applyResult, error)
-	VerifyBinary   func(context.Context, string, string) error
+	CurrentVersion        string
+	ExecutablePath        string
+	DesktopTargetPath     string
+	DesktopCurrentVersion string
+	GOOS                  string
+	GOARCH                string
+	ReleaseAPI            string
+	HTTPClient            *http.Client
+	Output                io.Writer
+	Apply                 func(context.Context, applyRequest) (applyResult, error)
+	VerifyBinary          func(context.Context, string, string) error
+	ExtractDesktop        func(context.Context, []byte, string, string) (string, error)
 }
 
 type applyRequest struct {
-	CurrentPath    string
-	CurrentVersion string
-	StagedPath     string
-	BundlePath     string
-	TargetVersion  string
-	Output         io.Writer
+	CurrentPath       string
+	CurrentVersion    string
+	StagedPath        string
+	BundlePath        string
+	DesktopTargetPath string
+	DesktopStagedPath string
+	TargetVersion     string
+	Output            io.Writer
 }
 
 type applyResult struct {
@@ -111,16 +122,20 @@ func runtimeOptions(output io.Writer) (options, error) {
 	if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
 		executable = resolved
 	}
+	desktopTarget := detectDesktopUpdateTarget()
 	return options{
-		CurrentVersion: config.Version,
-		ExecutablePath: executable,
-		GOOS:           runtime.GOOS,
-		GOARCH:         runtime.GOARCH,
-		ReleaseAPI:     defaultReleaseAPI,
-		HTTPClient:     &http.Client{Timeout: 5 * time.Minute},
-		Output:         output,
-		Apply:          applyPlatformUpdate,
-		VerifyBinary:   verifyBinaryVersion,
+		CurrentVersion:        config.Version,
+		ExecutablePath:        executable,
+		DesktopTargetPath:     desktopTarget,
+		DesktopCurrentVersion: desktopUpdateVersion(desktopTarget),
+		GOOS:                  runtime.GOOS,
+		GOARCH:                runtime.GOARCH,
+		ReleaseAPI:            defaultReleaseAPI,
+		HTTPClient:            &http.Client{Timeout: 5 * time.Minute},
+		Output:                output,
+		Apply:                 applyPlatformUpdate,
+		VerifyBinary:          verifyBinaryVersion,
+		ExtractDesktop:        extractDesktopUpdateArchive,
 	}, nil
 }
 
@@ -133,6 +148,9 @@ func run(ctx context.Context, opts options) error {
 	}
 	if opts.Apply == nil || opts.VerifyBinary == nil {
 		return errors.New("更新执行器未配置")
+	}
+	if opts.DesktopTargetPath != "" && opts.ExtractDesktop == nil {
+		return errors.New("桌面更新解压器未配置")
 	}
 
 	inspection, err := inspectUpdate(ctx, opts)
@@ -188,14 +206,37 @@ func run(ctx context.Context, opts options) error {
 		return fmt.Errorf("新版本二进制验证失败，当前版本未被修改: %w", err)
 	}
 
+	desktopStagedPath := ""
+	if inspection.DesktopArchiveAsset.Name != "" {
+		fmt.Fprintf(opts.Output, "正在下载 %s...\n", inspection.DesktopArchiveAsset.Name)
+		desktopArchiveData, downloadErr := download(ctx, opts.HTTPClient, inspection.DesktopArchiveAsset.URL, maxDesktopArchiveBytes)
+		if downloadErr != nil {
+			return fmt.Errorf("下载 macOS 桌面更新文件失败: %w", downloadErr)
+		}
+		desktopChecksumData, checksumErr := download(ctx, opts.HTTPClient, inspection.DesktopChecksumAsset.URL, 1<<20)
+		if checksumErr != nil {
+			return fmt.Errorf("下载 macOS 桌面校验文件失败: %w", checksumErr)
+		}
+		if checksumErr := verifyChecksum(desktopArchiveData, desktopChecksumData); checksumErr != nil {
+			return fmt.Errorf("macOS 桌面更新文件校验失败，当前版本未被修改: %w", checksumErr)
+		}
+		desktopStagedPath, err = opts.ExtractDesktop(ctx, desktopArchiveData, tempDir, targetVersion)
+		if err != nil {
+			return fmt.Errorf("解压 macOS 桌面更新文件失败: %w", err)
+		}
+		fmt.Fprintln(opts.Output, "macOS 桌面更新文件校验通过")
+	}
+
 	fmt.Fprintln(opts.Output, "正在备份并安装新版本...")
 	result, err := opts.Apply(ctx, applyRequest{
-		CurrentPath:    opts.ExecutablePath,
-		CurrentVersion: currentVersion,
-		StagedPath:     stagedPath,
-		BundlePath:     bundlePath,
-		TargetVersion:  targetVersion,
-		Output:         opts.Output,
+		CurrentPath:       opts.ExecutablePath,
+		CurrentVersion:    currentVersion,
+		StagedPath:        stagedPath,
+		BundlePath:        bundlePath,
+		DesktopTargetPath: opts.DesktopTargetPath,
+		DesktopStagedPath: desktopStagedPath,
+		TargetVersion:     targetVersion,
+		Output:            opts.Output,
 	})
 	if err != nil {
 		return err
@@ -227,16 +268,25 @@ func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) 
 		return updateInspection{}, errors.New("当前是开发构建，无法通过 agentdock update 判断可升级版本")
 	}
 
-	result := CheckResult{
-		CurrentVersion: currentVersion,
-		LatestVersion:  targetVersion,
+	desktopVersion := normalizeVersion(opts.DesktopCurrentVersion)
+	desktopNeedsUpdate := false
+	if opts.GOOS == "darwin" && strings.TrimSpace(opts.DesktopTargetPath) != "" {
+		comparison, comparable := compareVersions(desktopVersion, targetVersion)
+		desktopNeedsUpdate = desktopVersion == "" || !comparable || comparison < 0
 	}
-	if currentVersion == targetVersion {
-		result.Message = fmt.Sprintf("当前已是最新版本：%s", targetVersion)
-		return updateInspection{Result: result}, nil
+
+	result := CheckResult{
+		CurrentVersion:         currentVersion,
+		LatestVersion:          targetVersion,
+		DesktopCurrentVersion:  desktopVersion,
+		DesktopUpdateAvailable: desktopNeedsUpdate,
 	}
 	if comparison, comparable := compareVersions(currentVersion, targetVersion); comparable && comparison > 0 {
 		result.Message = fmt.Sprintf("当前版本 %s 高于最新 Release %s，不执行降级。", currentVersion, targetVersion)
+		return updateInspection{Result: result}, nil
+	}
+	if currentVersion == targetVersion && !desktopNeedsUpdate {
+		result.Message = fmt.Sprintf("当前已是最新版本：%s", targetVersion)
 		return updateInspection{Result: result}, nil
 	}
 
@@ -253,14 +303,33 @@ func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) 
 		return updateInspection{}, fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, archiveName)
 	}
 
+	desktopArchiveAsset := releaseAsset{}
+	desktopChecksumAsset := releaseAsset{}
+	if desktopNeedsUpdate {
+		desktopArchiveAsset, ok = findAsset(latest.Assets, macOSDesktopArchiveName)
+		if !ok {
+			return updateInspection{}, fmt.Errorf("Release %s 缺少 macOS 桌面更新文件 %s", targetVersion, macOSDesktopArchiveName)
+		}
+		desktopChecksumAsset, ok = findAsset(latest.Assets, macOSDesktopArchiveName+".sha256")
+		if !ok {
+			return updateInspection{}, fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, macOSDesktopArchiveName)
+		}
+	}
+
 	result.UpdateAvailable = true
-	result.Message = fmt.Sprintf("发现新版本：%s → %s", currentVersion, targetVersion)
+	if currentVersion == targetVersion && desktopNeedsUpdate {
+		result.Message = fmt.Sprintf("发现控制面板更新：%s → %s", desktopVersion, targetVersion)
+	} else {
+		result.Message = fmt.Sprintf("发现新版本：%s → %s", currentVersion, targetVersion)
+	}
 	return updateInspection{
-		Result:         result,
-		ArchiveName:    archiveName,
-		ExecutableName: executableName,
-		ArchiveAsset:   archiveAsset,
-		ChecksumAsset:  checksumAsset,
+		Result:               result,
+		ArchiveName:          archiveName,
+		ExecutableName:       executableName,
+		ArchiveAsset:         archiveAsset,
+		ChecksumAsset:        checksumAsset,
+		DesktopArchiveAsset:  desktopArchiveAsset,
+		DesktopChecksumAsset: desktopChecksumAsset,
 	}, nil
 }
 

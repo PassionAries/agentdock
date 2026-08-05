@@ -157,7 +157,12 @@ final class ServiceController: @unchecked Sendable {
 
     func update() async throws -> String {
         try await runInBackground {
-            let result = try runProcess(executable: self.paths.binary.path, arguments: ["update"])
+            let result = try runUpdateProcess(
+                executable: self.paths.binary.path,
+                arguments: ["update"],
+                environment: ["AGENTDOCK_DESKTOP_APP_PATH": Bundle.main.bundlePath],
+                outputURL: self.paths.updateLog
+            )
             guard result.status == 0 else {
                 throw ValidationError(self.commandError(result.output, action: "更新"))
             }
