@@ -838,6 +838,16 @@ quick_tunnel_url() {
     2>/dev/null | tail -n 1
 }
 
+tunnel_launch_process_matches() {
+  local process_command="$1"
+
+  # 当前 LaunchAgent 运行 agentdock wrapper，由它托管 cloudflared 子进程；
+  # 同时保留旧版直接运行 cloudflared 和 shell 启动脚本的回滚兼容。
+  [[ "$process_command" == "$TARGET tunnel launch --runtime-root "* || \
+     "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* || \
+     "$process_command" == "$TUNNEL_START_SCRIPT" || "$process_command" == "$TUNNEL_START_SCRIPT "* ]]
+}
+
 wait_for_tunnel() {
   local domain="$1"
   local attempts=60
@@ -854,7 +864,7 @@ wait_for_tunnel() {
           print -r -- "$public_url"
           return 0
         fi
-      elif [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* ]]; then
+      elif tunnel_launch_process_matches "$process_command"; then
         stable_checks=$(( stable_checks + 1 ))
         if (( stable_checks >= 10 )); then
           print -r -- "$pid"
@@ -878,8 +888,7 @@ wait_for_tunnel_process() {
     local pid="$(tunnel_launchd_pid "$domain" || true)"
     if [[ -n "$pid" && "$pid" != "0" ]]; then
       local process_command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-      if [[ "$process_command" == "$CLOUDFLARED_TARGET" || "$process_command" == "$CLOUDFLARED_TARGET "* || \
-            "$process_command" == "$TUNNEL_START_SCRIPT" || "$process_command" == "$TUNNEL_START_SCRIPT "* ]]; then
+      if tunnel_launch_process_matches "$process_command"; then
         return 0
       fi
     fi

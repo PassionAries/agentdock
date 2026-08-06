@@ -336,6 +336,35 @@ test "$(plutil -extract ProgramArguments.1 raw -o - "$tunnel_plist")" = "tunnel"
 test "$(plutil -extract ProgramArguments.2 raw -o - "$tunnel_plist")" = "launch"
 test "$(plutil -extract ProgramArguments.3 raw -o - "$tunnel_plist")" = "--runtime-root"
 test "$(plutil -extract ProgramArguments.4 raw -o - "$tunnel_plist")" = "$app_support"
+
+# 原生 Tunnel LaunchAgent 的 PID 对应 agentdock wrapper，而不是它启动的 cloudflared 子进程。
+# Named Tunnel 的启动与回滚验证都必须接受 plist 中实际运行的命令。
+env -i \
+  HOME="$home_dir" \
+  PATH="$TEST_PATH" \
+  zsh -c '
+    set -euo pipefail
+    source "$1"
+    TARGET="$2"
+    CLOUDFLARED_TARGET="$3"
+    TUNNEL_START_SCRIPT="$4"
+    TUNNEL_STDERR_LOG="$5"
+    APP_SUPPORT_DIR="$6"
+    TUNNEL_MODE=named
+    tunnel_launchd_pid() { print -r -- 4321; }
+    ps() { print -r -- "$TARGET tunnel launch --runtime-root $APP_SUPPORT_DIR"; }
+    sleep() { :; }
+
+    test "$(wait_for_tunnel "gui/501")" = 4321
+    wait_for_tunnel_process "gui/501"
+  ' _ \
+  "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  "$binary" \
+  "$home_dir/.local/bin/cloudflared" \
+  "$tunnel_start" \
+  "$log_dir/cloudflared.err.log" \
+  "$app_support"
+
 named_oauth_password="$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_PASSWORD)"
 named_oauth_secret="$(read_env_key "$agentdock_env" AGENTDOCK_OAUTH_TOKEN_SECRET)"
 (( ${#named_oauth_password} >= 12 ))
