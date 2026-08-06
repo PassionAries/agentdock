@@ -36,13 +36,18 @@ func TestAgentDockContextToolReturnsRuntimeIndex(t *testing.T) {
 	if contextText == "" {
 		t.Fatalf("agentdock_context returned empty context: %#v", result)
 	}
-	for _, spec := range rt.availableToolSpecs() {
-		want := capabilityItemLine(spec.Name, strings.TrimSpace(spec.Description))
-		if !strings.Contains(contextText, want) {
-			t.Fatalf("context missing available tool index %q", want)
-		}
+	// Built-in tools come from MCP tools/list; context should not re-list them.
+	if strings.Contains(contextText, "## AgentDock 工具索引") {
+		t.Fatalf("context should not include built-in tool index: %s", contextText)
 	}
-	for _, want := range []string{"demo-skill", "Use this Skill for context index tests.", "skill://demo-skill/SKILL.md"} {
+	for _, want := range []string{
+		"## Skill 能力索引",
+		"demo-skill",
+		"Use this Skill for context index tests.",
+		"skill://demo-skill/SKILL.md",
+		"AgentDock 自带工具直接调用",
+		"## 使用规则",
+	} {
 		if !strings.Contains(contextText, want) {
 			t.Fatalf("context missing %q: %s", want, contextText)
 		}
@@ -56,6 +61,91 @@ func TestAgentDockContextToolReturnsRuntimeIndex(t *testing.T) {
 	for _, name := range []string{"ok", "skills", "dynamic_mcp", "generated_at", "summary", "counts", "base_tools", "task_templates", "memory", "rules"} {
 		if _, ok := result[name]; ok {
 			t.Fatalf("agentdock_context exposed unexpected field %q", name)
+		}
+	}
+}
+
+func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
+	disabled := config.Config{
+		AgentDockDefaultDir: t.TempDir(),
+		AgentDockHome:       filepath.Join(t.TempDir(), ".agentdock"),
+	}
+	if err := disabled.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	disabledRuntime, err := NewRuntime(disabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = disabledRuntime.Close() })
+
+	disabledResult, err := disabledRuntime.Call(context.Background(), "agentdock_context", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledText := disabledResult["context"].(string)
+	for _, hidden := range []string{"## ACP 运行时", "acp_session", "acp_prompt", "acp_interaction", "Agent Client Protocol"} {
+		if strings.Contains(disabledText, hidden) {
+			t.Fatalf("context should hide ACP while disabled: found %q in %s", hidden, disabledText)
+		}
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	enabled := config.Config{
+		AgentDockDefaultDir: root,
+		AgentDockHome:       filepath.Join(t.TempDir(), ".agentdock"),
+		ACPEnabled:          true,
+		ACPAgentName:        "helper",
+		ACPCommand:          executable,
+		ACPAllowedRoots:     []string{root},
+	}
+	if err := enabled.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	enabledRuntime, err := NewRuntime(enabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = enabledRuntime.Close() })
+
+	enabledResult, err := enabledRuntime.Call(context.Background(), "agentdock_context", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabledText := enabledResult["context"].(string)
+	for _, want := range []string{
+		"## ACP 运行时",
+		"Agent Client Protocol",
+		"不是动态 MCP",
+		"mcp_tool_*",
+		"- agent: helper",
+		"allowed_roots",
+		"acp_session 管理会话",
+		"acp_prompt action=start",
+		"action=events",
+		"acp_interaction",
+		"option_id",
+		"always",
+	} {
+		if !strings.Contains(enabledText, want) {
+			t.Fatalf("ACP context missing %q: %s", want, enabledText)
+		}
+	}
+	// section 已说明何时用 ACP；rules 不再重复选型话术。
+	// bootstrap 只做短取向，不展开协议百科或 adapter 目录。
+	for _, longForm := range []string{
+		"需要托管本地 Coding Agent 时走 ACP",
+		"按主机配置拉起 adapter",
+		"Claude / Codex / Grok",
+		"JSON-RPC",
+		"wire protocol",
+	} {
+		if strings.Contains(enabledText, longForm) {
+			t.Fatalf("ACP context should stay short, found %q: %s", longForm, enabledText)
 		}
 	}
 }
@@ -118,49 +208,6 @@ func TestNexusAvailableExposesWorkflowTemplateCapability(t *testing.T) {
 	for _, want := range []string{"## 任务模板索引", "workflow_template_manage match", "source_template_ids"} {
 		if !strings.Contains(contextText, want) {
 			t.Fatalf("context missing %q with Nexus: %s", want, contextText)
-		}
-	}
-}
-
-func TestCapabilityToolItemsExposeOnlyNameAndDescription(t *testing.T) {
-	cfg := config.Config{
-		AgentDockDefaultDir: t.TempDir(),
-		AgentDockHome:       filepath.Join(t.TempDir(), ".agentdock"),
-	}
-	if err := cfg.Normalize(); err != nil {
-		t.Fatal(err)
-	}
-	rt, err := NewRuntime(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	items := rt.toolCapabilityItems()
-	specs := rt.availableToolSpecs()
-	if len(items) != len(specs) {
-		t.Fatalf("tool index count = %d, want %d", len(items), len(specs))
-	}
-	for i, spec := range specs {
-		item := items[i]
-		if item.Name != spec.Name || item.Description != strings.TrimSpace(spec.Description) {
-			t.Fatalf("tool index item %d = %#v, want name=%q description=%q", i, item, spec.Name, spec.Description)
-		}
-		data, err := json.Marshal(item)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var fields map[string]any
-		if err := json.Unmarshal(data, &fields); err != nil {
-			t.Fatal(err)
-		}
-		if len(fields) != 2 {
-			t.Fatalf("tool index should expose only name and description: %s", data)
-		}
-		if _, ok := fields["name"]; !ok {
-			t.Fatalf("tool index missing name: %s", data)
-		}
-		if _, ok := fields["description"]; !ok {
-			t.Fatalf("tool index missing description: %s", data)
 		}
 	}
 }

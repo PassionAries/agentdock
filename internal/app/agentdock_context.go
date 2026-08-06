@@ -11,9 +11,6 @@ import (
 )
 
 func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
-	toolItems := r.toolCapabilityItems()
-	toolLines := toolSummaryLines(toolItems)
-
 	_, skillSummary, _ := r.skillCapabilityIndex()
 	_, dynamicMCPSummary := r.dynamicMCPCapabilityIndex()
 	memorySummary, _, _ := r.memoryCapabilitySummary(ctx)
@@ -24,18 +21,20 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 		"AgentDock 自带工具直接调用；动态 MCP 工具先用 mcp_tool_search 查找、mcp_tool_inspect 读取 schema，再用 mcp_tool_call 执行。",
 	}
 	sections := []capabilitySection{
-		{Title: "AgentDock 工具索引", Lines: toolLines},
 		{Title: "Skill 能力索引", Lines: splitNonEmptyLines(skillSummary)},
 		{Title: "动态 MCP 索引", Lines: splitNonEmptyLines(dynamicMCPSummary)},
 	}
 	if requiresACP(r.cfg) {
+		// 只给选型与边界：是什么、何时用、不是 MCP、当前 agent/roots。操作细节留给 acp_* 工具 description。
 		sections = append(sections, capabilitySection{Title: "ACP 运行时", Lines: []string{
+			"内置本地 Coding Agent 通道（Agent Client Protocol）：把多轮编码/排障交给主机配置的 adapter；不是动态 MCP，勿用 mcp_tool_*。",
 			"- agent: " + r.cfg.ACPAgentName,
 			"- allowed_roots: " + jsonStringArray(r.cfg.ACPAllowedRoots),
 		}})
+		// 只保留工具 description 不易单独压住的契约：异步观察、权限 option 白名单。
 		rules = append(rules,
-			"ACP 是 AgentDock 内置运行时，不是动态 MCP：用 acp_session 管理会话，acp_prompt action=start 后用 action=events 增量观察，不要让单次 MCP 调用长期等待完整 Agent turn。",
-			"ACP Agent 请求权限时，用 acp_interaction 查看并仅选择当前请求明确提供的 option_id；本地策略不会暴露 always 类长期授权。",
+			"acp_session 管理会话；acp_prompt action=start 后用 action=events 增量观察，不要让单次调用长期等待完整 turn。",
+			"权限请求用 acp_interaction，仅选择当前请求明确提供的 option_id；本地策略不暴露 always 类长期授权。",
 		)
 	}
 
@@ -76,11 +75,6 @@ func (r *Runtime) agentDockContextTool(ctx context.Context, _ map[string]any) (R
 type capabilitySection struct {
 	Title string
 	Lines []string
-}
-
-type capabilityToolItem struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
 }
 
 type capabilitySkillItem struct {
@@ -128,26 +122,6 @@ type capabilityMemorySection struct {
 type capabilityMemoryRunbook struct {
 	Title string `json:"title"`
 	Path  string `json:"path"`
-}
-
-func (r *Runtime) toolCapabilityItems() []capabilityToolItem {
-	specs := r.availableToolSpecs()
-	items := make([]capabilityToolItem, 0, len(specs))
-	for _, spec := range specs {
-		items = append(items, capabilityToolItem{
-			Name:        spec.Name,
-			Description: strings.TrimSpace(spec.Description),
-		})
-	}
-	return items
-}
-
-func toolSummaryLines(items []capabilityToolItem) []string {
-	lines := make([]string, 0, len(items))
-	for _, item := range items {
-		lines = append(lines, capabilityItemLine(item.Name, item.Description))
-	}
-	return lines
 }
 
 func capabilityItemLine(name, description string) string {

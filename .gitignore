@@ -29,3 +29,6 @@ skill-data/
 /.env
 /agentdock.env
 /cloudflared.env
+
+# IDE
+/.idea
