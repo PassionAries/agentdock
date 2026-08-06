@@ -83,6 +83,7 @@ func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
 	for _, path := range []string{
 		"install.sh",
 		"install-linux-platform.sh",
+		"uninstall-linux.sh",
 		"install-macos-platform.sh",
 		"install.ps1",
 	} {
@@ -111,6 +112,7 @@ func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
 	entry := string(data)
 	for _, want := range []string{
 		"install-linux-platform.sh",
+		"uninstall-linux.sh",
 		"install-macos-platform.sh",
 		"AGENTDOCK_INSTALLER_BASE_URL",
 		"verify_checksum",

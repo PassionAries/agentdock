@@ -9,6 +9,10 @@ TMP_ROOT=""
 CLEAR_PUBLIC_URL=false
 ENV_BACKUP=""
 ENV_BACKUP_ACTIVE=false
+ENV_BACKUP_EXISTS=false
+TUNNEL_ENV_BACKUP=""
+TUNNEL_ENV_BACKUP_EXISTS=false
+PREVIOUS_TUNNEL_MODE="none"
 TTY_IN="${AGENTDOCK_TTY_IN:-/dev/tty}"
 TTY_OUT="${AGENTDOCK_TTY_OUT:-/dev/tty}"
 
@@ -22,9 +26,11 @@ fi
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# 由 trap 间接调用。
+# shellcheck disable=SC2329
 cleanup() {
-  if [ "${ENV_BACKUP_ACTIVE:-false}" = true ] && [ -f "${ENV_BACKUP:-}" ]; then
-    run_root cp "$ENV_BACKUP" "$(linux_env_file)" >/dev/null 2>&1 || true
+  if [ "${ENV_BACKUP_ACTIVE:-false}" = true ]; then
+    restore_public_config >/dev/null 2>&1 || true
   fi
   if [ -n "$TMP_ROOT" ] && [ -d "$TMP_ROOT" ]; then
     rm -rf "$TMP_ROOT"
@@ -107,6 +113,37 @@ verify_checksum() {
   [ "$actual" = "$expected" ] || die "安装器 SHA-256 校验失败：$file"
 }
 
+script_dir() {
+  case "$0" in
+    */*) CDPATH='' cd -- "$(dirname -- "$0")" && pwd ;;
+    *) die "本地安装器模式要求从文件路径执行 install.sh。" ;;
+  esac
+}
+
+prepare_release_asset() {
+  asset="$1"
+  if [ "${AGENTDOCK_USE_LOCAL_PLATFORM_INSTALLER:-false}" = "true" ]; then
+    asset_path="$(script_dir)/$asset"
+    [ -f "$asset_path" ] || die "找不到本地安装器资源：$asset_path"
+    printf '%s' "$asset_path"
+    return
+  fi
+
+  asset_path="$TMP_ROOT/$asset"
+  checksum_path="$asset_path.sha256"
+  log "下载 AgentDock 安装器资源：$asset"
+  download_file "$BASE_URL/$asset" "$asset_path"
+  download_file "$BASE_URL/$asset.sha256" "$checksum_path"
+  verify_checksum "$asset_path" "$checksum_path"
+  chmod 700 "$asset_path"
+  printf '%s' "$asset_path"
+}
+
+run_linux_uninstaller() {
+  uninstaller_path="$(prepare_release_asset uninstall-linux.sh)"
+  sh "$uninstaller_path" "$@"
+}
+
 prompt_choice() {
   label="$1"
   default_value="$2"
@@ -153,6 +190,8 @@ read_env_assignment() {
   file="$1"
   key="$2"
   root_file_exists "$file" || return 0
+  # awk 程序使用单引号避免 Shell 展开，其中的 $1 属于 awk 字段。
+  # shellcheck disable=SC2016
   run_root awk -F= -v key="$key" '$1 == key {value=substr($0, index($0, "=") + 1)} END {print value}' "$file"
 }
 
@@ -174,6 +213,11 @@ current_tunnel_mode() {
   if [ -z "$mode" ]; then
     mode="$(read_env_assignment "$(linux_cloudflared_env_file)" AGENTDOCK_TUNNEL_MODE)"
   fi
+  printf '%s' "${mode:-none}"
+}
+
+persisted_tunnel_mode() {
+  mode="$(read_env_assignment "$(linux_cloudflared_env_file)" AGENTDOCK_TUNNEL_MODE)"
   printf '%s' "${mode:-none}"
 }
 
@@ -216,58 +260,67 @@ CHOICE
   fi
 }
 
+backup_public_config() {
+  [ "$ENV_BACKUP_ACTIVE" = false ] || return 0
+
+  env_file="$(linux_env_file)"
+  tunnel_env_file="$(linux_cloudflared_env_file)"
+  ENV_BACKUP="$TMP_ROOT/agentdock.env.before-public-change"
+  TUNNEL_ENV_BACKUP="$TMP_ROOT/cloudflared.env.before-public-change"
+  PREVIOUS_TUNNEL_MODE="$(persisted_tunnel_mode)"
+
+  if root_file_exists "$env_file"; then
+    run_root cp -p "$env_file" "$ENV_BACKUP"
+    ENV_BACKUP_EXISTS=true
+  fi
+  if root_file_exists "$tunnel_env_file"; then
+    run_root cp -p "$tunnel_env_file" "$TUNNEL_ENV_BACKUP"
+    TUNNEL_ENV_BACKUP_EXISTS=true
+  fi
+  ENV_BACKUP_ACTIVE=true
+}
+
 backup_and_clear_public_url() {
   env_file="$(linux_env_file)"
   root_file_exists "$env_file" || return 0
+  backup_public_config
 
-  ENV_BACKUP="$TMP_ROOT/agentdock.env.before-public-reset"
   filtered_file="$TMP_ROOT/agentdock.env.without-public-url"
-  run_root cp "$env_file" "$ENV_BACKUP"
-  ENV_BACKUP_ACTIVE=true
+  # shellcheck disable=SC2016
   run_root awk '
     $0 !~ /^[[:space:]]*(export[[:space:]]+)?AGENTDOCK_SERVER_URL[[:space:]]*=/ { print }
   ' "$env_file" >"$filtered_file"
   run_root cp "$filtered_file" "$env_file"
 }
 
-restore_env_backup() {
-  [ -n "$ENV_BACKUP" ] || return 0
-  [ -f "$ENV_BACKUP" ] || return 0
-  run_root cp "$ENV_BACKUP" "$(linux_env_file)"
+restore_public_config() {
+  [ "$ENV_BACKUP_ACTIVE" = true ] || return 0
+  env_file="$(linux_env_file)"
+  tunnel_env_file="$(linux_cloudflared_env_file)"
+  run_root mkdir -p "$(dirname "$env_file")" "$(dirname "$tunnel_env_file")"
+
+  if [ "$ENV_BACKUP_EXISTS" = true ]; then
+    run_root cp -p "$ENV_BACKUP" "$env_file"
+  else
+    run_root rm -f "$env_file"
+  fi
+  if [ "$TUNNEL_ENV_BACKUP_EXISTS" = true ]; then
+    run_root cp -p "$TUNNEL_ENV_BACKUP" "$tunnel_env_file"
+  else
+    run_root rm -f "$tunnel_env_file"
+  fi
   ENV_BACKUP_ACTIVE=false
+  log "安装未完成，已恢复原公网配置（模式：$PREVIOUS_TUNNEL_MODE）。"
 }
 
-commit_env_backup() {
+commit_public_config() {
   ENV_BACKUP_ACTIVE=false
-}
-
-require_safe_removal_path() {
-  label="$1"
-  path="$2"
-  case "$path" in
-    /*) ;;
-    *) die "$label 必须是绝对路径：$path" ;;
-  esac
-  case "$path" in
-    *"/../"*|*"/.."|*"/./"*|*"/.")
-      die "拒绝删除包含路径跳转的目录（$label）：$path"
-      ;;
-  esac
-  normalized_path="$path"
-  while [ "$normalized_path" != "/" ] && [ "${normalized_path%/}" != "$normalized_path" ]; do
-    normalized_path="${normalized_path%/}"
-  done
-  case "$normalized_path" in
-    /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
-      die "拒绝删除危险路径（$label）：$path"
-      ;;
-  esac
 }
 
 install_quick_tunnel_retry_guard() {
   mode="$1"
   [ "$mode" = "quick" ] || return 0
-  command -v systemctl >/dev/null 2>&1 || return 0
+  [ "$(linux_service_manager)" = "systemd" ] || return 0
 
   systemd_dir="${AGENTDOCK_SYSTEMD_DIR:-/etc/systemd/system}"
   service_name="$(linux_tunnel_service_name)"
@@ -296,27 +349,96 @@ remove_quick_tunnel_retry_guard() {
   if run_root test -e "$managed_file"; then
     run_root rm -f "$managed_file"
     run_root rmdir "$dropin_dir" >/dev/null 2>&1 || true
-    if command -v systemctl >/dev/null 2>&1; then
+    if [ "$(linux_service_manager)" = "systemd" ]; then
       run_root systemctl daemon-reload >/dev/null 2>&1 || true
     fi
   fi
 }
 
+linux_service_manager() {
+  requested="${AGENTDOCK_SERVICE_MANAGER:-auto}"
+  case "$requested" in
+    systemd|openrc|none)
+      printf '%s' "$requested"
+      return
+      ;;
+    auto) ;;
+    *) die "服务管理器必须是 auto/systemd/openrc/none：$requested" ;;
+  esac
+
+  systemd_dir="${AGENTDOCK_SYSTEMD_DIR:-/etc/systemd/system}"
+  if command -v systemctl >/dev/null 2>&1 && { [ -d /run/systemd/system ] || [ -d "$systemd_dir" ]; }; then
+    printf 'systemd'
+  elif [ -f /etc/alpine-release ] || { command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; }; then
+    printf 'openrc'
+  else
+    printf 'none'
+  fi
+}
+
 quick_tunnel_rate_limited() {
   log_file="$1"
+  started_at="${2:-}"
   if grep -Eq '429 Too Many Requests|error code: 1015|status_code=.?429' "$log_file" 2>/dev/null; then
     return 0
   fi
-  command -v journalctl >/dev/null 2>&1 || return 1
+
   service_name="$(linux_tunnel_service_name)"
-  run_root journalctl -u "$service_name" -n 100 --no-pager 2>/dev/null \
-    | grep -Eq '429 Too Many Requests|error code: 1015|status_code=.?429'
+  case "$(linux_service_manager)" in
+    systemd)
+      command -v journalctl >/dev/null 2>&1 || return 1
+      if [ -n "$started_at" ]; then
+        run_root journalctl -u "$service_name" --since "$started_at" --no-pager 2>/dev/null
+      else
+        run_root journalctl -u "$service_name" -n 100 --no-pager 2>/dev/null
+      fi | grep -Eq '429 Too Many Requests|error code: 1015|status_code=.?429'
+      ;;
+    openrc)
+      log_dir="${AGENTDOCK_OPENRC_LOG_DIR:-/var/log}"
+      grep -Eq '429 Too Many Requests|error code: 1015|status_code=.?429' \
+        "$log_dir/$service_name.log" "$log_dir/$service_name.err" 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 stop_rate_limited_tunnel() {
-  command -v systemctl >/dev/null 2>&1 || return 0
   service_name="$(linux_tunnel_service_name)"
-  run_root systemctl disable --now "$service_name" >/dev/null 2>&1 || true
+  case "$(linux_service_manager)" in
+    systemd)
+      run_root systemctl disable --now "$service_name" >/dev/null 2>&1 || true
+      ;;
+    openrc)
+      run_root rc-service "$service_name" stop >/dev/null 2>&1 || true
+      run_root rc-update del "$service_name" default >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+restart_restored_services() {
+  service_name="${AGENTDOCK_SERVICE_NAME:-agentdock}"
+  tunnel_service_name="$service_name-cloudflared"
+
+  case "$(linux_service_manager)" in
+    systemd)
+      run_root systemctl restart "$service_name" >/dev/null 2>&1 || true
+      if [ "$PREVIOUS_TUNNEL_MODE" = "none" ]; then
+        run_root systemctl disable --now "$tunnel_service_name" >/dev/null 2>&1 || true
+      else
+        run_root systemctl enable --now "$tunnel_service_name" >/dev/null 2>&1 || true
+      fi
+      ;;
+    openrc)
+      run_root rc-service "$service_name" restart >/dev/null 2>&1 || true
+      if [ "$PREVIOUS_TUNNEL_MODE" = "none" ]; then
+        run_root rc-service "$tunnel_service_name" stop >/dev/null 2>&1 || true
+        run_root rc-update del "$tunnel_service_name" default >/dev/null 2>&1 || true
+      else
+        run_root rc-update add "$tunnel_service_name" default >/dev/null 2>&1 || true
+        run_root rc-service "$tunnel_service_name" restart >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
 }
 
 print_linux_summary() {
@@ -351,7 +473,9 @@ run_simple_linux_install() {
   installer_path="$1"
   shift
   mode="$(current_tunnel_mode)"
+  started_at="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
   install_quick_tunnel_retry_guard "$mode"
+  backup_public_config
   if [ "$CLEAR_PUBLIC_URL" = true ]; then
     backup_and_clear_public_url
   fi
@@ -363,19 +487,20 @@ run_simple_linux_install() {
     "$PLATFORM_SHELL" "$installer_path" "$@" >"$install_log" 2>&1 || status=$?
 
   if [ "$status" -ne 0 ]; then
-    if quick_tunnel_rate_limited "$install_log"; then
+    if quick_tunnel_rate_limited "$install_log" "$started_at"; then
       stop_rate_limited_tunnel
       printf 'ERROR: Cloudflare 临时 Tunnel 请求受限（429/1015），已停止 Tunnel 服务，避免持续重试。\n' >&2
       printf '请稍后重新运行安装器，或改用 Cloudflare 固定地址。\n' >&2
-      restore_env_backup
+      restore_public_config
       return "$status"
     fi
-    restore_env_backup
+    restore_public_config
+    restart_restored_services
     cat "$install_log" >&2
     return "$status"
   fi
 
-  commit_env_backup
+  commit_public_config
   if [ "$mode" != "quick" ]; then
     remove_quick_tunnel_retry_guard
   fi
@@ -386,88 +511,39 @@ run_direct_linux_install() {
   installer_path="$1"
   guard_mode="$2"
   shift 2
+  started_at="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
   install_quick_tunnel_retry_guard "$guard_mode"
 
-  status=0
-  "$PLATFORM_SHELL" "$installer_path" "$@" || status=$?
-  if [ "$status" -eq 0 ] && [ "$(current_tunnel_mode)" != "quick" ]; then
+  install_log="$TMP_ROOT/linux-direct-install.log"
+  status_file="$TMP_ROOT/linux-direct-install.status"
+  (
+    set +e
+    "$PLATFORM_SHELL" "$installer_path" "$@" 2>&1
+    direct_status=$?
+    printf '%s\n' "$direct_status" >"$status_file"
+  ) | tee "$install_log"
+  status="$(cat "$status_file")"
+
+  if [ "$status" -ne 0 ]; then
+    rate_limited=false
+    if quick_tunnel_rate_limited "$install_log" "$started_at"; then
+      stop_rate_limited_tunnel
+      printf 'ERROR: Cloudflare 临时 Tunnel 请求受限（429/1015），已停止 Tunnel 服务，避免持续重试。\n' >&2
+      printf '请稍后重新运行安装器，或改用 Cloudflare 固定地址。\n' >&2
+      rate_limited=true
+    fi
+    restore_public_config
+    if [ "$rate_limited" = false ]; then
+      restart_restored_services
+    fi
+    return "$status"
+  fi
+
+  commit_public_config
+  if [ "$(current_tunnel_mode)" != "quick" ]; then
     remove_quick_tunnel_retry_guard
   fi
-  return "$status"
-}
-
-linux_uninstall() {
-  purge_config="$1"
-  purge_data="$2"
-  service_name="${AGENTDOCK_SERVICE_NAME:-agentdock}"
-  tunnel_service_name="$service_name-cloudflared"
-  systemd_dir="${AGENTDOCK_SYSTEMD_DIR:-/etc/systemd/system}"
-  openrc_dir="${AGENTDOCK_OPENRC_DIR:-/etc/init.d}"
-  env_file="$(linux_env_file)"
-  config_dir="$(dirname "$env_file")"
-  source_dir="${AGENTDOCK_SOURCE_DIR:-/opt/agentdock}"
-  data_dir="${AGENTDOCK_DATA_DIR:-/srv/agentdock}"
-
-  if is_true "$purge_config"; then
-    require_safe_removal_path "配置目录" "$config_dir"
-  fi
-  if is_true "$purge_data"; then
-    require_safe_removal_path "安装目录" "$source_dir"
-    require_safe_removal_path "数据目录" "$data_dir"
-  fi
-
-  if command -v systemctl >/dev/null 2>&1; then
-    run_root systemctl disable --now "$tunnel_service_name" >/dev/null 2>&1 || true
-    run_root systemctl disable --now "$service_name" >/dev/null 2>&1 || true
-    run_root rm -f "$systemd_dir/$tunnel_service_name.service" "$systemd_dir/$service_name.service"
-    run_root rm -rf "$systemd_dir/$tunnel_service_name.service.d"
-    run_root systemctl daemon-reload >/dev/null 2>&1 || true
-  fi
-
-  if [ -e "$openrc_dir/$tunnel_service_name" ] || [ -e "$openrc_dir/$service_name" ]; then
-    if command -v rc-service >/dev/null 2>&1; then
-      run_root rc-service "$tunnel_service_name" stop >/dev/null 2>&1 || true
-      run_root rc-service "$service_name" stop >/dev/null 2>&1 || true
-    fi
-    if command -v rc-update >/dev/null 2>&1; then
-      run_root rc-update del "$tunnel_service_name" default >/dev/null 2>&1 || true
-      run_root rc-update del "$service_name" default >/dev/null 2>&1 || true
-    fi
-    run_root rm -f "$openrc_dir/$tunnel_service_name" "$openrc_dir/$service_name"
-  fi
-
-  if is_true "$purge_config"; then
-    run_root rm -rf "$config_dir"
-  fi
-  if is_true "$purge_data"; then
-    run_root rm -rf "$source_dir" "$data_dir"
-  fi
-
-  printf '\nAgentDock 已卸载。\n' >>"$TTY_OUT"
-  if ! is_true "$purge_config"; then
-    printf '已保留配置：%s\n' "$config_dir" >>"$TTY_OUT"
-  fi
-  if ! is_true "$purge_data"; then
-    printf '已保留程序和数据：%s、%s\n' "$source_dir" "$data_dir" >>"$TTY_OUT"
-  fi
-  printf 'cloudflared 未删除，避免影响其他服务。\n' >>"$TTY_OUT"
-}
-
-choose_uninstall_scope() {
-  cat >>"$TTY_OUT" <<'CHOICE'
-
-卸载范围：
-1) 仅移除服务，保留配置和数据
-2) 同时清除配置，便于重新安装
-3) 完全清除程序、配置和数据
-CHOICE
-  choice="$(prompt_choice '选择' 1)"
-  case "$choice" in
-    1) linux_uninstall false false ;;
-    2) linux_uninstall true false ;;
-    3) linux_uninstall true true ;;
-    *) die "无效选择：$choice" ;;
-  esac
+  return 0
 }
 
 linux_existing_menu() {
@@ -482,9 +558,9 @@ MENU
   choice="$(prompt_choice '选择' 1)"
   case "$choice" in
     1) SIMPLE_INSTALL=true ;;
-    2) choose_public_access; SIMPLE_INSTALL=true ;;
-    3) choose_uninstall_scope; exit 0 ;;
-    4) ADVANCED=true ;;
+    2) backup_public_config; choose_public_access; SIMPLE_INSTALL=true ;;
+    3) run_linux_uninstaller --interactive; exit 0 ;;
+    4) backup_public_config; ADVANCED=true ;;
     *) die "无效选择：$choice" ;;
   esac
 }
@@ -537,44 +613,37 @@ case "$(uname -s 2>/dev/null || true)" in
     ;;
 esac
 
-if [ "$UNINSTALL" = true ]; then
-  [ "$PLATFORM_INSTALLER" = "install-linux-platform.sh" ] || die "--uninstall 当前仅支持 Linux。"
-  linux_uninstall "$PURGE_CONFIG" "$PURGE_DATA"
-  exit 0
-fi
 if [ "$PURGE_CONFIG" = true ] || [ "$PURGE_DATA" = true ]; then
-  die "--purge-config/--purge-data 必须与 --uninstall 一起使用。"
+  [ "$UNINSTALL" = true ] || die "--purge-config/--purge-data 必须与 --uninstall 一起使用。"
 fi
-
-command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 $PLATFORM_SHELL，无法运行 $PLATFORM_INSTALLER。"
 
 # 源码开发需要显式开启本地模式；Release 用户始终下载并校验平台安装器。
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agentdock-installer.XXXXXX")"
 
-if [ "${AGENTDOCK_USE_LOCAL_PLATFORM_INSTALLER:-false}" = "true" ]; then
-  case "$0" in
-    */*) SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)" ;;
-    *) die "本地平台安装器模式要求从文件路径执行 install.sh。" ;;
-  esac
-  INSTALLER_PATH="$SCRIPT_DIR/$PLATFORM_INSTALLER"
-  [ -f "$INSTALLER_PATH" ] || die "找不到本地平台安装器：$INSTALLER_PATH"
-else
-  INSTALLER_PATH="$TMP_ROOT/$PLATFORM_INSTALLER"
-  CHECKSUM_PATH="$INSTALLER_PATH.sha256"
-
-  log "下载 AgentDock 平台安装器：$PLATFORM_INSTALLER"
-  download_file "$BASE_URL/$PLATFORM_INSTALLER" "$INSTALLER_PATH"
-  download_file "$BASE_URL/$PLATFORM_INSTALLER.sha256" "$CHECKSUM_PATH"
-  verify_checksum "$INSTALLER_PATH" "$CHECKSUM_PATH"
-  chmod 700 "$INSTALLER_PATH"
+if [ "$UNINSTALL" = true ]; then
+  [ "$PLATFORM_INSTALLER" = "install-linux-platform.sh" ] || die "--uninstall 当前仅支持 Linux。"
+  if [ "$PURGE_DATA" = true ]; then
+    run_linux_uninstaller --purge-data
+  elif [ "$PURGE_CONFIG" = true ]; then
+    run_linux_uninstaller --purge-config
+  else
+    run_linux_uninstaller --services-only
+  fi
+  exit $?
 fi
 
 if [ "$PLATFORM_INSTALLER" != "install-linux-platform.sh" ]; then
+  command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 $PLATFORM_SHELL，无法运行 $PLATFORM_INSTALLER。"
+  INSTALLER_PATH="$(prepare_release_asset "$PLATFORM_INSTALLER")"
   "$PLATFORM_SHELL" "$INSTALLER_PATH" "$@"
   exit $?
 fi
 
+command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 $PLATFORM_SHELL，无法运行 $PLATFORM_INSTALLER。"
+
 if is_true "${AGENTDOCK_NONINTERACTIVE:-false}"; then
+  backup_public_config
+  INSTALLER_PATH="$(prepare_release_asset "$PLATFORM_INSTALLER")"
   run_direct_linux_install "$INSTALLER_PATH" "$(current_tunnel_mode)" "$@"
   exit $?
 fi
@@ -582,6 +651,8 @@ fi
 SIMPLE_INSTALL=false
 if [ "$ADVANCED" = true ]; then
   # 高级流程可能在脚本内部选择 Quick Tunnel，因此预先安装保护；成功后按实际模式清理。
+  backup_public_config
+  INSTALLER_PATH="$(prepare_release_asset "$PLATFORM_INSTALLER")"
   run_direct_linux_install "$INSTALLER_PATH" quick "$@"
   exit $?
 fi
@@ -596,11 +667,13 @@ else
 fi
 
 if [ "$ADVANCED" = true ]; then
+  INSTALLER_PATH="$(prepare_release_asset "$PLATFORM_INSTALLER")"
   run_direct_linux_install "$INSTALLER_PATH" quick "$@"
   exit $?
 fi
 
 if [ "$SIMPLE_INSTALL" = true ]; then
+  INSTALLER_PATH="$(prepare_release_asset "$PLATFORM_INSTALLER")"
   run_simple_linux_install "$INSTALLER_PATH" "$@"
   exit $?
 fi

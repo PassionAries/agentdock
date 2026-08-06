@@ -221,6 +221,8 @@ run_as_service_user() {
   elif command -v runuser >/dev/null 2>&1; then
     run_root runuser -u "$user" -- env HOME="$home_dir" "$@"
   elif command -v su >/dev/null 2>&1; then
+    # 单引号中的位置参数由 su 启动的 /bin/sh 展开。
+    # shellcheck disable=SC2016
     run_root su -s /bin/sh "$user" -c 'HOME="$1"; export HOME; shift; exec "$@"' sh "$home_dir" "$@"
   else
     die "缺少 runuser 或 su，无法以运行用户初始化核心 Skill：$user"
@@ -290,6 +292,7 @@ read_env_assignment() {
   local file_path="$1"
   local key="$2"
   [[ -f "$file_path" ]] || return 0
+  # shellcheck disable=SC2016
   run_root awk -F= -v key="$key" '$1 == key {value=substr($0, index($0, "=") + 1)} END {print value}' "$file_path"
 }
 
@@ -371,6 +374,8 @@ install_go_official() {
   rm -rf "$tmp_dir"
   export PATH="/usr/local/go/bin:$PATH"
   if [[ -d /etc/profile.d ]]; then
+    # 需要将字面量 $PATH 写入 profile 脚本。
+    # shellcheck disable=SC2016
     printf '%s\n' 'export PATH=/usr/local/go/bin:$PATH' | run_root tee /etc/profile.d/agentdock-go.sh >/dev/null
   fi
 }
@@ -588,29 +593,32 @@ write_env_file() {
   # 重跑安装器时保留浏览器、代理和其他高级配置，只替换本次安装器负责的键。
   # 同时兼容用户手工写入的 `export KEY=...` 形式，避免重复定义。
   if [[ -f "$env_file" ]]; then
+    # shellcheck disable=SC2016
     run_root awk -v keys="$managed_keys"       '$0 !~ "^[[:space:]]*(export[[:space:]]+)?(" keys ")[[:space:]]*="'       "$env_file" >"$tmp_file"
   fi
 
-  cat >>"$tmp_file" <<ENV
+  {
+    cat <<ENV
 AGENTDOCK_HOST=$host
 AGENTDOCK_PORT=$port
 AGENTDOCK_AUTH_TOKEN=$token
 AGENTDOCK_LOG_LEVEL=$log_level
 ENV
-  if [[ -n "$nexus_endpoint" ]]; then
-    printf 'AGENTDOCK_NEXUS_ENDPOINT=%s\n' "$nexus_endpoint" >>"$tmp_file"
-  fi
-  if [[ -n "$nexus_token" ]]; then
-    printf 'AGENTDOCK_NEXUS_TOKEN=%s\n' "$nexus_token" >>"$tmp_file"
-  fi
-  if [[ -n "$server_url" ]]; then
-    printf 'AGENTDOCK_SERVER_URL=%s\n' "$server_url" >>"$tmp_file"
-  fi
-  if [[ "$configure_oauth" == "yes" ]]; then
-    printf 'AGENTDOCK_OAUTH_ENABLED=%s\n' "$oauth_enabled" >>"$tmp_file"
-    printf 'AGENTDOCK_OAUTH_PASSWORD=%s\n' "$oauth_password" >>"$tmp_file"
-    printf 'AGENTDOCK_OAUTH_TOKEN_SECRET=%s\n' "$oauth_token_secret" >>"$tmp_file"
-  fi
+    if [[ -n "$nexus_endpoint" ]]; then
+      printf 'AGENTDOCK_NEXUS_ENDPOINT=%s\n' "$nexus_endpoint"
+    fi
+    if [[ -n "$nexus_token" ]]; then
+      printf 'AGENTDOCK_NEXUS_TOKEN=%s\n' "$nexus_token"
+    fi
+    if [[ -n "$server_url" ]]; then
+      printf 'AGENTDOCK_SERVER_URL=%s\n' "$server_url"
+    fi
+    if [[ "$configure_oauth" == "yes" ]]; then
+      printf 'AGENTDOCK_OAUTH_ENABLED=%s\n' "$oauth_enabled"
+      printf 'AGENTDOCK_OAUTH_PASSWORD=%s\n' "$oauth_password"
+      printf 'AGENTDOCK_OAUTH_TOKEN_SECRET=%s\n' "$oauth_token_secret"
+    fi
+  } >>"$tmp_file"
 
   run_root mkdir -p "$env_dir"
   run_root install -m 600 -o root -g root "$tmp_file" "$env_file"
@@ -974,7 +982,8 @@ wait_for_cloudflared() {
   while (( attempts-- > 0 )); do
     if cloudflared_service_active "$service_manager" "$tunnel_service_name"; then
       if [[ "$mode" == quick ]]; then
-        local public_url="$(cloudflared_quick_url "$service_manager" "$tunnel_service_name" "$started_at" || true)"
+        local public_url
+        public_url="$(cloudflared_quick_url "$service_manager" "$tunnel_service_name" "$started_at" || true)"
         if [[ -n "$public_url" ]]; then
           printf '%s' "$public_url"
           return 0
@@ -999,7 +1008,8 @@ start_cloudflared_service() {
   local tunnel_service_name="$2"
   local mode="$3"
   local server_url="$4"
-  local started_at="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+  local started_at
+  started_at="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 
   case "$service_manager" in
     systemd)
@@ -1196,7 +1206,7 @@ main() {
   local service_name service_user service_group service_manager service_manager_prompt host port token log_level
   local install_mode release_version nexus_endpoint nexus_token update_existing run_full_check install_deps
   local oauth_password oauth_token_secret oauth_enabled configure_oauth
-  local go_version public_domain smoke_url health_host build_from_source binary_installed
+  local go_version public_domain smoke_url health_host build_from_source
   local tunnel_mode tunnel_default tunnel_token server_url existing_server_url existing_tunnel_token
   local existing_host existing_port existing_log_level existing_token existing_oauth_password existing_oauth_secret
   local cloudflared_binary cloudflared_env_file tunnel_service_name tunnel_target_url
@@ -1394,7 +1404,6 @@ SUMMARY
   confirm '确认开始执行部署？' y || die '用户取消。'
 
   build_from_source="no"
-  binary_installed="no"
 
   if [[ "$install_deps" == "yes" ]]; then
     if [[ "$install_mode" == "source" ]]; then
@@ -1406,7 +1415,6 @@ SUMMARY
 
   if [[ "$install_mode" == "binary" || "$install_mode" == "auto" ]]; then
     if install_prebuilt_binary "$repo_url" "$release_version" "$source_dir"; then
-      binary_installed="yes"
       log "预编译二进制安装完成：$source_dir/bin/agentdock"
     elif [[ "$install_mode" == "auto" ]]; then
       warn "预编译二进制下载失败，将 fallback 到源码构建。"

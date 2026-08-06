@@ -50,8 +50,10 @@ jobs:
       - name: Check Linux installer entry
         if: runner.os == 'Linux'
         run: |
-          sh -n scripts/install.sh scripts/test-install-entry.sh
+          sh -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
+          dash -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
           bash -n scripts/install-linux-platform.sh scripts/test-docker-images.sh
+          shellcheck scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh scripts/install-linux-platform.sh
           ./scripts/test-install-entry.sh
 
       - name: Test macOS scripts
