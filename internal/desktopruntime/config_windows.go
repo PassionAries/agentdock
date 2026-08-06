@@ -65,10 +65,12 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	var acpAdapter desktopACPAdapter
 	if request.ACPEnabled {
 		configuredCommand := ""
+		var configuredArgs []string
 		if runtime.settings.ACPAgent == request.ACPAgent {
 			configuredCommand = runtime.settings.ACPCommand
+			configuredArgs = runtime.settings.ACPArgs
 		}
-		acpAdapter, err = resolveDesktopACPAdapter(request.ACPAgent, runtime.root, configuredCommand)
+		acpAdapter, err = resolveDesktopACPAdapter(request.ACPAgent, runtime.root, configuredCommand, configuredArgs)
 		if err != nil {
 			return err
 		}

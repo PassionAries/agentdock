@@ -304,10 +304,10 @@ public partial class MainWindow : Window
         AcpAllowedRootTextBox.IsEnabled = enabled;
         AcpBrowseButton.IsEnabled = enabled;
         var agent = SelectedAcpAgent();
-        var configuredCommand = string.Equals(_snapshot?.Settings.AcpAgent, agent, StringComparison.OrdinalIgnoreCase)
-            ? _snapshot?.Settings.AcpCommand ?? ""
-            : "";
-        var resolution = _runtime.ResolveAcpAdapter(agent, configuredCommand);
+        var sameAgent = string.Equals(_snapshot?.Settings.AcpAgent, agent, StringComparison.OrdinalIgnoreCase);
+        var configuredCommand = sameAgent ? _snapshot?.Settings.AcpCommand ?? "" : "";
+        var configuredArguments = sameAgent ? _snapshot?.Settings.AcpArgs : null;
+        var resolution = _runtime.ResolveAcpAdapter(agent, configuredCommand, configuredArguments);
         AcpStatusText.Text = enabled
             ? resolution.Message
             : resolution.Available ? $"已检测到 {AgentDisplayName(agent)} · 启用后生效" : resolution.Message;
@@ -332,10 +332,10 @@ public partial class MainWindow : Window
             return;
         }
         var acpAgent = SelectedAcpAgent();
-        var configuredAcpCommand = string.Equals(_snapshot?.Settings.AcpAgent, acpAgent, StringComparison.OrdinalIgnoreCase)
-            ? _snapshot?.Settings.AcpCommand ?? ""
-            : "";
-        if (acpEnabled && !_runtime.ResolveAcpAdapter(acpAgent, configuredAcpCommand).Available)
+        var sameAcpAgent = string.Equals(_snapshot?.Settings.AcpAgent, acpAgent, StringComparison.OrdinalIgnoreCase);
+        var configuredAcpCommand = sameAcpAgent ? _snapshot?.Settings.AcpCommand ?? "" : "";
+        var configuredAcpArguments = sameAcpAgent ? _snapshot?.Settings.AcpArgs : null;
+        if (acpEnabled && !_runtime.ResolveAcpAdapter(acpAgent, configuredAcpCommand, configuredAcpArguments).Available)
         {
             MessageBox.Show(this, $"{AgentDisplayName(acpAgent)} 当前不可用，请先安装对应命令。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
