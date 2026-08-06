@@ -564,6 +564,95 @@ func oauthTestConfig(t *testing.T) config.Config {
 	return cfg
 }
 
+func TestOAuthAccessTokenTTLUsesConfiguration(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_PASSWORD", "")
+	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-signing-secret")
+	cfg := oauthTestConfig(t)
+	cfg.OAuthAccessTokenTTLSeconds = int64(999999 * 24 * 60 * 60)
+	store := auth.NewOAuthStore()
+	response := issueOAuthTokenForTTLTest(t, cfg, store)
+	var payload struct {
+		ExpiresIn int64 `json:"expires_in"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ExpiresIn != cfg.OAuthAccessTokenTTLSeconds {
+		t.Fatalf("expires_in = %d, want %d", payload.ExpiresIn, cfg.OAuthAccessTokenTTLSeconds)
+	}
+}
+
+func TestOAuthAccessTokenCanBeConfiguredToNeverExpire(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_PASSWORD", "")
+	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-signing-secret")
+	cfg := oauthTestConfig(t)
+	cfg.OAuthAccessTokenNeverExpires = true
+	cfg.OAuthAccessTokenTTLSeconds = 0
+	store := auth.NewOAuthStore()
+	response := issueOAuthTokenForTTLTest(t, cfg, store)
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ExpiresIn != neverOAuthClientExpiresInSeconds {
+		t.Fatalf("expires_in = %d, want compatibility value %d", payload.ExpiresIn, neverOAuthClientExpiresInSeconds)
+	}
+	request := httptest.NewRequest(http.MethodPost, cfg.OAuthServerURL+"/mcp", nil)
+	request.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+	ctx := auth.WithOAuthRequest(request.Context(), cfg.OAuthServerURL, cfg.OAuthServerURL+"/mcp", "")
+	if _, err := newOAuthProtocolServer(cfg, store).ValidationBearerToken(request.WithContext(ctx)); err != nil {
+		t.Fatalf("ValidationBearerToken() error = %v", err)
+	}
+}
+
+func issueOAuthTokenForTTLTest(t *testing.T, cfg config.Config, store *auth.OAuthStore) *httptest.ResponseRecorder {
+	t.Helper()
+	clientID := oauthRegisteredClientID(t, store, oauthTestRedirect)
+	resource := cfg.OAuthServerURL + "/mcp"
+	authorizeValues := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {clientID},
+		"redirect_uri":          {oauthTestRedirect},
+		"code_challenge":        {oauthTestChallenge},
+		"code_challenge_method": {"S256"},
+		"resource":              {resource},
+		"state":                 {"state-value"},
+	}
+	authorizeResponse := httptest.NewRecorder()
+	handleAuthorizeForTest(
+		authorizeResponse,
+		httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+authorizeValues.Encode(), nil),
+		cfg,
+		store,
+	)
+	if authorizeResponse.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d; body=%s", authorizeResponse.Code, authorizeResponse.Body.String())
+	}
+	location, err := url.Parse(authorizeResponse.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := location.Query().Get("code")
+	if code == "" {
+		t.Fatalf("authorization redirect = %s", location)
+	}
+	response := postTokenRequest(t, cfg, store, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {oauthTestRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {oauthTestVerifier},
+		"resource":      {resource},
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("token status = %d; body=%s", response.Code, response.Body.String())
+	}
+	return response
+}
+
 func postTokenRequest(t *testing.T, cfg config.Config, codes *auth.OAuthStore, values url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	request := formRequest(values)

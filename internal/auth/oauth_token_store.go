@@ -15,14 +15,14 @@ import (
 	"github.com/go-oauth2/oauth2/v4/models"
 )
 
-func (s *OAuthStore) configureOAuthFramework(signingKey string, accessTTL, refreshTTL time.Duration) {
+func (s *OAuthStore) configureOAuthFramework(signingKey string, accessTTLSeconds int64, refreshTTL time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if value := strings.TrimSpace(signingKey); value != "" {
 		s.signingKey = value
 	}
-	if accessTTL > 0 {
-		s.accessTTL = accessTTL
+	if accessTTLSeconds >= 0 {
+		s.accessTTLSeconds = accessTTLSeconds
 	}
 	if refreshTTL > 0 {
 		s.refreshTTL = refreshTTL
@@ -89,14 +89,22 @@ func (s *OAuthStore) storeGrantTokens(info gooauth2.TokenInfo) error {
 	}
 
 	accessIssuedAt := info.GetAccessCreateAt()
-	accessExpiresAt := accessIssuedAt.Add(info.GetAccessExpiresIn())
+	accessNeverExpires := s.accessTTLSeconds == 0
+	var accessExpiresAt int64
+	if !accessNeverExpires {
+		var ok bool
+		accessExpiresAt, ok = unixAfterSeconds(accessIssuedAt, s.accessTTLSeconds)
+		if !ok {
+			return errors.New("OAuth access token lifetime overflows Unix time")
+		}
+	}
 	grantExpiresAt := accessExpiresAt
 	refreshIssuedAt := time.Time{}
 	if refresh != "" {
 		refreshIssuedAt = info.GetRefreshCreateAt()
-		grantExpiresAt = refreshIssuedAt.Add(info.GetRefreshExpiresIn())
+		grantExpiresAt = refreshIssuedAt.Add(info.GetRefreshExpiresIn()).Unix()
 	}
-	if !accessExpiresAt.After(time.Now()) || !grantExpiresAt.After(time.Now()) {
+	if (!accessNeverExpires && accessExpiresAt <= time.Now().Unix()) || (grantExpiresAt != 0 && grantExpiresAt <= time.Now().Unix()) {
 		return errors.New("OAuth token lifetime is already expired")
 	}
 
@@ -121,13 +129,14 @@ func (s *OAuthStore) storeGrantTokens(info gooauth2.TokenInfo) error {
 	}
 
 	grant := OAuthGrant{
-		ClientID:          clientID,
-		Resource:          resource,
-		AccessTokenHash:   hashOAuthToken(access),
-		AccessIssuedAt:    accessIssuedAt.Unix(),
-		AccessExpiresAt:   accessExpiresAt.Unix(),
-		CurrentGeneration: generation,
-		ExpiresAt:         grantExpiresAt.Unix(),
+		ClientID:           clientID,
+		Resource:           resource,
+		AccessTokenHash:    hashOAuthToken(access),
+		AccessIssuedAt:     accessIssuedAt.Unix(),
+		AccessExpiresAt:    accessExpiresAt,
+		AccessNeverExpires: accessNeverExpires,
+		CurrentGeneration:  generation,
+		ExpiresAt:          grantExpiresAt,
 	}
 	if !refreshIssuedAt.IsZero() {
 		grant.RefreshIssuedAt = refreshIssuedAt.Unix()
@@ -224,7 +233,7 @@ func (s *OAuthStore) GetByAccess(ctx context.Context, raw string) (gooauth2.Toke
 		grantID = legacyGrantID
 	}
 	grant, ok := s.grants[grantID]
-	if !ok || grant.Revoked || grant.ExpiresAt <= now {
+	if !ok || grant.Revoked {
 		return nil, nil
 	}
 	if expected := oauthResourceFromContext(ctx); expected != "" && !EquivalentResourceURI(grant.Resource, expected) {
@@ -236,10 +245,10 @@ func (s *OAuthStore) GetByAccess(ctx context.Context, raw string) (gooauth2.Toke
 	if grant.AccessTokenHash != "" && grant.AccessTokenHash != hash {
 		return nil, nil
 	}
-	if grant.AccessExpiresAt != 0 && grant.AccessExpiresAt <= now {
+	if !grant.AccessNeverExpires && (grant.AccessExpiresAt == 0 || grant.AccessExpiresAt <= now) {
 		return nil, nil
 	}
-	return tokenInfoForGrant(grantID, grant, raw, "", s.accessTTL, s.refreshTTL), nil
+	return tokenInfoForGrant(grantID, grant, raw, "", s.accessTTLSeconds, s.refreshTTL), nil
 }
 
 func (s *OAuthStore) GetByRefresh(ctx context.Context, raw string) (gooauth2.TokenInfo, error) {
@@ -278,7 +287,7 @@ func (s *OAuthStore) GetByRefresh(ctx context.Context, raw string) (gooauth2.Tok
 		}
 		return nil, nil
 	}
-	return tokenInfoForGrant(claims.GrantID, grant, "", raw, s.accessTTL, s.refreshTTL), nil
+	return tokenInfoForGrant(claims.GrantID, grant, "", raw, s.accessTTLSeconds, s.refreshTTL), nil
 }
 
 func (s *OAuthStore) revokeByAccess(raw string) error {
@@ -332,7 +341,7 @@ func tokenInfoForCode(raw string, code OAuthCode) gooauth2.TokenInfo {
 	return info
 }
 
-func tokenInfoForGrant(grantID string, grant OAuthGrant, access, refresh string, accessTTL, refreshTTL time.Duration) gooauth2.TokenInfo {
+func tokenInfoForGrant(grantID string, grant OAuthGrant, access, refresh string, accessTTLSeconds int64, refreshTTL time.Duration) gooauth2.TokenInfo {
 	info := models.NewToken()
 	info.SetClientID(grant.ClientID)
 	info.SetUserID(grantID)
@@ -345,10 +354,12 @@ func tokenInfoForGrant(grantID string, grant OAuthGrant, access, refresh string,
 		accessIssuedAt = time.Now()
 	}
 	info.SetAccessCreateAt(accessIssuedAt)
-	if grant.AccessExpiresAt > grant.AccessIssuedAt {
-		info.SetAccessExpiresIn(time.Unix(grant.AccessExpiresAt, 0).Sub(accessIssuedAt))
+	if grant.AccessNeverExpires {
+		info.SetAccessExpiresIn(0)
+	} else if grant.AccessExpiresAt > grant.AccessIssuedAt {
+		info.SetAccessExpiresIn(oauthFrameworkTTL(grant.AccessExpiresAt - grant.AccessIssuedAt))
 	} else {
-		info.SetAccessExpiresIn(accessTTL)
+		info.SetAccessExpiresIn(oauthFrameworkTTL(accessTTLSeconds))
 	}
 
 	if refresh != "" {
@@ -360,6 +371,13 @@ func tokenInfoForGrant(grantID string, grant OAuthGrant, access, refresh string,
 		info.SetRefreshExpiresIn(time.Unix(grant.ExpiresAt, 0).Sub(refreshIssuedAt))
 	}
 	return info
+}
+
+func unixAfterSeconds(start time.Time, seconds int64) (int64, bool) {
+	if seconds <= 0 || start.Unix() > (1<<63-1)-seconds {
+		return 0, false
+	}
+	return start.Unix() + seconds, true
 }
 
 func resourceFromTokenInfo(info gooauth2.TokenInfo) string {

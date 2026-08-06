@@ -33,15 +33,15 @@ const (
 )
 
 type OAuthStore struct {
-	mu          sync.Mutex
-	codes       map[string]OAuthCode
-	grants      map[string]OAuthGrant
-	clients     map[string]OAuthClientRegistration
-	accessIndex map[string]string
-	statePath   string
-	signingKey  string
-	accessTTL   time.Duration
-	refreshTTL  time.Duration
+	mu               sync.Mutex
+	codes            map[string]OAuthCode
+	grants           map[string]OAuthGrant
+	clients          map[string]OAuthClientRegistration
+	accessIndex      map[string]string
+	statePath        string
+	signingKey       string
+	accessTTLSeconds int64
+	refreshTTL       time.Duration
 }
 
 type OAuthCode struct {
@@ -55,15 +55,16 @@ type OAuthCode struct {
 }
 
 type OAuthGrant struct {
-	ClientID          string `json:"client_id"`
-	Resource          string `json:"resource"`
-	AccessTokenHash   string `json:"access_token_hash,omitempty"`
-	AccessIssuedAt    int64  `json:"access_issued_at,omitempty"`
-	AccessExpiresAt   int64  `json:"access_expires_at,omitempty"`
-	RefreshIssuedAt   int64  `json:"refresh_issued_at,omitempty"`
-	CurrentGeneration uint64 `json:"current_generation"`
-	ExpiresAt         int64  `json:"expires_at"`
-	Revoked           bool   `json:"revoked,omitempty"`
+	ClientID           string `json:"client_id"`
+	Resource           string `json:"resource"`
+	AccessTokenHash    string `json:"access_token_hash,omitempty"`
+	AccessIssuedAt     int64  `json:"access_issued_at,omitempty"`
+	AccessExpiresAt    int64  `json:"access_expires_at,omitempty"`
+	AccessNeverExpires bool   `json:"access_never_expires,omitempty"`
+	RefreshIssuedAt    int64  `json:"refresh_issued_at,omitempty"`
+	CurrentGeneration  uint64 `json:"current_generation"`
+	ExpiresAt          int64  `json:"expires_at"`
+	Revoked            bool   `json:"revoked,omitempty"`
 }
 
 type OAuthClientRegistration struct {
@@ -100,13 +101,13 @@ func NewOAuthStore() *OAuthStore {
 		panic(fmt.Sprintf("generate in-memory OAuth signing key: %v", err))
 	}
 	return &OAuthStore{
-		codes:       map[string]OAuthCode{},
-		grants:      map[string]OAuthGrant{},
-		clients:     map[string]OAuthClientRegistration{},
-		accessIndex: map[string]string{},
-		signingKey:  key,
-		accessTTL:   time.Hour,
-		refreshTTL:  90 * 24 * time.Hour,
+		codes:            map[string]OAuthCode{},
+		grants:           map[string]OAuthGrant{},
+		clients:          map[string]OAuthClientRegistration{},
+		accessIndex:      map[string]string{},
+		signingKey:       key,
+		accessTTLSeconds: int64(time.Hour / time.Second),
+		refreshTTL:       90 * 24 * time.Hour,
 	}
 }
 
@@ -246,7 +247,9 @@ func (s *OAuthStore) RevokeGrant(grantID string, ttl time.Duration) error {
 
 func (s *OAuthStore) pruneExpiredGrantsLocked(now int64) {
 	for grantID, grant := range s.grants {
-		if grant.ExpiresAt <= now {
+		accessAlive := !grant.Revoked && (grant.AccessNeverExpires || grant.AccessExpiresAt > now)
+		refreshAlive := grant.ExpiresAt > now
+		if !accessAlive && !refreshAlive {
 			delete(s.accessIndex, grant.AccessTokenHash)
 			delete(s.grants, grantID)
 		}
@@ -320,8 +323,10 @@ func (s *OAuthStore) persistStateLocked() error {
 
 func validStoredGrant(grantID string, grant OAuthGrant, now int64) bool {
 	decoded, err := base64.RawURLEncoding.DecodeString(grantID)
+	accessAlive := !grant.Revoked && (grant.AccessNeverExpires || grant.AccessExpiresAt > now)
+	refreshAlive := grant.ExpiresAt > now
 	return err == nil && len(decoded) == 24 &&
-		grant.ExpiresAt > now &&
+		(accessAlive || refreshAlive) &&
 		(grant.Revoked || grant.ClientID != "" && grant.Resource != "")
 }
 

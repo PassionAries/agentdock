@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setTestUserHome(t *testing.T, home string) {
@@ -193,6 +194,7 @@ func TestFromEnvRejectsInvalidTypedValues(t *testing.T) {
 		{name: "port", key: "AGENTDOCK_PORT", value: "not-a-number"},
 		{name: "browser enabled", key: "AGENTDOCK_BROWSER_ENABLED", value: "sometimes"},
 		{name: "oauth enabled", key: "AGENTDOCK_OAUTH_ENABLED", value: "enabled"},
+		{name: "oauth access token ttl", key: "AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", value: "one-day"},
 		{name: "stdio", key: "AGENTDOCK_STDIO", value: "enabled"},
 	}
 	for _, test := range tests {
@@ -200,6 +202,7 @@ func TestFromEnvRejectsInvalidTypedValues(t *testing.T) {
 			t.Setenv("AGENTDOCK_PORT", "")
 			t.Setenv("AGENTDOCK_BROWSER_ENABLED", "")
 			t.Setenv("AGENTDOCK_OAUTH_ENABLED", "")
+			t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "")
 			t.Setenv("AGENTDOCK_STDIO", "")
 			t.Setenv(test.key, test.value)
 			if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), test.key) {
@@ -218,14 +221,60 @@ func TestFromEnvParsesTypedValues(t *testing.T) {
 	t.Setenv("AGENTDOCK_BROWSER_RUNNER_DIR", runnerDir)
 	t.Setenv("AGENTDOCK_BROWSER_NODE_PATH", nodePath)
 	t.Setenv("AGENTDOCK_OAUTH_ENABLED", "true")
+	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "24h")
 	t.Setenv("AGENTDOCK_STDIO", "1")
 	cfg, err := FromEnv()
 	if err != nil {
 		t.Fatalf("FromEnv() error = %v", err)
 	}
-	if cfg.Port != 9876 || !cfg.BrowserEnabled || !cfg.OAuthEnabled || !cfg.Stdio ||
+	if cfg.Port != 9876 || !cfg.BrowserEnabled || !cfg.OAuthEnabled || !cfg.Stdio || cfg.OAuthAccessTokenTTLSeconds != int64(24*time.Hour/time.Second) ||
 		cfg.BrowserRunnerDir != runnerDir || cfg.BrowserNodePath != nodePath {
 		t.Fatalf("config = %#v", cfg)
+	}
+}
+
+func TestFromEnvParsesLongOAuthAccessTokenTTLInDays(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "999999d")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	want := int64(999999 * 24 * 60 * 60)
+	if cfg.OAuthAccessTokenTTLSeconds != want {
+		t.Fatalf("OAuthAccessTokenTTLSeconds = %d, want %d", cfg.OAuthAccessTokenTTLSeconds, want)
+	}
+}
+
+func TestFromEnvParsesNeverExpiringOAuthAccessToken(t *testing.T) {
+	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "never")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if !cfg.OAuthAccessTokenNeverExpires || cfg.OAuthAccessTokenTTLSeconds != 0 {
+		t.Fatalf("config = %#v, want a non-expiring OAuth access token", cfg)
+	}
+}
+
+func TestNormalizeValidatesOAuthAccessTokenTTL(t *testing.T) {
+	home := t.TempDir()
+	for _, test := range []struct {
+		name       string
+		ttlSeconds int64
+	}{
+		{name: "too short", ttlSeconds: 1},
+		{name: "too long", ttlSeconds: int64(999999*24*60*60) + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := Config{
+				AgentDockHome:              filepath.Join(home, test.name, "home"),
+				AgentDockDefaultDir:        filepath.Join(home, test.name, "workspace"),
+				OAuthAccessTokenTTLSeconds: test.ttlSeconds,
+			}
+			if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL") {
+				t.Fatalf("Normalize() error = %v, want OAuth access token TTL error", err)
+			}
+		})
 	}
 }
 

@@ -264,6 +264,9 @@ AGENTDOCK_OAUTH_ENABLED=true
 AGENTDOCK_SERVER_URL=https://agentdock.example.com
 AGENTDOCK_OAUTH_PASSWORD=***
 AGENTDOCK_OAUTH_TOKEN_SECRET=***
+# Optional; defaults to 1h. Accepts Go durations, integer days such as 999999d, or never.
+# In never mode, the server does not expire access tokens and advertises 999999d to OAuth clients for compatibility.
+AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL=1h
 ```
 
 Then open **Settings > Plugins > Advanced settings** in ChatGPT, enable developer mode, and create a plugin using this MCP Server URL:
