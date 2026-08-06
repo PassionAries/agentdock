@@ -266,6 +266,9 @@ AGENTDOCK_OAUTH_ENABLED=true
 AGENTDOCK_SERVER_URL=https://agentdock.example.com
 AGENTDOCK_OAUTH_PASSWORD=<至少-12-个字符的授权密码>
 AGENTDOCK_OAUTH_TOKEN_SECRET=<至少-32-字节的随机签名密钥>
+# 可选，默认 1h；支持 Go duration、999999d 这类整数天数，或 never（服务端永不过期）
+# never 模式会为兼容 OAuth 客户端对外声明 999999d，但服务端不会让 Access Token 到期
+AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL=1h
 ```
 
 然后进入 ChatGPT 的 **设置 > 插件 > 高级设置**，开启开发人员模式并创建插件，MCP Server URL 填写：

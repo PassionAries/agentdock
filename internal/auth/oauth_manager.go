@@ -21,9 +21,11 @@ const oauthResourceExtension = "resource"
 func NewOAuthManager(
 	store *OAuthStore,
 	signingKey string,
-	accessTTL, refreshTTL time.Duration,
+	accessTTLSeconds int64,
+	refreshTTL time.Duration,
 ) *manage.Manager {
-	store.configureOAuthFramework(signingKey, accessTTL, refreshTTL)
+	store.configureOAuthFramework(signingKey, accessTTLSeconds, refreshTTL)
+	accessTTL := oauthFrameworkTTL(accessTTLSeconds)
 
 	manager := manage.NewDefaultManager()
 	manager.MapClientStorage(oauthClientStore{store: store})
@@ -58,6 +60,16 @@ func NewOAuthManager(
 		info.SetExtension(url.Values{oauthResourceExtension: []string{resource}})
 	})
 	return manager
+}
+
+// go-oauth2 使用 time.Duration 表示令牌寿命，超出约 292 年后会溢出。
+// 对更长的配置返回 0，利用框架的“不自动过期”语义；精确到期时间仍由 OAuthStore 校验。
+func oauthFrameworkTTL(seconds int64) time.Duration {
+	const maxDurationSeconds = int64((1<<63 - 1) / time.Second)
+	if seconds <= 0 || seconds > maxDurationSeconds {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 type oauthClientStore struct {

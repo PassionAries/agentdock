@@ -184,6 +184,46 @@ func TestOAuthFrameworkRefreshRotationStateRemainsBounded(t *testing.T) {
 	}
 }
 
+func TestOAuthFrameworkSupportsNeverExpiringAccessToken(t *testing.T) {
+	store := NewOAuthStore()
+	clientID, err := store.RegisterClient(
+		"never-expiring test",
+		[]string{frameworkTestRedirect},
+		[]string{gooauth2.AuthorizationCode.String(), gooauth2.Refreshing.String()},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := NewOAuthManager(store, frameworkTestKey, 0, 90*24*time.Hour)
+	ctx := oauthFrameworkTestContext(clientID, frameworkTestResource)
+	issued := authorizeAndExchangeWithFramework(t, manager, clientID, ctx)
+	info, err := manager.LoadAccessToken(ctx, issued.Access)
+	if err != nil {
+		t.Fatalf("LoadAccessToken() error = %v", err)
+	}
+	if info.GetAccessExpiresIn() != 0 {
+		t.Fatalf("access token lifetime = %s, want no expiration", info.GetAccessExpiresIn())
+	}
+
+	store.mu.Lock()
+	for grantID, grant := range store.grants {
+		if !grant.AccessNeverExpires || grant.AccessExpiresAt != 0 {
+			store.mu.Unlock()
+			t.Fatalf("grant = %#v, want permanent access token metadata", grant)
+		}
+		grant.ExpiresAt = time.Now().Add(-time.Second).Unix()
+		store.grants[grantID] = grant
+	}
+	store.mu.Unlock()
+
+	if _, err := manager.LoadAccessToken(ctx, issued.Access); err != nil {
+		t.Fatalf("access token expired with its refresh token: %v", err)
+	}
+	if _, err := manager.RefreshAccessToken(ctx, refreshRequest(issued.Refresh, clientID, frameworkTestResource)); err == nil {
+		t.Fatal("expired refresh token remained active")
+	}
+}
+
 type oauthFrameworkTokens struct {
 	Code    string
 	Access  string
@@ -208,7 +248,7 @@ func newOAuthFrameworkTestManagerForClient(t *testing.T, store *OAuthStore, clie
 	manager := NewOAuthManager(
 		store,
 		frameworkTestKey,
-		time.Hour,
+		int64(time.Hour/time.Second),
 		90*24*time.Hour,
 	)
 	return manager, clientID
