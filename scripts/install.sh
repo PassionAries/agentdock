@@ -16,10 +16,10 @@ PREVIOUS_TUNNEL_MODE="none"
 TTY_IN="${AGENTDOCK_TTY_IN:-/dev/tty}"
 TTY_OUT="${AGENTDOCK_TTY_OUT:-/dev/tty}"
 
-if [ ! -r "$TTY_IN" ]; then
+if ! ( : <"$TTY_IN" ) 2>/dev/null; then
   TTY_IN="/dev/stdin"
 fi
-if [ ! -w "$TTY_OUT" ]; then
+if ! ( : >"$TTY_OUT" ) 2>/dev/null; then
   TTY_OUT="/dev/stderr"
 fi
 

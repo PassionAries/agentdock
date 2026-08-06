@@ -153,6 +153,25 @@ cp "$ROOT_DIR/scripts/uninstall-linux.sh" "$RELEASE_DIR/uninstall-linux.sh"
 chmod +x "$RELEASE_DIR/uninstall-linux.sh"
 checksum_asset uninstall-linux.sh
 
+# CI、容器和管道执行时 /dev/tty 可能存在但无法打开，必须自动回退到标准流。
+if command -v setsid >/dev/null 2>&1; then
+  NO_TTY_ROOT="$TMP_ROOT/no-tty"
+  mkdir -p "$NO_TTY_ROOT/systemd" "$NO_TTY_ROOT/openrc"
+  (
+    unset AGENTDOCK_TTY_IN AGENTDOCK_TTY_OUT
+    PATH="$FAKE_BIN:$PATH" \
+      AGENTDOCK_NO_SUDO=true \
+      AGENTDOCK_ENV_FILE="$NO_TTY_ROOT/config/agentdock.env" \
+      AGENTDOCK_SOURCE_DIR="$NO_TTY_ROOT/source" \
+      AGENTDOCK_DATA_DIR="$NO_TTY_ROOT/data" \
+      AGENTDOCK_SYSTEMD_DIR="$NO_TTY_ROOT/systemd" \
+      AGENTDOCK_OPENRC_DIR="$NO_TTY_ROOT/openrc" \
+      setsid sh "$RELEASE_DIR/uninstall-linux.sh" --services-only </dev/null \
+        >"$NO_TTY_ROOT/stdout.log" 2>"$NO_TTY_ROOT/stderr.log"
+  )
+  grep -Fq 'AgentDock 已卸载' "$NO_TTY_ROOT/stderr.log"
+fi
+
 # 首次安装默认只需选择公网模式，并完整保留平台参数。
 LINUX_OUTPUT="$TMP_ROOT/linux.args"
 LINUX_ENV_OUTPUT="$TMP_ROOT/linux.env"
