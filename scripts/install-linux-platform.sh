@@ -216,14 +216,23 @@ run_as_service_user() {
   local user="$1"
   local home_dir="$2"
   shift 2
+
+  # 安装器可能由另一个 AgentDock 实例启动，不能让父进程的实例目录泄漏到新实例。
+  # 核心 Skill 必须始终写入本次部署选择的数据目录。
   if [[ "$(id -u)" == "$(id -u "$user")" ]]; then
-    env HOME="$home_dir" "$@"
+    env HOME="$home_dir" \
+      AGENTDOCK_HOME="$home_dir/.agentdock" \
+      AGENTDOCK_DEFAULT_DIR="$home_dir/AgentDock" \
+      "$@"
   elif command -v runuser >/dev/null 2>&1; then
-    run_root runuser -u "$user" -- env HOME="$home_dir" "$@"
+    run_root runuser -u "$user" -- env HOME="$home_dir" \
+      AGENTDOCK_HOME="$home_dir/.agentdock" \
+      AGENTDOCK_DEFAULT_DIR="$home_dir/AgentDock" \
+      "$@"
   elif command -v su >/dev/null 2>&1; then
     # 单引号中的位置参数由 su 启动的 /bin/sh 展开。
     # shellcheck disable=SC2016
-    run_root su -s /bin/sh "$user" -c 'HOME="$1"; export HOME; shift; exec "$@"' sh "$home_dir" "$@"
+    run_root su -s /bin/sh "$user" -c 'HOME="$1"; AGENTDOCK_HOME="$1/.agentdock"; AGENTDOCK_DEFAULT_DIR="$1/AgentDock"; export HOME AGENTDOCK_HOME AGENTDOCK_DEFAULT_DIR; shift; exec "$@"' sh "$home_dir" "$@"
   else
     die "缺少 runuser 或 su，无法以运行用户初始化核心 Skill：$user"
   fi
