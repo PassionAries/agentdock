@@ -27,7 +27,7 @@ log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 # 由 trap 间接调用。
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   if [ "${ENV_BACKUP_ACTIVE:-false}" = true ]; then
     restore_public_config >/dev/null 2>&1 || true
