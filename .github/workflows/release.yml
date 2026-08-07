@@ -37,8 +37,10 @@ jobs:
 
       - name: Validate unified installer entry
         run: |
-          sh -n scripts/install.sh scripts/test-install-entry.sh
+          sh -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
+          dash -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
           bash -n scripts/install-linux-platform.sh
+          shellcheck scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh scripts/install-linux-platform.sh
           ./scripts/test-install-entry.sh
 
       - name: Build and package
@@ -436,6 +438,7 @@ jobs:
           set -euo pipefail
           cp scripts/install.sh dist/install.sh
           cp scripts/install-linux-platform.sh dist/install-linux-platform.sh
+          cp scripts/uninstall-linux.sh dist/uninstall-linux.sh
           cp scripts/install-macos-platform.sh dist/install-macos-platform.sh
           cp scripts/uninstall-macos.sh dist/uninstall-macos.sh
           cp scripts/install.ps1 dist/install.ps1
@@ -478,6 +481,7 @@ jobs:
             for file in \
               install.sh \
               install-linux-platform.sh \
+              uninstall-linux.sh \
               install-macos-platform.sh \
               uninstall-macos.sh \
               install.ps1 \
@@ -639,6 +643,7 @@ jobs:
             sh "$installer"
 
           "$install_dir/bin/agentdock" --help >/dev/null 2>&1
+
           test -f "$data_dir/.agentdock/skill-store/bundled-skills.json"
           for skill in skill-authoring skill-installation skill-vetter-runtime; do
             state="$data_dir/.agentdock/skill-store/state/$skill.json"
@@ -646,6 +651,21 @@ jobs:
             test -n "$version"
             test -f "$data_dir/.agentdock/skill-store/installed/$skill/$version/SKILL.md"
           done
+
+          systemd_dir="$RUNNER_TEMP/systemd"
+          openrc_dir="$RUNNER_TEMP/openrc"
+          mkdir -p "$systemd_dir" "$openrc_dir"
+          AGENTDOCK_INSTALLER_BASE_URL="$release_base" \
+          AGENTDOCK_SOURCE_DIR="$install_dir" \
+          AGENTDOCK_DATA_DIR="$data_dir" \
+          AGENTDOCK_ENV_FILE="$env_file" \
+          AGENTDOCK_SYSTEMD_DIR="$systemd_dir" \
+          AGENTDOCK_OPENRC_DIR="$openrc_dir" \
+            sh "$installer" --uninstall --purge-data
+
+          test ! -e "$install_dir"
+          test ! -e "$data_dir"
+          test ! -e "$env_file"
 
   verify-macos-release:
     name: Verify published unified installer on macOS
