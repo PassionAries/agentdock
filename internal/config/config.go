@@ -18,7 +18,7 @@ import (
 const (
 	ProtocolVersion    = "2026-07-28"
 	ServerName         = "agentdock"
-	Version            = "0.7.1"
+	Version            = "0.7.2"
 	PathModel          = "host"
 	BrowserRunnerDir   = "browser-runner"
 	BrowserArtifactDir = "browser-artifacts"
@@ -34,26 +34,26 @@ type Config struct {
 	Host                         string
 	Port                         int
 	AuthToken                    string
-	OAuthEnabled                 bool
+	OAuthEnabled                bool
 	OAuthServerURL               string
 	OAuthAccessTokenTTLSeconds   int64
 	OAuthAccessTokenNeverExpires bool
 	LogLevel                     string
-	NexusEndpoint                string
-	NexusToken                   string
-	BrowserEnabled               bool
-	BrowserRunnerDir             string
+	NexusEndpoint               string
+	NexusToken                  string
+	BrowserEnabled              bool
+	BrowserRunnerDir            string
 	BrowserNodePath              string
-	ACPEnabled                   bool
-	ACPAgentName                 string
-	ACPCommand                   string
-	ACPArgs                      []string
-	ACPEnvFromEnv                map[string]string
-	ACPAllowedRoots              []string
-	ACPMaxPrompts                int
-	ACPInteractionMS             int
-	Stdio                        bool
-	TrustedProxyCIDRs            []string
+	ACPEnabled                  bool
+	ACPAgentName                string
+	ACPCommand                  string
+	ACPArgs                     []string
+	ACPEnvFromEnv               map[string]string
+	ACPAllowedRoots             []string
+	ACPMaxPrompts               int
+	ACPInteractionMS            int
+	Stdio                       bool
+	TrustedProxyCIDRs           []string
 }
 
 func FromEnv() (Config, error) {
@@ -115,7 +115,7 @@ func FromEnv() (Config, error) {
 		Host:                         getenv("AGENTDOCK_HOST", "127.0.0.1"),
 		Port:                         port,
 		AuthToken:                    os.Getenv("AGENTDOCK_AUTH_TOKEN"),
-		OAuthEnabled:                 oauthEnabled,
+		OAuthEnabled:                oauthEnabled,
 		OAuthServerURL:               os.Getenv("AGENTDOCK_SERVER_URL"),
 		OAuthAccessTokenTTLSeconds:   oauthAccessTokenTTLSeconds,
 		OAuthAccessTokenNeverExpires: oauthAccessTokenNeverExpires,
