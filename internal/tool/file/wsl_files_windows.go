@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	processcontrol "github.com/uvwt/agentdock/internal/process"
 	"github.com/uvwt/agentdock/internal/workspace"
 )
 
@@ -94,6 +95,8 @@ func (svc *Service) callWSLFileHelper(ctx context.Context, selection fileRuntime
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// wsl.exe 在无控制台宿主下可能交给 Windows Terminal 承载；统一按后台子进程启动，避免文件工具调用闪出终端窗口。
+	processcontrol.Configure(cmd)
 	if err := cmd.Run(); err != nil {
 		message := strings.TrimSpace(stderr.String())
 		if commandCtx.Err() == context.DeadlineExceeded {
