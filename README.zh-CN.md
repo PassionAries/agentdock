@@ -132,14 +132,14 @@ sudo env AGENTDOCK_NONINTERACTIVE=true sh /tmp/install-agentdock.sh
 ```bash
 mkdir agentdock && cd agentdock
 curl -fL \
-  https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.yml \
+  https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.yml \
   -o docker-compose.yml
 export AGENTDOCK_AUTH_TOKEN="$(openssl rand -hex 32)"
 docker compose pull
 docker compose up -d
 ```
 
-默认 MCP 地址是 `http://127.0.0.1:18766/mcp`。数据持久化和公网访问见 [Docker 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
+默认 MCP 地址是 `http://127.0.0.1:8765/mcp`。数据持久化和公网访问见 [Docker 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
 
 ### 连接方式如何选择
 
@@ -157,7 +157,7 @@ AgentDock 通过 MCP Streamable HTTP 提供工具能力。下面是一个通用�
 {
   "mcpServers": {
     "agentdock": {
-      "url": "http://127.0.0.1:18766/mcp",
+      "url": "http://127.0.0.1:8765/mcp",
       "headers": {
         "Authorization": "Bearer <AGENTDOCK_AUTH_TOKEN>"
       }
@@ -315,10 +315,9 @@ Docker 部署默认使用 named volume 保存持久化数据，以减少 Linux b
 
 ## 端口说明
 
-| 运行方式 | 默认地址 |
-| --- | --- |
-| Docker 发布配置 | `http://127.0.0.1:18766/mcp` |
-| 源码开发模式 | `http://127.0.0.1:8765/mcp` |
+Docker、原生安装和本地开发的默认 MCP 地址：
+
+`http://127.0.0.1:8765/mcp`
 
 端口可以通过配置调整，客户端应以实际部署配置为准。
 

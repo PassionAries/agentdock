@@ -2,8 +2,10 @@ services:
   agentdock:
     image: ${AGENTDOCK_IMAGE:-ghcr.io/uvwt/agentdock:latest}
     restart: unless-stopped
+    # browser 镜像里 Chromium 需要更大 /dev/shm；普通镜像保留也无害。
+    shm_size: "1gb"
     ports:
-      - "${AGENTDOCK_PUBLISH_HOST:-127.0.0.1}:${AGENTDOCK_PUBLISH_PORT:-18766}:8765"
+      - "${AGENTDOCK_PUBLISH_HOST:-127.0.0.1}:${AGENTDOCK_PUBLISH_PORT:-8765}:8765"
     volumes:
       - agentdock_home:/home/agentdock/.agentdock
       - agentdock_workspace:/home/agentdock/AgentDock
@@ -13,12 +15,37 @@ services:
       AGENTDOCK_HOST: "0.0.0.0"
       AGENTDOCK_PORT: "8765"
       AGENTDOCK_SERVER_URL: "${AGENTDOCK_SERVER_URL:-}"
+      # 浏览器版镜像需设为 true，并切换 AGENTDOCK_IMAGE 到 browser 标签。
+      AGENTDOCK_BROWSER_ENABLED: "${AGENTDOCK_BROWSER_ENABLED:-false}"
     healthcheck:
       test: ["CMD", "agentdock-healthcheck"]
       interval: 30s
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  # 临时公网：docker compose --profile cloudflare-quick up -d
+  cloudflared-quick:
+    profiles: ["cloudflare-quick"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--url", "http://agentdock:8765"]
+    depends_on:
+      agentdock:
+        condition: service_healthy
+
+  # 固定域名：设置 TUNNEL_TOKEN 后 docker compose --profile cloudflare-named up -d
+  # TUNNEL_TOKEN 不能用 ? 必填语法：Compose 解析全文件时就会校验，会阻断默认 up。
+  cloudflared-named:
+    profiles: ["cloudflare-named"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}"
+    depends_on:
+      agentdock:
+        condition: service_healthy
 
 volumes:
   agentdock_home:

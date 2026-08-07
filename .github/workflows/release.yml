@@ -429,7 +429,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Package installers and versioned Compose files
+      - name: Package installers
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -443,8 +443,6 @@ jobs:
           cp scripts/uninstall-macos.sh dist/uninstall-macos.sh
           cp scripts/install.ps1 dist/install.ps1
           cp scripts/uninstall-windows.ps1 dist/uninstall-windows.ps1
-          cp docker-compose.cloudflare-tunnel.yml dist/docker-compose.cloudflare-tunnel.yml
-          cp docker-compose.cloudflare-tunnel.env.example dist/docker-compose.cloudflare-tunnel.env.example
           python3 - <<'PY'
           import os
           import re
@@ -461,6 +459,8 @@ jobs:
           if actual_version != expected_version:
               raise SystemExit(f"release tag {tag} does not match config.Version {actual_version}")
 
+          # Docker Compose / .env.example 不作为 Release 资产发布；
+          # 文档直接引用仓库 main 或对应 git tag 上的源文件。
           installer_entry = Path("dist/install.sh")
           installer_text = installer_entry.read_text()
           default_base = "https://github.com/uvwt/agentdock/releases/latest/download"
@@ -468,13 +468,6 @@ jobs:
           if default_base not in installer_text:
               raise SystemExit("install.sh default release base was not found")
           installer_entry.write_text(installer_text.replace(default_base, release_base, 1))
-
-          runtime = Path("docker-compose.yml").read_text()
-          browser = Path("docker-compose.browser.yml").read_text()
-          runtime = runtime.replace("ghcr.io/uvwt/agentdock:latest", f"ghcr.io/{repository}:{tag}")
-          browser = browser.replace("ghcr.io/uvwt/agentdock:browser-latest", f"ghcr.io/{repository}:browser-{tag}")
-          Path("dist/docker-compose.yml").write_text(runtime)
-          Path("dist/docker-compose.browser.yml").write_text(browser)
           PY
           (
             cd dist
@@ -519,8 +512,6 @@ jobs:
             dist/*.ps1.sha256
             dist/*.exe
             dist/*.exe.sha256
-            dist/*.yml
-            dist/*.example
           generate_release_notes: true
 
   publish-container:

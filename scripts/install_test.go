@@ -646,27 +646,37 @@ printf '\nCAPTURED=%s\n' "$TUNNEL_PUBLIC_URL"
 }
 
 func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
-	data, err := os.ReadFile("../docker-compose.cloudflare-tunnel.yml")
+	data, err := os.ReadFile("../docker-compose.yml")
 	if err != nil {
-		t.Fatalf("read docker-compose.cloudflare-tunnel.yml: %v", err)
+		t.Fatalf("read docker-compose.yml: %v", err)
 	}
 	compose := string(data)
 	for _, want := range []string{
 		`profiles: ["cloudflare-quick"]`,
 		`profiles: ["cloudflare-named"]`,
 		`http://agentdock:8765`,
-		`TUNNEL_TOKEN: "${TUNNEL_TOKEN:?set TUNNEL_TOKEN for the named tunnel}"`,
+		`TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}"`,
+		`${AGENTDOCK_PUBLISH_PORT:-8765}:8765`,
 	} {
 		if !strings.Contains(compose, want) {
-			t.Fatalf("Cloudflare compose overlay missing %q", want)
+			t.Fatalf("docker-compose.yml missing %q", want)
 		}
 	}
-	baseData, err := os.ReadFile("../docker-compose.yml")
-	if err != nil {
-		t.Fatalf("read docker-compose.yml: %v", err)
+	// TUNNEL_TOKEN 环境变量只应挂在 cloudflared-named，不能注入 agentdock 主服务。
+	// 用 "KEY: " 赋值形态判断，避免中文注释里提到同名变量时误报。
+	agentStart := strings.Index(compose, "\n  agentdock:")
+	if agentStart < 0 {
+		agentStart = strings.Index(compose, "  agentdock:")
 	}
-	if strings.Contains(string(baseData), "TUNNEL_TOKEN") {
-		t.Fatal("base AgentDock service must not receive TUNNEL_TOKEN")
+	namedStart := strings.Index(compose, "\n  cloudflared-named:")
+	if namedStart < 0 {
+		namedStart = strings.Index(compose, "  cloudflared-named:")
+	}
+	if agentStart < 0 || namedStart < 0 || namedStart <= agentStart {
+		t.Fatal("unexpected docker-compose.yml service layout")
+	}
+	if strings.Contains(compose[agentStart:namedStart], "TUNNEL_TOKEN:") {
+		t.Fatal("agentdock service must not receive TUNNEL_TOKEN")
 	}
 }
 

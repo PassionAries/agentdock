@@ -96,21 +96,23 @@ elif [[ "$pull_images" != "false" ]]; then
 fi
 
 AGENTDOCK_AUTH_TOKEN=compose-config-token \
-AGENTDOCK_IMAGE="$runtime_image" \
-AGENTDOCK_BROWSER_IMAGE="$browser_image" \
+AGENTDOCK_IMAGE="$browser_image" \
+AGENTDOCK_BROWSER_ENABLED=true \
 AGENTDOCK_PUBLISH_PORT=18767 \
-  docker compose -f docker-compose.yml -f docker-compose.browser.yml config >"$work_dir/compose.yml"
+  docker compose config >"$work_dir/compose.yml"
 grep -q '/home/agentdock/.agentdock' "$work_dir/compose.yml"
 grep -q '/home/agentdock/AgentDock' "$work_dir/compose.yml"
 grep -q 'agentdock-healthcheck' "$work_dir/compose.yml"
+grep -Eq 'shm_size|1073741824|1000000000' "$work_dir/compose.yml"
+grep -Eq 'published: "?18767"?' "$work_dir/compose.yml"
+grep -q 'target: 8765' "$work_dir/compose.yml"
+grep -q 'AGENTDOCK_BROWSER_ENABLED: "true"' "$work_dir/compose.yml" || grep -q 'AGENTDOCK_BROWSER_ENABLED: true' "$work_dir/compose.yml"
 
 AGENTDOCK_AUTH_TOKEN=compose-config-token \
 AGENTDOCK_SERVER_URL=https://agent.example.test \
 TUNNEL_TOKEN=compose-tunnel-token \
 AGENTDOCK_IMAGE="$runtime_image" \
   docker compose \
-    -f docker-compose.yml \
-    -f docker-compose.cloudflare-tunnel.yml \
     --profile cloudflare-quick \
     --profile cloudflare-named \
     config >"$work_dir/cloudflare-compose.yml"

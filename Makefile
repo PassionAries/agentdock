@@ -70,7 +70,7 @@ docker-up:
 	AGENTDOCK_IMAGE=$(IMAGE) docker compose up -d
 
 docker-browser-up:
-	AGENTDOCK_IMAGE=$(IMAGE) AGENTDOCK_BROWSER_IMAGE=$(BROWSER_IMAGE) docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d
+	AGENTDOCK_IMAGE=$(BROWSER_IMAGE) AGENTDOCK_BROWSER_ENABLED=true docker compose up -d
 
 docker-down:
 	docker compose down

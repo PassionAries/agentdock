@@ -130,14 +130,14 @@ The installer uses safe defaults and completes installation, startup, and a heal
 ```bash
 mkdir agentdock && cd agentdock
 curl -fL \
-  https://github.com/uvwt/agentdock/releases/latest/download/docker-compose.yml \
+  https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.yml \
   -o docker-compose.yml
 export AGENTDOCK_AUTH_TOKEN="$(openssl rand -hex 32)"
 docker compose pull
 docker compose up -d
 ```
 
-The default MCP URL is `http://127.0.0.1:18766/mcp`. See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/docker) for persistence and public access.
+The default MCP URL is `http://127.0.0.1:8765/mcp`. See [Docker installation](https://uvwt.github.io/agentdock-docs/docs/getting-started/docker) for persistence and public access.
 
 ### Choose a connection option
 
@@ -155,7 +155,7 @@ AgentDock exposes tools over MCP Streamable HTTP. The exact client syntax varies
 {
   "mcpServers": {
     "agentdock": {
-      "url": "http://127.0.0.1:18766/mcp",
+      "url": "http://127.0.0.1:8765/mcp",
       "headers": {
         "Authorization": "Bearer <AGENTDOCK_AUTH_TOKEN>"
       }
@@ -313,10 +313,9 @@ Docker deployments use named volumes for persistent data by default to avoid Lin
 
 ## Ports
 
-| Runtime mode | Default URL |
-| --- | --- |
-| Published Docker configuration | `http://127.0.0.1:18766/mcp` |
-| Source development mode | `http://127.0.0.1:8765/mcp` |
+Default MCP URL for Docker, native installs, and local development:
+
+`http://127.0.0.1:8765/mcp`
 
 Ports are configurable. Clients must use the address defined by the actual deployment.
 

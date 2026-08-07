@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-BASE_URL="${AGENTDOCK_SMOKE_URL:-http://127.0.0.1:18766}"
+BASE_URL="${AGENTDOCK_SMOKE_URL:-http://127.0.0.1:8765}"
 TIMEOUT="${AGENTDOCK_SMOKE_TIMEOUT_SECONDS:-5}"
 
 if ! command -v python3 >/dev/null 2>&1; then
