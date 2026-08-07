@@ -2,30 +2,31 @@
 
 package desktopruntime
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 func platformTunnelServiceActive(ctx context.Context, manifest unixRuntimeManifest) bool {
 	return launchdLoaded(ctx, manifest.TunnelServiceName)
 }
+
 func platformTunnelServiceEnabled(ctx context.Context, manifest unixRuntimeManifest) bool {
-	return launchdAutostartEnabled(ctx, manifest.TunnelServiceName)
+	// SMAppService 的注册状态由 AppKit 控制面板读取；Go 运行层只知道当前 job 是否已加载。
+	return launchdLoaded(ctx, manifest.TunnelServiceName)
 }
+
 func platformTunnelServiceAction(ctx context.Context, manifest unixRuntimeManifest, action string) error {
 	switch action {
 	case "start", "restart":
-		return launchdStart(ctx, manifest.TunnelServiceName)
+		return kickstartRegisteredLaunchAgent(ctx, manifest.TunnelServiceName)
 	case "stop":
-		return launchdStop(ctx, manifest.TunnelServiceName)
+		return errors.New("macOS Tunnel 停用由 AgentDock.app 的 SMAppService 管理")
 	default:
-		return nil
+		return errors.New("不支持的 Tunnel 服务操作")
 	}
 }
-func platformTunnelServiceSetEnabled(ctx context.Context, manifest unixRuntimeManifest, enabled bool) error {
-	if enabled {
-		return launchdStart(ctx, manifest.TunnelServiceName)
-	}
-	if err := launchdSetDisabled(ctx, manifest.TunnelServiceName, true); err != nil {
-		return err
-	}
-	return launchdStop(ctx, manifest.TunnelServiceName)
+
+func platformTunnelServiceSetEnabled(context.Context, unixRuntimeManifest, bool) error {
+	return errors.New("macOS Tunnel 启停由 AgentDock.app 的 SMAppService 管理")
 }

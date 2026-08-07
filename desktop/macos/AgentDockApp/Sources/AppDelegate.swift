@@ -17,14 +17,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let pendingUpdateResult = DesktopUpdateResult.consume(from: service.paths.updateResult)
+        let pendingUpdateResult = DesktopUpdateResult.load(from: service.paths.updateResult)
         configureStatusItem()
         registerLoginItemIfNeeded()
-        refreshStatus(showWindow: !launchedInBackground)
         if let pendingUpdateResult {
-            DispatchQueue.main.async { [weak self] in
-                self?.presentUpdateResult(pendingUpdateResult)
-            }
+            restoreBackgroundServicesAfterUpdate(pendingUpdateResult)
+        } else {
+            refreshStatus(showWindow: !launchedInBackground)
         }
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -37,6 +36,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer?.invalidate()
     }
 
+    private func restoreBackgroundServicesAfterUpdate(_ pendingResult: DesktopUpdateResult) {
+        Task {
+            do {
+                guard let serviceState = try DesktopUpdateServiceState.load(from: service.paths.updateServiceState) else {
+                    throw ValidationError("AgentDock 更新缺少后台服务恢复状态。")
+                }
+                try await service.reregisterBackgroundServices(
+                    coreEnabled: serviceState.coreEnabled,
+                    tunnelEnabled: serviceState.tunnelEnabled
+                )
+                guard let result = DesktopUpdateResult.consume(from: service.paths.updateResult) else {
+                    throw ValidationError("AgentDock 更新结果在服务恢复过程中丢失。")
+                }
+                DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
+                self.refreshStatus()
+                self.presentUpdateResult(result)
+            } catch {
+                // 成功更新结果只有在新版后台服务恢复后才消费。结果文件保持存在时，
+                // 外部更新事务会超时并自动恢复旧 App。
+                NSLog("AgentDock 更新后后台服务恢复失败：%@", error.localizedDescription)
+                if !pendingResult.ok {
+                    self.presentAlert(title: "AgentDock 恢复失败", message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
     private func registerLoginItemIfNeeded() {
         if ProcessInfo.processInfo.environment["AGENTDOCK_SKIP_LOGIN_ITEM_CONFIGURATION"] == "1" {
             return
@@ -44,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try menuLoginAgent.configureOnLaunch()
         } catch {
-            // 登录项失败不影响核心 LaunchAgent；用户仍可手动打开菜单栏 App。
+            // 菜单栏登录项失败不影响 Core 后台服务；用户仍可手动打开 AgentDock。
             NSLog("AgentDock 菜单栏登录项注册失败：%@", error.localizedDescription)
         }
     }
@@ -84,6 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusText = "未安装"
         } else if currentStatus.healthy {
             statusText = "运行正常 · 核心 \(AppVersion.display(currentStatus.version)) · 控制面板 \(AppVersion.current)"
+        } else if currentStatus.requiresApproval {
+            statusText = "需要允许后台运行"
         } else if currentStatus.loaded {
             statusText = "服务异常"
         } else {
@@ -94,15 +122,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusMenuItem)
         menu.addItem(.separator())
 
-        menu.addItem(item(currentStatus.installed ? "打开 AgentDock" : "安装 AgentDock…", #selector(showSetup)))
+        menu.addItem(item(currentStatus.installed ? "打开 AgentDock" : "设置 AgentDock…", #selector(showSetup)))
         if currentStatus.installed {
             menu.addItem(.separator())
 
-            if currentStatus.loaded {
-                menu.addItem(item("停止 AgentDock", #selector(stopService)))
+            if currentStatus.requiresApproval {
+                menu.addItem(item("打开后台设置", #selector(openBackgroundSettings)))
+            } else if currentStatus.loaded {
+                menu.addItem(item("停用 AgentDock", #selector(stopService)))
                 menu.addItem(item("重启 AgentDock", #selector(restartService)))
             } else {
-                menu.addItem(item("启动 AgentDock", #selector(startService)))
+                menu.addItem(item("启用 AgentDock", #selector(startService)))
             }
             menu.addItem(item("检查更新…", #selector(updateService)))
             menu.addItem(.separator())
@@ -124,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSetup() { setupWindow.present(status: currentStatus) }
     @objc private func openLogs() { service.openLogs() }
     @objc private func openConfiguration() { service.openConfiguration() }
+    @objc private func openBackgroundSettings() { service.openBackgroundItemsSettings() }
 
     @objc private func openDocumentation() {
         if let url = URL(string: "https://github.com/uvwt/agentdock#readme") {
@@ -131,8 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func startService() { performServiceAction("启动") { try await self.service.start() } }
-    @objc private func stopService() { performServiceAction("停止") { try await self.service.stop() } }
+    @objc private func startService() { performServiceAction("启用") { try await self.service.start() } }
+    @objc private func stopService() { performServiceAction("停用") { try await self.service.stop() } }
     @objc private func restartService() { performServiceAction("重启") { try await self.service.restart() } }
 
     @objc private func updateService() {

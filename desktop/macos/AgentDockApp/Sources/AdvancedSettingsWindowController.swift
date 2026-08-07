@@ -9,7 +9,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private let menuLoginAgent: MenuLoginAgentController
     private let onChanged: () -> Void
 
-    private let serviceAutostart = NSButton(checkboxWithTitle: "登录后自动启动 AgentDock 服务", target: nil, action: nil)
+    private let serviceAutostart = NSButton(checkboxWithTitle: "允许 AgentDock 后台运行", target: nil, action: nil)
     private let menuAutostart = NSButton(checkboxWithTitle: "登录后显示 AgentDock 菜单栏", target: nil, action: nil)
     private let portField = NSTextField(string: "8765")
     private let logLevel = NSPopUpButton(frame: .zero, pullsDown: false)

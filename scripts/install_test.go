@@ -902,9 +902,10 @@ func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
 
 	for _, want := range []string{
 		`"打开 AgentDock"`,
-		`"停止 AgentDock"`,
+		`"停用 AgentDock"`,
 		`"重启 AgentDock"`,
-		`"启动 AgentDock"`,
+		`"启用 AgentDock"`,
+		`"打开后台设置"`,
 		`"检查更新…"`,
 		`"打开日志目录"`,
 		`"打开配置目录"`,

@@ -15,13 +15,18 @@ struct DesktopUpdateResult: Decodable {
         case message
     }
 
-    static func consume(from path: URL) -> DesktopUpdateResult? {
+    static func load(from path: URL) -> DesktopUpdateResult? {
         guard let data = try? Data(contentsOf: path) else { return nil }
-        defer { try? FileManager.default.removeItem(at: path) }
         guard let result = try? JSONDecoder().decode(DesktopUpdateResult.self, from: data),
               result.schemaVersion == 1 else {
             return nil
         }
+        return result
+    }
+
+    static func consume(from path: URL) -> DesktopUpdateResult? {
+        guard let result = load(from: path) else { return nil }
+        try? FileManager.default.removeItem(at: path)
         return result
     }
 }

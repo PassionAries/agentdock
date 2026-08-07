@@ -310,6 +310,69 @@ func TestRunStagesMacOSDesktopAppWithCoreUpdate(t *testing.T) {
 	}
 }
 
+func TestRunDesktopOnlyDoesNotRequireCoreAsset(t *testing.T) {
+	desktopArchive := []byte("signed-app-archive")
+	desktopDigest := sha256.Sum256(desktopArchive)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/release":
+			_ = json.NewEncoder(w).Encode(release{
+				TagName: "v0.7.1",
+				Assets: []releaseAsset{
+					{Name: macOSDesktopArchiveName, URL: server.URL + "/desktop"},
+					{Name: macOSDesktopArchiveName + ".sha256", URL: server.URL + "/desktop.sha256"},
+				},
+			})
+		case "/desktop":
+			_, _ = w.Write(desktopArchive)
+		case "/desktop.sha256":
+			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(desktopDigest[:]), macOSDesktopArchiveName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	applied := false
+	err := run(context.Background(), options{
+		CurrentVersion:        "0.7.0",
+		ExecutablePath:        "/Applications/AgentDock.app/Contents/Helpers/agentdock",
+		DesktopTargetPath:     "/Applications/AgentDock.app",
+		DesktopCurrentVersion: "0.7.0",
+		DesktopOnly:           true,
+		GOOS:                  "darwin",
+		GOARCH:                "arm64",
+		ReleaseAPI:            server.URL + "/release",
+		HTTPClient:            server.Client(),
+		Output:                io.Discard,
+		VerifyBinary:          func(context.Context, string, string) error { return nil },
+		ExtractDesktop: func(_ context.Context, data []byte, tempDir, targetVersion string) (string, error) {
+			if string(data) != string(desktopArchive) || targetVersion != "v0.7.1" {
+				return "", fmt.Errorf("unexpected desktop payload")
+			}
+			path := filepath.Join(tempDir, "AgentDock.app")
+			if err := os.Mkdir(path, 0o700); err != nil {
+				return "", err
+			}
+			return path, nil
+		},
+		Apply: func(_ context.Context, request applyRequest) (applyResult, error) {
+			applied = true
+			if !request.DesktopOnly || request.StagedPath != "" || request.BundlePath != "" {
+				t.Fatalf("desktop-only update unexpectedly staged standalone core: %#v", request)
+			}
+			return applyResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("desktop-only update was not applied")
+	}
+}
+
 func TestRunRejectsChecksumBeforeApplying(t *testing.T) {
 	archive := makeTarGz(t, "bin/agentdock", []byte("new-binary"))
 	var server *httptest.Server

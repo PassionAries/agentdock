@@ -34,7 +34,7 @@ func RunTunnelCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 
 	switch args[0] {
 	case "launch":
-		runtimeRoot, err := parseRuntimeRoot("agentdock tunnel launch", args[1:], stderr)
+		runtimeRoot, err := parseLaunchRuntimeRoot("agentdock tunnel launch", args[1:], stderr)
 		if err != nil {
 			return err
 		}
@@ -114,6 +114,19 @@ func RunTunnelCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	default:
 		return tunnelCommandUsageError()
 	}
+}
+
+func parseLaunchRuntimeRoot(name string, args []string, stderr io.Writer) (string, error) {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runtimeRoot := flags.String("runtime-root", DefaultRuntimeRoot(), "AgentDock 桌面运行目录")
+	if err := flags.Parse(args); err != nil {
+		return "", err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*runtimeRoot) == "" {
+		return "", errors.New("用法：" + name + " --runtime-root <目录>")
+	}
+	return strings.TrimSpace(*runtimeRoot), nil
 }
 
 func parseCommandBoolean(command, value string) (bool, error) {

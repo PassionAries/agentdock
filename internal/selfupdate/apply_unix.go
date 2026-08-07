@@ -4,6 +4,7 @@ package selfupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,9 @@ type desktopUpdateTransaction interface {
 }
 
 func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult, error) {
+	if request.DesktopOnly {
+		return applyDesktopOnlyUpdate(ctx, request)
+	}
 	service := detectManagedService(ctx, request.CurrentPath)
 	platformCandidates := platformHealthCandidates(ctx, request.CurrentPath)
 	var candidates []string
@@ -132,6 +136,86 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 		}
 	}
 	return applyResult{Restarted: service != nil}, nil
+}
+
+func applyDesktopOnlyUpdate(ctx context.Context, request applyRequest) (applyResult, error) {
+	if err := validateDesktopUpdateCoordination(); err != nil {
+		return applyResult{}, err
+	}
+	desktopUpdate, err := prepareDesktopUpdate(
+		ctx,
+		request.DesktopTargetPath,
+		request.DesktopStagedPath,
+		request.TargetVersion,
+	)
+	if err != nil {
+		return applyResult{}, fmt.Errorf("准备 AgentDock.app 更新失败，当前版本未被修改: %w", err)
+	}
+	if desktopUpdate == nil {
+		return applyResult{}, errors.New("macOS 桌面更新事务不可用")
+	}
+
+	rollback := func(cause error) error {
+		rollbackErrors := make([]string, 0, 2)
+		if restoreErr := desktopUpdate.Restore(ctx); restoreErr != nil {
+			rollbackErrors = append(rollbackErrors, "恢复旧 AgentDock.app 失败: "+restoreErr.Error())
+		}
+		outcome := desktopUpdateOutcome{
+			OK:             false,
+			CurrentVersion: request.CurrentVersion,
+			TargetVersion:  request.TargetVersion,
+			Message:        cause.Error() + "；已自动恢复旧版本。",
+		}
+		if finishErr := desktopUpdate.Finish(ctx, outcome); finishErr != nil {
+			rollbackErrors = append(rollbackErrors, "重新打开旧 AgentDock.app 失败: "+finishErr.Error())
+		}
+		if len(rollbackErrors) > 0 {
+			return fmt.Errorf("%v；自动恢复不完整: %s", cause, strings.Join(rollbackErrors, "；"))
+		}
+		return fmt.Errorf("%v；已自动恢复旧版本", cause)
+	}
+
+	fmt.Fprintln(request.Output, "正在替换 AgentDock.app...")
+	if err := desktopUpdate.Install(ctx); err != nil {
+		return applyResult{}, rollback(err)
+	}
+
+	installedCore := filepath.Join(request.DesktopTargetPath, "Contents", "Helpers", "agentdock")
+	installedSkills := filepath.Join(request.DesktopTargetPath, "Contents", "Resources", "core-skills")
+	fmt.Fprintln(request.Output, "正在更新官方核心 Skill...")
+	if err := bootstrapBundledSkills(ctx, installedCore, installedSkills, request.Output); err != nil {
+		return applyResult{}, rollback(err)
+	}
+
+	outcome := desktopUpdateOutcome{
+		OK:             true,
+		CurrentVersion: request.CurrentVersion,
+		TargetVersion:  request.TargetVersion,
+		Message:        fmt.Sprintf("AgentDock 已从 %s 更新到 %s。", request.CurrentVersion, request.TargetVersion),
+	}
+	if err := desktopUpdate.Finish(ctx, outcome); err != nil {
+		return applyResult{}, rollback(fmt.Errorf("新版 AgentDock.app 未确认后台服务恢复: %w", err))
+	}
+	if err := desktopUpdate.Commit(); err != nil {
+		fmt.Fprintf(request.Output, "警告：清理 AgentDock.app 更新备份失败: %v\n", err)
+	}
+	return applyResult{}, nil
+}
+
+func validateDesktopUpdateCoordination() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("解析用户目录失败: %w", err)
+	}
+	path := filepath.Join(home, "Library", "Application Support", "AgentDock", "update-services.json")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return errors.New("macOS 桌面更新必须从 AgentDock 控制面板发起")
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("macOS 更新服务状态文件不安全: %s", path)
+	}
+	return nil
 }
 
 func managedServicePID(ctx context.Context, service managedService) int {

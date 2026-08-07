@@ -38,27 +38,46 @@ func loadUnixRuntime(runtimeRoot string) (unixRuntimeManifest, string, error) {
 		return unixRuntimeManifest{}, "", errors.New("runtime-root 无效")
 	}
 	home, _ := os.UserHomeDir()
+	agentDockBinary := filepath.Join(home, ".local", "bin", "agentdock")
+	cloudflaredBinary := filepath.Join(home, ".local", "bin", "cloudflared")
+	serviceName := "agentdock"
+	tunnelServiceName := "agentdock-cloudflared"
+	serviceManager := ""
+	if runtime.GOOS == "darwin" {
+		// macOS 桌面版的 Core 与 cloudflared 都属于 AgentDock.app，运行时必须跟随当前
+		// Helper 的真实位置，不能再把 ~/.local/bin 当成第二套生产安装位置。
+		if executable, executableErr := os.Executable(); executableErr == nil {
+			if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
+				executable = resolved
+			}
+			agentDockBinary = executable
+			cloudflaredBinary = filepath.Join(filepath.Dir(executable), "cloudflared")
+		}
+		serviceManager = "smappservice"
+		serviceName = "com.uvwt.agentdock.core"
+		tunnelServiceName = "com.uvwt.agentdock.tunnel"
+	}
 	manifest := unixRuntimeManifest{
 		SchemaVersion:     1,
-		ServiceName:       "agentdock",
-		TunnelServiceName: "agentdock-cloudflared",
-		AgentDockBinary:   filepath.Join(home, ".local", "bin", "agentdock"),
-		CloudflaredBinary: filepath.Join(home, ".local", "bin", "cloudflared"),
+		ServiceManager:    serviceManager,
+		ServiceName:       serviceName,
+		TunnelServiceName: tunnelServiceName,
+		AgentDockBinary:   agentDockBinary,
+		CloudflaredBinary: cloudflaredBinary,
 		EnvironmentFile:   filepath.Join(root, "agentdock.env"),
 		TunnelEnvironment: filepath.Join(root, "cloudflared.env"),
 	}
-	if runtime.GOOS == "darwin" {
-		manifest.ServiceManager = "launchd"
-		manifest.ServiceName = "com.uvwt.agentdock"
-		manifest.TunnelServiceName = "com.uvwt.agentdock.cloudflared"
-	}
-	data, readErr := os.ReadFile(filepath.Join(root, "desktop-runtime.json"))
-	if readErr == nil {
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			return unixRuntimeManifest{}, "", fmt.Errorf("解析桌面运行清单失败: %w", err)
+	// macOS 桌面版的程序路径由已签名 App Bundle 唯一决定，不允许外部清单把
+	// Core/cloudflared 再指向用户目录中的第二份二进制。Linux 仍保留运行清单覆盖。
+	if runtime.GOOS != "darwin" {
+		data, readErr := os.ReadFile(filepath.Join(root, "desktop-runtime.json"))
+		if readErr == nil {
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				return unixRuntimeManifest{}, "", fmt.Errorf("解析桌面运行清单失败: %w", err)
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return unixRuntimeManifest{}, "", fmt.Errorf("读取桌面运行清单失败: %w", readErr)
 		}
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return unixRuntimeManifest{}, "", fmt.Errorf("读取桌面运行清单失败: %w", readErr)
 	}
 	if manifest.AgentDockBinary == "" || manifest.EnvironmentFile == "" {
 		return unixRuntimeManifest{}, "", errors.New("桌面运行清单缺少核心路径")
@@ -85,7 +104,10 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 			return fmt.Errorf("设置 %s 失败: %w", key, err)
 		}
 	}
-	return os.Setenv("AGENTDOCK_RUNTIME_ROOT", root)
+	if err := os.Setenv("AGENTDOCK_RUNTIME_ROOT", root); err != nil {
+		return err
+	}
+	return platformPrepareLaunchEnvironment("core")
 }
 
 func loadCoreEnvironment(runtimeRoot string) (unixRuntimeManifest, string, map[string]string, error) {

@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -49,6 +50,20 @@ func desktopUpdateVersion(appPath string) string {
 		return ""
 	}
 	return normalized
+}
+
+func desktopUpdateOwnsExecutable(appPath, executable string) bool {
+	if strings.TrimSpace(appPath) == "" || strings.TrimSpace(executable) == "" {
+		return false
+	}
+	expected := filepath.Join(filepath.Clean(appPath), "Contents", "Helpers", "agentdock")
+	if resolved, err := filepath.EvalSymlinks(expected); err == nil {
+		expected = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	return filepath.Clean(expected) == filepath.Clean(executable)
 }
 
 func extractDesktopUpdateArchive(ctx context.Context, archiveData []byte, tempDir, targetVersion string) (string, error) {
@@ -129,7 +144,7 @@ func extractDesktopUpdateArchive(ctx context.Context, archiveData []byte, tempDi
 	}
 
 	appPath := filepath.Join(root, "AgentDock.app")
-	if err := validateMacOSDesktopVersion(ctx, appPath, targetVersion); err != nil {
+	if err := validateMacOSDesktopRuntime(ctx, appPath, targetVersion); err != nil {
 		return "", err
 	}
 	return appPath, nil
@@ -177,6 +192,31 @@ func validateMacOSDesktopVersion(ctx context.Context, appPath, targetVersion str
 	output, err := exec.CommandContext(ctx, "codesign", "--verify", "--deep", "--strict", "--verbose=2", appPath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("macOS App 代码签名验证失败: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func validateMacOSDesktopRuntime(ctx context.Context, appPath, targetVersion string) error {
+	if err := validateMacOSDesktopVersion(ctx, appPath, targetVersion); err != nil {
+		return err
+	}
+	core := filepath.Join(appPath, "Contents", "Helpers", "agentdock")
+	cloudflared := filepath.Join(appPath, "Contents", "Helpers", "cloudflared")
+	skillManifest := filepath.Join(appPath, "Contents", "Resources", "core-skills", "manifest.json")
+	for _, path := range []string{core, cloudflared, skillManifest} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("macOS App 缺少有效运行组件: %s", path)
+		}
+	}
+	if !executableRegularFile(core) || !executableRegularFile(cloudflared) {
+		return errors.New("macOS App 内置 Core 或 cloudflared 不可执行")
+	}
+	if err := verifyBinaryVersion(ctx, core, targetVersion); err != nil {
+		return fmt.Errorf("macOS App 内置 Core 版本不匹配: %w", err)
+	}
+	if output, err := exec.CommandContext(ctx, cloudflared, "--version").CombinedOutput(); err != nil {
+		return fmt.Errorf("macOS App 内置 cloudflared 无法运行: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }

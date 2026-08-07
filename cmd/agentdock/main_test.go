@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/desktopruntime"
 )
 
 func TestRunPrintsVersionWithoutLoadingServerConfiguration(t *testing.T) {
@@ -38,6 +40,12 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 }
 
 func TestRunServiceLaunchCoreRequiresRuntimeRoot(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		if desktopruntime.DefaultRuntimeRoot() == "" {
+			t.Fatal("macOS App 内部 launch-core 必须能解析默认 runtime root")
+		}
+		return
+	}
 	err := run(context.Background(), []string{"service", "launch-core"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "--runtime-root") {
 		t.Fatalf("unexpected error: %v", err)
