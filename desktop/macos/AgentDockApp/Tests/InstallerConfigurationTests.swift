@@ -95,6 +95,15 @@ struct InstallerConfigurationTests {
             try ServicePortValidation.validate(8)
         }
 
+        precondition(AppVersion.matchesCoreVersion(
+            "AgentDock v0.7.2\ncommit: test\n",
+            expectedDisplayVersion: "v0.7.2"
+        ))
+        precondition(!AppVersion.matchesCoreVersion(
+            "AgentDock v0.7.1\ncommit: test\n",
+            expectedDisplayVersion: "v0.7.2"
+        ))
+
         try testTunnelTokenStore()
         try testDesktopUpdateResult()
         try testDesktopUpdateServiceState()

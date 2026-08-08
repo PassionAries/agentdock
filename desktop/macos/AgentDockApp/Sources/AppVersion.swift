@@ -6,6 +6,11 @@ enum AppVersion {
         return display(raw)
     }
 
+    static func matchesCoreVersion(_ output: String, expectedDisplayVersion: String = current) -> Bool {
+        output.split(whereSeparator: \.isNewline).first.map(String.init)
+            == "AgentDock \(expectedDisplayVersion)"
+    }
+
     static func display(_ raw: String?) -> String {
         guard let raw else { return "未知版本" }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
