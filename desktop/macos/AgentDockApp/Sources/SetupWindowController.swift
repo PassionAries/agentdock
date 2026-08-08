@@ -59,6 +59,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var oauthVisible = false
     private var isBusy = false
     private var quickTunnelRefreshState: QuickTunnelRefreshState = .idle
+
+    private var migrationRequired: Bool {
+        currentStatus.migrationRequired
+    }
     private var displayedPublicMCPURL: URL?
     private var lastCheckedPublicMCPURL: URL?
     private var activePublicCheckURL: URL?
@@ -295,7 +299,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateServiceSection(_ status: ServiceStatus) {
-        if status.healthy {
+        if migrationRequired {
+            stateLabel.stringValue = "● 需要迁移"
+            stateLabel.textColor = .systemOrange
+        } else if status.healthy {
             stateLabel.stringValue = "● 运行正常 · 核心 \(AppVersion.display(status.version)) · 控制面板 \(AppVersion.current)"
             stateLabel.textColor = .systemGreen
         } else if status.requiresApproval {
@@ -314,11 +321,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         renderPublicAddress(configuration?.publicMCPURL, automaticallyCheck: true)
         authTokenValue = configuration?.authToken ?? ""
         oauthPasswordValue = configuration?.oauthPassword ?? ""
-        startStopButton.title = status.requiresApproval ? "打开后台设置" : (status.loaded ? "停用服务" : "启用服务")
+        startStopButton.title = migrationRequired
+            ? "等待迁移"
+            : (status.requiresApproval ? "打开后台设置" : (status.loaded ? "停用服务" : "启用服务"))
         if !isBusy {
-            startStopButton.isEnabled = status.installed
-            restartButton.isEnabled = status.installed && !status.requiresApproval
-            updateButton.isEnabled = status.installed
+            startStopButton.isEnabled = status.installed && !migrationRequired
+            restartButton.isEnabled = status.installed && !status.requiresApproval && !migrationRequired
+            updateButton.isEnabled = status.installed && !migrationRequired
         }
     }
 
@@ -666,6 +675,12 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             return
         }
 
+        if migrationRequired {
+            applyButton.title = "迁移并启用"
+            applyButton.isEnabled = !isBusy
+            return
+        }
+
         let refreshingQuickTunnel = initialMode == .quick && selectedMode == .quick
         applyButton.title = refreshingQuickTunnel ? "重新生成临时地址" : "应用更改"
 
@@ -683,6 +698,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         isBusy = busy
         for control in [publicMode, serverURLField, tunnelTokenField, startStopButton, restartButton, updateButton, advancedButton] {
             control.isEnabled = !busy && (control !== advancedButton || currentStatus.installed)
+        }
+        if !busy && migrationRequired {
+            startStopButton.isEnabled = false
+            restartButton.isEnabled = false
+            updateButton.isEnabled = false
         }
         logsButton.isEnabled = !busy && currentStatus.installed
         if busy {

@@ -15,6 +15,7 @@ struct ServiceStatus {
     let configuration: ServiceConfiguration?
     let autostartEnabled: Bool
     let requiresApproval: Bool
+    let migrationRequired: Bool
 
     static let missing = ServiceStatus(
         installed: false,
@@ -23,7 +24,8 @@ struct ServiceStatus {
         version: nil,
         configuration: nil,
         autostartEnabled: false,
-        requiresApproval: false
+        requiresApproval: false,
+        migrationRequired: false
     )
 }
 
@@ -41,6 +43,7 @@ final class ServiceController: @unchecked Sendable {
 
     func status() async -> ServiceStatus {
         let fileManager = FileManager.default
+        let migrationRequired = LegacyDesktopRuntimeMigration.isPresent(paths: paths)
         let installed = fileManager.isExecutableFile(atPath: paths.binary.path)
             && fileManager.isExecutableFile(atPath: paths.cloudflared.path)
             && fileManager.fileExists(atPath: paths.coreSkillBundle.appendingPathComponent("manifest.json").path)
@@ -62,7 +65,8 @@ final class ServiceController: @unchecked Sendable {
                 version: nil,
                 configuration: configuration,
                 autostartEnabled: registered,
-                requiresApproval: requiresApproval
+                requiresApproval: requiresApproval,
+                migrationRequired: migrationRequired
             )
         }
 
@@ -74,7 +78,8 @@ final class ServiceController: @unchecked Sendable {
             version: health?.version,
             configuration: configuration,
             autostartEnabled: registered,
-            requiresApproval: requiresApproval
+            requiresApproval: requiresApproval,
+            migrationRequired: migrationRequired
         )
     }
 
