@@ -178,7 +178,7 @@ final class ServiceController: @unchecked Sendable {
     }
 
     func update() async throws -> String {
-        try validatePersistentAppLocation()
+        try validateServiceManagementReadiness()
         let currentStatus = await status()
         let serviceState = DesktopUpdateServiceState(
             coreEnabled: currentStatus.autostartEnabled,
@@ -239,7 +239,7 @@ final class ServiceController: @unchecked Sendable {
     }
 
     private func register(service: SMAppService, displayName: String) throws {
-        try validatePersistentAppLocation()
+        try validateServiceManagementReadiness()
         switch service.status {
         case .enabled:
             return
@@ -280,7 +280,7 @@ final class ServiceController: @unchecked Sendable {
     }
 
     private func restoreRegistration(service: SMAppService, label: String, displayName: String) throws {
-        try validatePersistentAppLocation()
+        try validateServiceManagementReadiness()
         try unregister(service: service, label: label)
         if service.status == .notRegistered {
             try service.register()
@@ -297,6 +297,10 @@ final class ServiceController: @unchecked Sendable {
         if path == "/Volumes" || path.hasPrefix("/Volumes/") {
             throw ValidationError("请先把 AgentDock 拖到“应用程序”文件夹，再启用后台服务。")
         }
+    }
+
+    func validateServiceManagementReadiness() throws {
+        try validatePersistentAppLocation()
         if LegacyDesktopRuntimeMigration.isPresent(paths: paths) {
             throw ValidationError("检测到旧版 AgentDock 后台结构，请先在主面板应用当前设置完成迁移。")
         }

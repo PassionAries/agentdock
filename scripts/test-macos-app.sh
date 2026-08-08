@@ -31,6 +31,23 @@ swiftc \
   -o "$TMP_ROOT/installer-configuration-tests"
 "$TMP_ROOT/installer-configuration-tests"
 
+swiftc \
+  -swift-version 5 \
+  -parse-as-library \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppVersion.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateServiceState.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TunnelTokenStore.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/LegacyDesktopRuntimeMigration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ServiceController.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerRunner.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Tests/ServiceControllerValidationTests.swift" \
+  -o "$TMP_ROOT/service-controller-validation-tests"
+"$TMP_ROOT/service-controller-validation-tests"
+
 mkdir -p "$TMP_ROOT/output"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip.sha256"
