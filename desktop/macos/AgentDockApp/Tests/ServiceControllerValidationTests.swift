@@ -13,9 +13,16 @@ struct ServiceControllerValidationTests {
             to: launchAgents.appendingPathComponent("com.uvwt.agentdock.plist")
         )
 
+        let appBundle = root.appendingPathComponent("Applications/AgentDock.app", isDirectory: true)
+        let launchAgentBundle = appBundle
+            .appendingPathComponent("Contents/Library/LaunchAgents", isDirectory: true)
+        try FileManager.default.createDirectory(at: launchAgentBundle, withIntermediateDirectories: true)
+        let corePlist = launchAgentBundle.appendingPathComponent(ServiceController.corePlistName)
+        try Data("plist".utf8).write(to: corePlist)
+
         let persistentPaths = AppPaths(
             home: root,
-            appBundle: URL(fileURLWithPath: "/Applications/AgentDock.app", isDirectory: true)
+            appBundle: appBundle
         )
         let service = ServiceController(paths: persistentPaths)
 
@@ -23,6 +30,17 @@ struct ServiceControllerValidationTests {
         try service.validatePersistentAppLocation()
         expectFailure("检测到旧版") {
             try service.validateServiceManagementReadiness()
+        }
+        try service.validateBundledServiceDefinition(
+            plistName: ServiceController.corePlistName,
+            displayName: "AgentDock Core"
+        )
+        try FileManager.default.removeItem(at: corePlist)
+        expectFailure("缺少 AgentDock Core") {
+            try service.validateBundledServiceDefinition(
+                plistName: ServiceController.corePlistName,
+                displayName: "AgentDock Core"
+            )
         }
 
         let mountedPaths = AppPaths(

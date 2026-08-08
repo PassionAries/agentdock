@@ -117,7 +117,11 @@ final class ServiceController: @unchecked Sendable {
 
     func setTunnelEnabled(_ enabled: Bool) throws {
         if enabled {
-            try register(service: tunnelService, displayName: "AgentDock Tunnel")
+            try register(
+                service: tunnelService,
+                plistName: Self.tunnelPlistName,
+                displayName: "AgentDock Tunnel"
+            )
         } else {
             try unregister(service: tunnelService, label: Self.tunnelLabel)
         }
@@ -235,20 +239,25 @@ final class ServiceController: @unchecked Sendable {
     }
 
     private func registerCoreIfNeeded() throws {
-        try register(service: coreService, displayName: "AgentDock Core")
+        try register(
+            service: coreService,
+            plistName: Self.corePlistName,
+            displayName: "AgentDock Core"
+        )
     }
 
-    private func register(service: SMAppService, displayName: String) throws {
+    private func register(service: SMAppService, plistName: String, displayName: String) throws {
         try validateServiceManagementReadiness()
+        try validateBundledServiceDefinition(plistName: plistName, displayName: displayName)
         switch service.status {
         case .enabled:
             return
         case .requiresApproval:
             throw ValidationError("\(displayName) 已注册，但需要你在“系统设置 → 通用 → 登录项与扩展”中允许后台运行。")
-        case .notRegistered:
+        case .notRegistered, .notFound:
+            // SMAppService 在服务首次 register 前可能返回 .notFound，即使 Bundle 内 plist
+            // 已经存在。定义是否完整由上面的 Bundle 文件校验负责，不用 status 猜测。
             try service.register()
-        case .notFound:
-            throw ValidationError("AgentDock.app 缺少 \(displayName) 的后台服务定义，请重新安装应用。")
         @unknown default:
             throw ValidationError("无法确认 \(displayName) 的后台服务状态。")
         }
@@ -276,13 +285,16 @@ final class ServiceController: @unchecked Sendable {
 
     private func reregister(service: SMAppService, label: String, displayName: String) throws {
         try unregister(service: service, label: label)
-        try register(service: service, displayName: displayName)
+        let plistName = label == Self.coreLabel ? Self.corePlistName : Self.tunnelPlistName
+        try register(service: service, plistName: plistName, displayName: displayName)
     }
 
     private func restoreRegistration(service: SMAppService, label: String, displayName: String) throws {
         try validateServiceManagementReadiness()
+        let plistName = label == Self.coreLabel ? Self.corePlistName : Self.tunnelPlistName
+        try validateBundledServiceDefinition(plistName: plistName, displayName: displayName)
         try unregister(service: service, label: label)
-        if service.status == .notRegistered {
+        if service.status == .notRegistered || service.status == .notFound {
             try service.register()
         }
         guard service.status == .enabled || service.status == .requiresApproval else {
@@ -303,6 +315,17 @@ final class ServiceController: @unchecked Sendable {
         try validatePersistentAppLocation()
         if LegacyDesktopRuntimeMigration.isPresent(paths: paths) {
             throw ValidationError("检测到旧版 AgentDock 后台结构，请先在主面板应用当前设置完成迁移。")
+        }
+    }
+
+    func validateBundledServiceDefinition(plistName: String, displayName: String) throws {
+        let plist = paths.appBundle
+            .appendingPathComponent("Contents/Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent(plistName)
+        guard let values = try? plist.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true else {
+            throw ValidationError("AgentDock.app 缺少 \(displayName) 的后台服务定义，请重新安装应用。")
         }
     }
 
