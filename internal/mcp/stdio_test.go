@@ -55,3 +55,39 @@ func TestServeStdioRejectsUninitializedServer(t *testing.T) {
 		t.Fatal("ServeStdio() accepted an uninitialized server")
 	}
 }
+
+func TestServeStdioAdvertisesInstructions(t *testing.T) {
+	server := NewServer(nil, config.Config{Instructions: "Use absolute paths under /srv."})
+	clientInput, serverOutput := io.Pipe()
+	serverInput, clientOutput := io.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		serverDone <- server.ServeStdio(serverInput, serverOutput)
+	}()
+
+	client := mcpsdk.NewClient(
+		&mcpsdk.Implementation{Name: "agentdock-test", Version: "1.0.0"},
+		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
+	)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	session, err := client.Connect(ctx, &mcpsdk.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	result := session.InitializeResult()
+	if result == nil || result.Instructions != "Use absolute paths under /srv." {
+		t.Fatalf("InitializeResult() = %#v, want instructions", result)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			t.Fatalf("ServeStdio() error = %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("ServeStdio() did not stop after client close")
+	}
+}
