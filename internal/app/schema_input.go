@@ -280,10 +280,10 @@ func InputSchema(name string) map[string]any {
 	case "browser_session":
 		props["action"] = map[string]any{"type": "string", "description": "Browser session action.", "enum": []string{"start", "close", "cleanup_stale"}}
 		props["url"] = stringProp("Initial URL when action=start. Defaults to about:blank.")
-		props["backend"] = stringProp("Browser backend: playwright or cdp. Defaults to playwright.")
+		props["backend"] = map[string]any{"type": "string", "description": "Browser backend. Defaults to playwright; use cdp for an existing DevTools endpoint or an AgentDock-managed system browser.", "enum": []string{"playwright", "cdp"}}
 		props["browser"] = stringProp("Browser family: chromium, chrome, edge, or msedge. On macOS prefer chrome to use system Google Chrome; edge/msedge selects Microsoft Edge. Do not run or suggest the Playwright browser install command for missing bundled Chromium.")
 		props["channel"] = stringProp("Optional Playwright Chromium channel, such as msedge or chrome.")
-		props["cdp_url"] = stringProp("CDP endpoint, required when backend=cdp.")
+		props["cdp_url"] = stringProp("Optional CDP endpoint. When backend=cdp and omitted, AgentDock first checks known local loopback CDP endpoints, then launches an isolated local system browser if none is available.")
 		props["headless"] = boolProp("Run browser headless. Defaults to true.")
 		props["viewport"] = objectProp("Viewport object, for example {width:1280,height:800}.")
 		props["session_id"] = stringProp("Browser session id.")
@@ -402,7 +402,7 @@ func browserActionsProp() map[string]any {
 				"value":       map[string]any{"description": "Value for fill/select, wait duration for wait, or fallback text for wait_for_text."},
 				"text":        map[string]any{"type": "string", "description": "Text to wait for when action=wait_for_text."},
 				"exact":       map[string]any{"type": "boolean", "description": "Require exact text match for wait_for_text."},
-				"state":       map[string]any{"type": "string", "description": "Playwright locator state for wait_for_text, such as visible or hidden."},
+				"state":       map[string]any{"type": "string", "description": "Element wait state, such as visible, hidden, attached, or detached."},
 				"url_pattern": map[string]any{"type": "string", "description": "Regular expression matched against response URLs for wait_for_response."},
 				"method":      map[string]any{"type": "string", "description": "Optional HTTP method for wait_for_response."},
 				"status":      map[string]any{"type": "integer", "description": "Optional HTTP status for wait_for_response."},
