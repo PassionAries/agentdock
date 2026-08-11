@@ -11,6 +11,10 @@ enum AppVersion {
             == "AgentDock \(expectedDisplayVersion)"
     }
 
+    static func matchesHealthVersion(_ raw: String?, expectedDisplayVersion: String = current) -> Bool {
+        display(raw) == expectedDisplayVersion
+    }
+
     static func display(_ raw: String?) -> String {
         guard let raw else { return "未知版本" }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)

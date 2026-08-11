@@ -51,7 +51,48 @@ struct ServiceControllerValidationTests {
             try ServiceController(paths: mountedPaths).validatePersistentAppLocation()
         }
 
+        try testConfiguredTunnelMode(root: root, appBundle: appBundle)
+        try testDesktopUpdateCheckDecoding()
+
         print("service controller validation tests passed")
+    }
+
+    private static func testConfiguredTunnelMode(root: URL, appBundle: URL) throws {
+        let home = root.appendingPathComponent("tunnel-mode-home", isDirectory: true)
+        let paths = AppPaths(home: home, appBundle: appBundle)
+        let service = ServiceController(paths: paths)
+
+        let missingMode = try service.configuredTunnelMode()
+        precondition(missingMode == .local)
+        try FileManager.default.createDirectory(at: paths.appSupport, withIntermediateDirectories: true)
+
+        for (rawMode, expected) in [
+            ("none", TunnelMode.local),
+            ("quick", TunnelMode.quick),
+            ("named", TunnelMode.named),
+            ("unexpected", TunnelMode.local),
+        ] {
+            try Data("AGENTDOCK_TUNNEL_MODE='\(rawMode)'\n".utf8).write(to: paths.tunnelEnvironment)
+            let configuredMode = try service.configuredTunnelMode()
+            precondition(configuredMode == expected, rawMode)
+        }
+    }
+
+    private static func testDesktopUpdateCheckDecoding() throws {
+        let current = try DesktopUpdateCheck.decode(
+            #"{"update_available":false,"message":"当前已是最新版本：v0.7.2"}"#
+        )
+        precondition(!current.updateAvailable)
+        precondition(current.message.contains("最新版本"))
+
+        let available = try DesktopUpdateCheck.decode(
+            #"{"update_available":true,"message":"发现 AgentDock App 更新"}"#
+        )
+        precondition(available.updateAvailable)
+
+        expectFailure("解析") {
+            _ = try DesktopUpdateCheck.decode("not-json")
+        }
     }
 
     private static func expectFailure(_ expected: String, operation: () throws -> Void) {

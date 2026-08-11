@@ -7,6 +7,27 @@ struct HealthPayload: Decodable {
     let version: String
 }
 
+struct DesktopUpdateCheck: Decodable {
+    let updateAvailable: Bool
+    let message: String
+
+    private enum CodingKeys: String, CodingKey {
+        case updateAvailable = "update_available"
+        case message
+    }
+
+    static func decode(_ output: String) throws -> DesktopUpdateCheck {
+        guard let data = output.data(using: .utf8) else {
+            throw ValidationError("无法读取 AgentDock 更新检查结果。")
+        }
+        do {
+            return try JSONDecoder().decode(DesktopUpdateCheck.self, from: data)
+        } catch {
+            throw ValidationError("无法解析 AgentDock 更新检查结果。")
+        }
+    }
+}
+
 struct ServiceStatus {
     let installed: Bool
     let loaded: Bool
@@ -112,7 +133,34 @@ final class ServiceController: @unchecked Sendable {
     }
 
     func tunnelEnabled() -> Bool {
-        tunnelService.status == .enabled
+        let status = tunnelService.status
+        return status == .enabled || status == .requiresApproval
+    }
+
+    func configuredTunnelMode() throws -> TunnelMode {
+        guard FileManager.default.fileExists(atPath: paths.tunnelEnvironment.path) else {
+            return .local
+        }
+        let environment = try ManagedEnvironment.load(from: paths.tunnelEnvironment)
+        let rawMode = environment.values["AGENTDOCK_TUNNEL_MODE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return TunnelMode(rawValue: rawMode) ?? .local
+    }
+
+    func reconcileTunnelRegistrationFromConfiguration() async throws {
+        // 旧结构仍存在时必须先走迁移事务，不能在旁边提前注册第二套 Tunnel。
+        guard !LegacyDesktopRuntimeMigration.isPresent(paths: paths) else { return }
+
+        switch try configuredTunnelMode() {
+        case .local:
+            try setTunnelEnabled(false)
+        case .quick, .named:
+            try setTunnelEnabled(true)
+            if tunnelService.status == .enabled, !(await waitForTunnelProcess()) {
+                throw ValidationError("AgentDock Tunnel 配置要求公网运行，但后台进程没有稳定启动。")
+            }
+        }
     }
 
     func setTunnelEnabled(_ enabled: Bool) throws {
@@ -183,6 +231,24 @@ final class ServiceController: @unchecked Sendable {
 
     func update() async throws -> String {
         try validateServiceManagementReadiness()
+
+        let check = try await runInBackground {
+            let result = try runProcess(
+                executable: self.paths.binary.path,
+                arguments: ["update", "--check"],
+                environment: ["AGENTDOCK_DESKTOP_APP_PATH": self.paths.appBundle.path]
+            )
+            guard result.status == 0 else {
+                throw ValidationError(self.commandError(result.output, action: "检查更新"))
+            }
+            return try DesktopUpdateCheck.decode(result.output)
+        }
+        guard check.updateAvailable else {
+            // 没有 pending update result 时这只能是上一次未完成流程留下的临时状态。
+            DesktopUpdateServiceState.remove(at: paths.updateServiceState)
+            return check.message
+        }
+
         let currentStatus = await status()
         let serviceState = DesktopUpdateServiceState(
             coreEnabled: currentStatus.autostartEnabled,
@@ -190,10 +256,11 @@ final class ServiceController: @unchecked Sendable {
         )
         try serviceState.write(to: paths.updateServiceState)
 
+        let output: String
         do {
             try setTunnelEnabled(false)
             try await stop()
-            return try await runInBackground {
+            output = try await runInBackground {
                 let result = try runUpdateProcess(
                     executable: self.paths.binary.path,
                     arguments: ["update"],
@@ -218,6 +285,19 @@ final class ServiceController: @unchecked Sendable {
             }
             throw updateError
         }
+
+        // 真正的 App 替换会终止旧 GUI，并由新版 App 根据 update-result.json 恢复服务。
+        // 能执行到这里说明更新进程正常返回但没有完成 GUI handoff，因此旧 GUI 必须自己收尾。
+        do {
+            try await reregisterBackgroundServices(
+                coreEnabled: serviceState.coreEnabled,
+                tunnelEnabled: serviceState.tunnelEnabled
+            )
+            DesktopUpdateServiceState.remove(at: paths.updateServiceState)
+        } catch {
+            throw ValidationError("更新进程已经返回，但后台服务恢复失败：\(error.localizedDescription)")
+        }
+        return output
     }
 
     func openLogs() {

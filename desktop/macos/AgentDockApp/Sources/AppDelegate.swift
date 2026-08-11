@@ -18,12 +18,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let pendingUpdateResult = DesktopUpdateResult.load(from: service.paths.updateResult)
+        let updateResultExists = FileManager.default.fileExists(atPath: service.paths.updateResult.path)
         configureStatusItem()
         registerLoginItemIfNeeded()
         if let pendingUpdateResult {
             restoreBackgroundServicesAfterUpdate(pendingUpdateResult)
-        } else {
+        } else if updateResultExists {
+            // 结果文件存在但无法解析时，外部更新事务仍可能在等待新版 App ACK。
+            // 保留 update-services.json，让外部更新器按超时路径恢复旧 App。
+            NSLog("AgentDock 更新结果存在但无法解析，保留后台服务事务状态等待回滚。")
             refreshStatus(showWindow: !launchedInBackground)
+        } else {
+            // update-services.json 只属于正在进行的 App 更新事务；没有 pending result 时
+            // 它就是上一次异常/无更新路径留下的陈旧状态，不能继续影响后台服务。
+            DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
+            refreshStatus(showWindow: !launchedInBackground)
+            Task {
+                do {
+                    try await service.reconcileTunnelRegistrationFromConfiguration()
+                } catch {
+                    NSLog("AgentDock 启动时 Tunnel 状态收敛失败：%@", error.localizedDescription)
+                }
+                self.refreshStatus()
+            }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -109,7 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !currentStatus.installed {
             statusText = "未安装"
         } else if currentStatus.healthy {
-            statusText = "运行正常 · 核心 \(AppVersion.display(currentStatus.version)) · 控制面板 \(AppVersion.current)"
+            if AppVersion.matchesHealthVersion(currentStatus.version) {
+                statusText = "运行正常 · AgentDock \(AppVersion.current)"
+            } else {
+                statusText = "版本异常 · AgentDock \(AppVersion.current) · Core \(AppVersion.display(currentStatus.version))"
+            }
         } else if currentStatus.requiresApproval {
             statusText = "需要允许后台运行"
         } else if currentStatus.loaded {

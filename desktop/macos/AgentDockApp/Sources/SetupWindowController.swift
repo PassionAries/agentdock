@@ -303,8 +303,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             stateLabel.stringValue = "● 需要迁移"
             stateLabel.textColor = .systemOrange
         } else if status.healthy {
-            stateLabel.stringValue = "● 运行正常 · 核心 \(AppVersion.display(status.version)) · 控制面板 \(AppVersion.current)"
-            stateLabel.textColor = .systemGreen
+            if AppVersion.matchesHealthVersion(status.version) {
+                stateLabel.stringValue = "● 运行正常 · AgentDock \(AppVersion.current)"
+                stateLabel.textColor = .systemGreen
+            } else {
+                stateLabel.stringValue = "● 版本异常 · AgentDock \(AppVersion.current) · Core \(AppVersion.display(status.version))"
+                stateLabel.textColor = .systemRed
+            }
         } else if status.requiresApproval {
             stateLabel.stringValue = "● 需要允许后台运行"
             stateLabel.textColor = .systemOrange

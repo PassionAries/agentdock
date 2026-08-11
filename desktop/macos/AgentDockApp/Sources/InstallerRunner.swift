@@ -236,7 +236,7 @@ final class InstallerRunner {
         let version = try runProcess(executable: paths.binary.path, arguments: ["--version"])
         guard version.status == 0,
               AppVersion.matchesCoreVersion(version.output) else {
-            throw ValidationError("AgentDock.app 内的 Core 与控制面板版本不一致，请重新安装应用。")
+            throw ValidationError("AgentDock.app 内置 Core 与 App 版本不一致，请重新安装应用。")
         }
         let cloudflared = try runProcess(executable: paths.cloudflared.path, arguments: ["--version"])
         guard cloudflared.status == 0 else {
