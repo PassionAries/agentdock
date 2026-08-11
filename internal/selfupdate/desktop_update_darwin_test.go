@@ -36,7 +36,7 @@ func TestExtractDesktopUpdateArchiveValidatesSignedApp(t *testing.T) {
 	if filepath.Base(extracted) != "AgentDock.app" {
 		t.Fatalf("unexpected extracted App path: %s", extracted)
 	}
-	if err := validateMacOSDesktopVersion(context.Background(), extracted, "v0.7.1"); err != nil {
+	if err := validateMacOSDesktopRuntime(context.Background(), extracted, "v0.7.1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,8 +150,12 @@ func writeSignedMacOSApp(t *testing.T, root, version string) string {
 	appPath := filepath.Join(root, "AgentDock.app")
 	contents := filepath.Join(appPath, "Contents")
 	macOSDir := filepath.Join(contents, "MacOS")
-	if err := os.MkdirAll(macOSDir, 0o755); err != nil {
-		t.Fatal(err)
+	helpersDir := filepath.Join(contents, "Helpers")
+	skillsDir := filepath.Join(contents, "Resources", "core-skills")
+	for _, dir := range []string{macOSDir, helpersDir, skillsDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	executable := filepath.Join(macOSDir, "AgentDock")
 	binary, err := os.ReadFile("/usr/bin/true")
@@ -159,6 +163,22 @@ func writeSignedMacOSApp(t *testing.T, root, version string) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(executable, binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	coreSource := filepath.Join(root, "core.c")
+	coreProgram := "#include <stdio.h>\n#include <string.h>\nint main(int argc, char **argv) { if (argc > 1 && strcmp(argv[1], \"--version\") == 0) { puts(\"AgentDock v" + version + "\"); return 0; } return 0; }\n"
+	if err := os.WriteFile(coreSource, []byte(coreProgram), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, "/usr/bin/xcrun", "clang", "-Os", coreSource, "-o", filepath.Join(helpersDir, "agentdock"))
+	cloudflaredBinary, err := os.ReadFile("/usr/bin/true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(helpersDir, "cloudflared"), cloudflaredBinary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillsDir, "manifest.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	plist := `<?xml version="1.0" encoding="UTF-8"?>
@@ -175,8 +195,10 @@ func writeSignedMacOSApp(t *testing.T, root, version string) string {
 	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(plist), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	runTestCommand(t, "/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "com.uvwt.agentdock.core", filepath.Join(helpersDir, "agentdock"))
+	runTestCommand(t, "/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "com.uvwt.agentdock.cloudflared", filepath.Join(helpersDir, "cloudflared"))
 	runTestCommand(t, "/usr/bin/codesign", "--force", "--deep", "--sign", "-", "--identifier", "com.uvwt.agentdock", appPath)
-	if err := validateMacOSDesktopVersion(context.Background(), appPath, version); err != nil {
+	if err := validateMacOSDesktopRuntime(context.Background(), appPath, version); err != nil {
 		t.Fatal(err)
 	}
 	return appPath

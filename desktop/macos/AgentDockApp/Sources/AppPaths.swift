@@ -2,22 +2,27 @@ import Foundation
 
 struct AppPaths {
     let home: URL
+    let appBundle: URL
 
-    init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    init(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        appBundle: URL = Bundle.main.bundleURL
+    ) {
         self.home = home
+        self.appBundle = appBundle
     }
 
-    var binary: URL { home.appendingPathComponent(".local/bin/agentdock") }
+    var binary: URL { appBundle.appendingPathComponent("Contents/Helpers/agentdock") }
+    var cloudflared: URL { appBundle.appendingPathComponent("Contents/Helpers/cloudflared") }
+    var coreSkillBundle: URL { appBundle.appendingPathComponent("Contents/Resources/core-skills") }
     var appSupport: URL { home.appendingPathComponent("Library/Application Support/AgentDock") }
     var environment: URL { appSupport.appendingPathComponent("agentdock.env") }
-    var launchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.plist") }
     var tunnelEnvironment: URL { appSupport.appendingPathComponent("cloudflared.env") }
     var tunnelTokenStore: URL { appSupport.appendingPathComponent("cloudflare-tunnel-token") }
-    var tunnelLaunchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.cloudflared.plist") }
     var quickTunnelURL: URL { appSupport.appendingPathComponent("quick-tunnel-url.txt") }
     var updateResult: URL { appSupport.appendingPathComponent("update-result.json") }
+    var updateServiceState: URL { appSupport.appendingPathComponent("update-services.json") }
     var updateLog: URL { appSupport.appendingPathComponent("update.log") }
-    var menuLaunchAgent: URL { home.appendingPathComponent("Library/LaunchAgents/com.uvwt.agentdock.menu.plist") }
     var logs: URL { home.appendingPathComponent("Library/Logs/AgentDock") }
     var workDirectory: URL { home.appendingPathComponent("AgentDock") }
     var stateDirectory: URL { home.appendingPathComponent(".agentdock") }

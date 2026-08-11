@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,55 +23,16 @@ func launchctlBinary() string {
 
 func launchdTarget(label string) string { return launchdDomain() + "/" + label }
 
-func launchAgentPath(label string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "LaunchAgents", label+".plist")
-}
-
 func launchdLoaded(ctx context.Context, label string) bool {
 	_, err := runCommand(ctx, launchctlBinary(), "print", launchdTarget(label))
 	return err == nil
 }
 
-func launchdAutostartEnabled(ctx context.Context, label string) bool {
-	output, err := runCommand(ctx, launchctlBinary(), "print-disabled", launchdDomain())
-	if err != nil {
-		return true
-	}
-	return !strings.Contains(output, `"`+label+`" => true`) && !strings.Contains(output, label+" => true")
-}
-
-func launchdSetDisabled(ctx context.Context, label string, disabled bool) error {
-	action := "enable"
-	if disabled {
-		action = "disable"
-	}
-	_, err := runCommand(ctx, launchctlBinary(), action, launchdTarget(label))
-	return err
-}
-
-func launchdStart(ctx context.Context, label string) error {
-	if err := launchdSetDisabled(ctx, label, false); err != nil {
-		return err
-	}
+func kickstartRegisteredLaunchAgent(ctx context.Context, label string) error {
 	if !launchdLoaded(ctx, label) {
-		path := launchAgentPath(label)
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("LaunchAgent 不存在: %s", path)
-		}
-		if _, err := runCommand(ctx, launchctlBinary(), "bootstrap", launchdDomain(), path); err != nil {
-			return err
-		}
+		return fmt.Errorf("后台服务 %s 尚未由 AgentDock.app 注册", label)
 	}
 	_, err := runCommand(ctx, launchctlBinary(), "kickstart", "-k", launchdTarget(label))
-	return err
-}
-
-func launchdStop(ctx context.Context, label string) error {
-	if !launchdLoaded(ctx, label) {
-		return nil
-	}
-	_, err := runCommand(ctx, launchctlBinary(), "bootout", launchdTarget(label))
 	return err
 }
 
@@ -85,7 +45,7 @@ func platformServiceStatus(ctx context.Context, runtimeRoot string) (ServiceStat
 	return ServiceStatus{
 		Running:        loaded,
 		Healthy:        loaded && healthy(ctx, values),
-		StartupEnabled: launchdAutostartEnabled(ctx, manifest.ServiceName),
+		StartupEnabled: loaded,
 	}, nil
 }
 
@@ -94,37 +54,23 @@ func platformServiceAction(ctx context.Context, runtimeRoot, action string) erro
 	if err != nil {
 		return err
 	}
+
+	// SMAppService 是 macOS 桌面后台服务的唯一注册入口。Go 只允许重启已经注册的
+	// Core；这样 Quick Tunnel 可以在写入新公网地址后刷新 Core，又不会重新引入
+	// ~/Library/LaunchAgents 或 launchctl bootstrap 这套第二生命周期。
 	switch action {
-	case "start":
-		if err := launchdStart(ctx, manifest.ServiceName); err != nil {
+	case "start", "restart":
+		if err := kickstartRegisteredLaunchAgent(ctx, manifest.ServiceName); err != nil {
 			return err
 		}
 		return waitHealthy(ctx, values, 30*time.Second)
 	case "stop":
-		return launchdStop(ctx, manifest.ServiceName)
-	case "restart":
-		if err := launchdStart(ctx, manifest.ServiceName); err != nil {
-			return err
-		}
-		return waitHealthy(ctx, values, 30*time.Second)
+		return errors.New("macOS 后台服务停用由 AgentDock.app 的 SMAppService 管理")
 	default:
 		return errors.New("不支持的 AgentDock 服务操作")
 	}
 }
 
-func platformSetAutostart(ctx context.Context, runtimeRoot, component string, enabled bool) error {
-	if component != "core" {
-		return errors.New("macOS 菜单栏登录启动由 SMAppService 管理")
-	}
-	manifest, _, _, err := loadCoreEnvironment(runtimeRoot)
-	if err != nil {
-		return err
-	}
-	if enabled {
-		return launchdStart(ctx, manifest.ServiceName)
-	}
-	if err := launchdSetDisabled(ctx, manifest.ServiceName, true); err != nil {
-		return err
-	}
-	return launchdStop(ctx, manifest.ServiceName)
+func platformSetAutostart(context.Context, string, string, bool) error {
+	return errors.New("macOS 后台服务启停由 AgentDock.app 的 SMAppService 管理")
 }

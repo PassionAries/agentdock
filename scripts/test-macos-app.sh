@@ -20,7 +20,7 @@ swiftc \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppVersion.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateResult.swift" \
-  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerVersionGuard.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateServiceState.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
@@ -30,6 +30,33 @@ swiftc \
   "$ROOT_DIR/desktop/macos/AgentDockApp/Tests/InstallerConfigurationTests.swift" \
   -o "$TMP_ROOT/installer-configuration-tests"
 "$TMP_ROOT/installer-configuration-tests"
+
+swiftc \
+  -swift-version 5 \
+  -parse-as-library \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppVersion.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopUpdateServiceState.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ManagedEnvironment.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/AppPaths.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ACPConfiguration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/TunnelTokenStore.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/LegacyDesktopRuntimeMigration.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/ServiceController.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/InstallerRunner.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Tests/ServiceControllerValidationTests.swift" \
+  -o "$TMP_ROOT/service-controller-validation-tests"
+"$TMP_ROOT/service-controller-validation-tests"
+
+swiftc \
+  -swift-version 5 \
+  -parse-as-library \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopPermissionChecker.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/FileAccessPermissionChecker.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/PermissionUIComponents.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Tests/PermissionCheckerTests.swift" \
+  -o "$TMP_ROOT/permission-checker-tests"
+"$TMP_ROOT/permission-checker-tests"
 
 mkdir -p "$TMP_ROOT/output"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip"
@@ -41,8 +68,8 @@ case "$(uname -m)" in
   *) print -u2 -- "unsupported test architecture: $(uname -m)"; exit 1 ;;
 esac
 
-# 构建当前架构的真实核心载荷和最小 cloudflared 替身，验证 DMG 构建只接受
-# 带校验文件的 Mach-O 离线资源，不依赖测试期间访问公网。
+# 构建当前架构的真实 Core 与最小 cloudflared 构建输入。最终 App 必须把它们
+# 收进 Contents/Helpers，而不是继续携带安装后再解包的离线载荷。
 payload_dir="$TMP_ROOT/offline-payload"
 payload_build="$TMP_ROOT/offline-build"
 mkdir -p "$payload_dir" "$payload_build/bin" "$payload_build/share/agentdock"
@@ -93,20 +120,36 @@ test -x "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper"
 plutil -lint "$LOGIN_HELPER_APP/Contents/Info.plist" >/dev/null
 test "$(plutil -extract CFBundleIdentifier raw -o - "$LOGIN_HELPER_APP/Contents/Info.plist")" = \
   "com.uvwt.agentdock.login-helper"
-test -x "$APP/Contents/Resources/install-macos-platform.sh"
 test -x "$APP/Contents/Resources/install-browser-runner-macos.sh"
+test ! -e "$APP/Contents/Resources/install-macos-platform.sh"
+test ! -e "$APP/Contents/Resources/offline-payload"
 test -f "$APP/Contents/Resources/AgentDock.icns"
 test -f "$APP/Contents/Resources/browser-runner/browser-runner.js"
 test -f "$APP/Contents/Resources/browser-runner/node_modules/playwright-core/package.json"
-test -f "$APP/Contents/Resources/offline-payload/$agentdock_archive"
-test -f "$APP/Contents/Resources/offline-payload/$agentdock_archive.sha256"
-test -x "$APP/Contents/Resources/offline-payload/$cloudflared_binary"
-test -f "$APP/Contents/Resources/offline-payload/$cloudflared_binary.sha256"
-(
-  cd "$APP/Contents/Resources/offline-payload"
-  shasum -a 256 -c "$agentdock_archive.sha256"
-  shasum -a 256 -c "$cloudflared_binary.sha256"
-)
+CORE_HELPER="$APP/Contents/Helpers/agentdock"
+CLOUDFLARED_HELPER="$APP/Contents/Helpers/cloudflared"
+CORE_AGENT_PLIST="$APP/Contents/Library/LaunchAgents/com.uvwt.agentdock.core.plist"
+TUNNEL_AGENT_PLIST="$APP/Contents/Library/LaunchAgents/com.uvwt.agentdock.tunnel.plist"
+test -x "$CORE_HELPER"
+test -x "$CLOUDFLARED_HELPER"
+test -f "$APP/Contents/Resources/core-skills/manifest.json"
+test -f "$CORE_AGENT_PLIST"
+test -f "$TUNNEL_AGENT_PLIST"
+plutil -lint "$CORE_AGENT_PLIST" >/dev/null
+plutil -lint "$TUNNEL_AGENT_PLIST" >/dev/null
+test "$(plutil -extract Label raw -o - "$CORE_AGENT_PLIST")" = "com.uvwt.agentdock.core"
+test "$(plutil -extract BundleProgram raw -o - "$CORE_AGENT_PLIST")" = "Contents/Helpers/agentdock"
+test "$(plutil -extract Label raw -o - "$TUNNEL_AGENT_PLIST")" = "com.uvwt.agentdock.tunnel"
+test "$(plutil -extract BundleProgram raw -o - "$TUNNEL_AGENT_PLIST")" = "Contents/Helpers/agentdock"
+! grep -Eq '/Users/|\.local/bin|Library/LaunchAgents' "$CORE_AGENT_PLIST" "$TUNNEL_AGENT_PLIST"
+"$CORE_HELPER" --version | grep -q '^AgentDock v'
+"$CLOUDFLARED_HELPER" --version | grep -q '^cloudflared version test'
+codesign --verify --strict --verbose=2 "$CORE_HELPER"
+codesign --verify --strict --verbose=2 "$CLOUDFLARED_HELPER"
+core_signature="$(codesign -dv --verbose=4 "$CORE_HELPER" 2>&1)"
+cloudflared_signature="$(codesign -dv --verbose=4 "$CLOUDFLARED_HELPER" 2>&1)"
+grep -q '^Identifier=com.uvwt.agentdock.core$' <<< "$core_signature"
+grep -q '^Identifier=com.uvwt.agentdock.cloudflared$' <<< "$cloudflared_signature"
 test -f "$DMG"
 test -f "$DMG.sha256"
 test -f "$ZIP"
@@ -115,6 +158,7 @@ plutil -lint "$APP/Contents/Info.plist" >/dev/null
 test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "com.uvwt.agentdock"
 test "$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")" = "AgentDock.icns"
 test "$(plutil -extract LSUIElement raw -o - "$APP/Contents/Info.plist")" = "true"
+test -n "$(plutil -extract NSAppleEventsUsageDescription raw -o - "$APP/Contents/Info.plist")"
 codesign --verify --deep --strict --verbose=2 "$APP"
 hdiutil verify "$DMG" >/dev/null
 (
@@ -132,6 +176,8 @@ cmp "$APP/Contents/MacOS/AgentDock" "$zip_extract/AgentDock.app/Contents/MacOS/A
 cmp \
   "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper" \
   "$zip_extract/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
+cmp "$CORE_HELPER" "$zip_extract/AgentDock.app/Contents/Helpers/agentdock"
+cmp "$CLOUDFLARED_HELPER" "$zip_extract/AgentDock.app/Contents/Helpers/cloudflared"
 
 mkdir -p "$MOUNT_POINT"
 hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG" >/dev/null
@@ -146,12 +192,11 @@ cmp "$APP/Contents/MacOS/AgentDock" "$MOUNT_POINT/AgentDock.app/Contents/MacOS/A
 cmp \
   "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper" \
   "$MOUNT_POINT/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
+cmp "$CORE_HELPER" "$MOUNT_POINT/AgentDock.app/Contents/Helpers/agentdock"
+cmp "$CLOUDFLARED_HELPER" "$MOUNT_POINT/AgentDock.app/Contents/Helpers/cloudflared"
 cmp \
-  "$APP/Contents/Resources/offline-payload/$agentdock_archive" \
-  "$MOUNT_POINT/AgentDock.app/Contents/Resources/offline-payload/$agentdock_archive"
-cmp \
-  "$APP/Contents/Resources/offline-payload/$cloudflared_binary" \
-  "$MOUNT_POINT/AgentDock.app/Contents/Resources/offline-payload/$cloudflared_binary"
+  "$APP/Contents/Resources/core-skills/manifest.json" \
+  "$MOUNT_POINT/AgentDock.app/Contents/Resources/core-skills/manifest.json"
 hdiutil detach "$MOUNT_POINT" >/dev/null
 MOUNTED=false
 

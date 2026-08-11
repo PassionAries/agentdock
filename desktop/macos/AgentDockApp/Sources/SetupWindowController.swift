@@ -9,7 +9,7 @@ private enum QuickTunnelRefreshState {
 
 @MainActor
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
-    private let installer = InstallerRunner()
+    private lazy var installer = InstallerRunner(service: service)
     private let publicEndpointChecker = PublicEndpointChecker()
     private let service: ServiceController
     private let menuLoginAgent: MenuLoginAgentController
@@ -46,7 +46,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private let progress = NSProgressIndicator()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
-    private let applyButton = NSButton(title: "安装并启动", target: nil, action: nil)
+    private let applyButton = NSButton(title: "配置并启用", target: nil, action: nil)
+    private let permissionsButton = NSButton(title: "权限检查…", target: nil, action: nil)
     private let advancedButton = NSButton(title: "高级设置…", target: nil, action: nil)
     private let logsButton = NSButton(title: "打开日志", target: nil, action: nil)
 
@@ -59,6 +60,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var oauthVisible = false
     private var isBusy = false
     private var quickTunnelRefreshState: QuickTunnelRefreshState = .idle
+
+    private var migrationRequired: Bool {
+        currentStatus.migrationRequired
+    }
     private var displayedPublicMCPURL: URL?
     private var lastCheckedPublicMCPURL: URL?
     private var activePublicCheckURL: URL?
@@ -69,6 +74,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         menuLoginAgent: menuLoginAgent,
         onChanged: onChanged
     )
+    private lazy var permissionsWindow = DesktopPermissionsWindowController()
 
     init(
         service: ServiceController,
@@ -122,11 +128,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             updateServiceSection(status)
             selectCurrentMode(configuration: status.configuration)
         } else {
-            titleLabel.stringValue = "安装 AgentDock"
-            subtitleLabel.stringValue = "无需终端或管理员权限，安装后自动作为用户服务运行"
-            stateLabel.stringValue = "● 未安装"
+            titleLabel.stringValue = "设置 AgentDock"
+            subtitleLabel.stringValue = "配置本机服务并允许 AgentDock 在后台运行"
+            stateLabel.stringValue = "● 尚未配置"
             stateLabel.textColor = .secondaryLabelColor
-            applyButton.title = "安装并启动"
+            applyButton.title = "配置并启用"
             applyButton.isEnabled = true
             advancedButton.isEnabled = false
             logsButton.isEnabled = false
@@ -150,6 +156,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         guard status.installed else { return }
         updateServiceSection(status)
         refreshCredentialFields()
+    }
+
+    func presentPermissions() {
+        permissionsWindow.present()
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -254,6 +264,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         logsButton.bezelStyle = .inline
         logsButton.target = self
         logsButton.action = #selector(openLogsPressed)
+        permissionsButton.bezelStyle = .inline
+        permissionsButton.target = self
+        permissionsButton.action = #selector(openPermissionsPressed)
         advancedButton.bezelStyle = .inline
         advancedButton.target = self
         advancedButton.action = #selector(openAdvancedPressed)
@@ -262,7 +275,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         applyButton.target = self
         applyButton.action = #selector(applyPressed)
 
-        let footer = NSStackView(views: [logsButton, advancedButton, progress, statusLabel, NSView(), applyButton])
+        let footer = NSStackView(views: [logsButton, permissionsButton, advancedButton, progress, statusLabel, NSView(), applyButton])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 10
@@ -295,9 +308,20 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateServiceSection(_ status: ServiceStatus) {
-        if status.healthy {
-            stateLabel.stringValue = "● 运行正常 · 核心 \(AppVersion.display(status.version)) · 控制面板 \(AppVersion.current)"
-            stateLabel.textColor = .systemGreen
+        if migrationRequired {
+            stateLabel.stringValue = "● 需要迁移"
+            stateLabel.textColor = .systemOrange
+        } else if status.healthy {
+            if AppVersion.matchesHealthVersion(status.version) {
+                stateLabel.stringValue = "● 运行正常 · AgentDock \(AppVersion.current)"
+                stateLabel.textColor = .systemGreen
+            } else {
+                stateLabel.stringValue = "● 版本异常 · AgentDock \(AppVersion.current) · Core \(AppVersion.display(status.version))"
+                stateLabel.textColor = .systemRed
+            }
+        } else if status.requiresApproval {
+            stateLabel.stringValue = "● 需要允许后台运行"
+            stateLabel.textColor = .systemOrange
         } else if status.loaded {
             stateLabel.stringValue = "● 服务异常"
             stateLabel.textColor = .systemRed
@@ -311,11 +335,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         renderPublicAddress(configuration?.publicMCPURL, automaticallyCheck: true)
         authTokenValue = configuration?.authToken ?? ""
         oauthPasswordValue = configuration?.oauthPassword ?? ""
-        startStopButton.title = status.loaded ? "停止服务" : "启动服务"
+        startStopButton.title = migrationRequired
+            ? "等待迁移"
+            : (status.requiresApproval ? "打开后台设置" : (status.loaded ? "停用服务" : "启用服务"))
         if !isBusy {
-            startStopButton.isEnabled = status.installed
-            restartButton.isEnabled = status.installed
-            updateButton.isEnabled = status.installed
+            startStopButton.isEnabled = status.installed && !migrationRequired
+            restartButton.isEnabled = status.installed && !status.requiresApproval && !migrationRequired
+            updateButton.isEnabled = status.installed && !migrationRequired
         }
     }
 
@@ -496,12 +522,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     @objc private func configurationEdited() { refreshChangeState() }
 
     @objc private func applyPressed() {
-        let reuseToken = currentStatus.installed && initialMode == .named && selectedMode == .named
         let request = InstallRequest(
             mode: selectedMode,
             serverURL: serverURLField.stringValue,
-            tunnelToken: tunnelTokenField.stringValue,
-            reuseExistingTunnelToken: reuseToken
+            tunnelToken: tunnelTokenField.stringValue
         )
         do {
             _ = try request.validatedServerURL()
@@ -564,7 +588,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func startStopPressed() {
-        performServiceAction(currentStatus.loaded ? "停止" : "启动") {
+        if currentStatus.requiresApproval {
+            service.openBackgroundItemsSettings()
+            return
+        }
+        performServiceAction(currentStatus.loaded ? "停用" : "启用") {
             if self.currentStatus.loaded { try await self.service.stop() }
             else { try await self.service.start() }
         }
@@ -606,6 +634,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    @objc private func openPermissionsPressed() { permissionsWindow.present() }
     @objc private func openAdvancedPressed() { advancedSettings.present(status: currentStatus) }
     @objc private func openLogsPressed() { service.openLogs() }
 
@@ -656,7 +685,13 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     private func refreshChangeState() {
         guard currentStatus.installed else {
-            applyButton.title = "安装并启动"
+            applyButton.title = "配置并启用"
+            applyButton.isEnabled = !isBusy
+            return
+        }
+
+        if migrationRequired {
+            applyButton.title = "迁移并启用"
             applyButton.isEnabled = !isBusy
             return
         }
@@ -678,6 +713,11 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         isBusy = busy
         for control in [publicMode, serverURLField, tunnelTokenField, startStopButton, restartButton, updateButton, advancedButton] {
             control.isEnabled = !busy && (control !== advancedButton || currentStatus.installed)
+        }
+        if !busy && migrationRequired {
+            startStopButton.isEnabled = false
+            restartButton.isEnabled = false
+            updateButton.isEnabled = false
         }
         logsButton.isEnabled = !busy && currentStatus.installed
         if busy {

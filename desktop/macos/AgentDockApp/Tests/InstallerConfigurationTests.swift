@@ -3,65 +3,29 @@ import Foundation
 @main
 struct InstallerConfigurationTests {
     static func main() async throws {
-        let offlinePayload = OfflinePayloadPaths(
-            agentDockArchive: "/payload/agentdock_darwin_arm64.tar.gz",
-            agentDockChecksum: "/payload/agentdock_darwin_arm64.tar.gz.sha256",
-            cloudflaredBinary: "/payload/cloudflared_darwin_arm64",
-            cloudflaredChecksum: "/payload/cloudflared_darwin_arm64.sha256"
-        )
         let local = InstallRequest(mode: .local, serverURL: "", tunnelToken: "")
-        let localArguments = try local.installerArguments(
-            scriptPath: "/Applications/AgentDock.app/Contents/Resources/install-macos-platform.sh",
-            version: "0.6.0",
-            resultPath: "/tmp/result.json",
-            tokenPath: nil,
-            offlinePayload: offlinePayload
-        )
-        precondition(localArguments.contains("--tunnel"))
-        precondition(localArguments.contains("none"))
-        precondition(!localArguments.contains("--server-url"))
-        precondition(!localArguments.contains("--tunnel-token-file"))
-        precondition(localArguments.contains("--offline"))
-        precondition(localArguments.contains(offlinePayload.agentDockArchive))
-        precondition(localArguments.contains(offlinePayload.agentDockChecksum))
-        precondition(localArguments.contains(offlinePayload.cloudflaredBinary))
-        precondition(localArguments.contains(offlinePayload.cloudflaredChecksum))
+        let localURL = try local.validatedServerURL()
+        let localToken = try local.validatedTunnelToken()
+        precondition(localURL == nil)
+        precondition(localToken == nil)
 
         let named = InstallRequest(
             mode: .named,
             serverURL: "https://mini.example.com/",
             tunnelToken: "secret-token"
         )
-        let normalizedURL = try named.validatedServerURL()
-        precondition(normalizedURL == "https://mini.example.com")
-        let namedArguments = try named.installerArguments(
-            scriptPath: "/installer.sh",
-            version: "v0.6.0",
-            resultPath: "/tmp/result.json",
-            tokenPath: "/tmp/token-file",
-            offlinePayload: offlinePayload
-        )
-        precondition(namedArguments.contains("https://mini.example.com"))
-        precondition(namedArguments.contains("/tmp/token-file"))
-        precondition(!namedArguments.contains("secret-token"))
+        let namedURL = try named.validatedServerURL()
+        let namedToken = try named.validatedTunnelToken()
+        precondition(namedURL == "https://mini.example.com")
+        precondition(namedToken == "secret-token")
 
         let reuseNamed = InstallRequest(
             mode: .named,
             serverURL: "https://mini.example.com",
-            tunnelToken: "",
-            reuseExistingTunnelToken: true
+            tunnelToken: ""
         )
         let reusedToken = try reuseNamed.validatedTunnelToken()
         precondition(reusedToken == nil)
-        let reuseArguments = try reuseNamed.installerArguments(
-            scriptPath: "/installer.sh",
-            version: "v0.6.0",
-            resultPath: "/tmp/result.json",
-            tokenPath: nil,
-            offlinePayload: offlinePayload
-        )
-        precondition(reuseArguments.contains("https://mini.example.com"))
-        precondition(!reuseArguments.contains("--tunnel-token-file"))
 
         let environmentText = """
         # preserved comment
@@ -131,30 +95,22 @@ struct InstallerConfigurationTests {
             try ServicePortValidation.validate(8)
         }
 
+        precondition(AppVersion.matchesCoreVersion(
+            "AgentDock v0.7.2\ncommit: test\n",
+            expectedDisplayVersion: "v0.7.2"
+        ))
+        precondition(!AppVersion.matchesCoreVersion(
+            "AgentDock v0.7.1\ncommit: test\n",
+            expectedDisplayVersion: "v0.7.2"
+        ))
+        precondition(AppVersion.matchesHealthVersion("0.7.2", expectedDisplayVersion: "v0.7.2"))
+        precondition(!AppVersion.matchesHealthVersion("0.7.1", expectedDisplayVersion: "v0.7.2"))
+
         try testTunnelTokenStore()
-        try testVersionGuard()
         try testDesktopUpdateResult()
+        try testDesktopUpdateServiceState()
         try await testPublicEndpointChecker()
         print("installer configuration tests passed")
-    }
-
-    private static func testVersionGuard() throws {
-        try InstallerVersionGuard.validate(
-            bundleVersion: "0.7.0",
-            installedVersionOutput: "AgentDock v0.6.9\ncommit: old\n"
-        )
-        try InstallerVersionGuard.validate(
-            bundleVersion: "v0.7.0",
-            installedVersionOutput: "AgentDock v0.7.0\n"
-        )
-        expectFailure("不能使用旧离线载荷覆盖") {
-            try InstallerVersionGuard.validate(
-                bundleVersion: "0.6.9",
-                installedVersionOutput: "AgentDock v0.7.0\n"
-            )
-        }
-        precondition(AppVersion.display("0.7.0") == "v0.7.0")
-        precondition(AppVersion.display("v0.7.0") == "v0.7.0")
     }
 
     private static func testDesktopUpdateResult() throws {
@@ -167,9 +123,29 @@ struct InstallerConfigurationTests {
         {"schema_version":1,"ok":true,"current_version":"v0.6.9","target_version":"v0.7.0","message":"更新完成"}
         """
         try Data(json.utf8).write(to: path)
+        let loaded = DesktopUpdateResult.load(from: path)
+        precondition(loaded?.ok == true)
+        precondition(FileManager.default.fileExists(atPath: path.path))
         let result = DesktopUpdateResult.consume(from: path)
         precondition(result?.ok == true)
         precondition(result?.targetVersion == "v0.7.0")
+        precondition(!FileManager.default.fileExists(atPath: path.path))
+    }
+
+    private static func testDesktopUpdateServiceState() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentDockUpdateServiceStateTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("update-services.json")
+        let expected = DesktopUpdateServiceState(coreEnabled: true, tunnelEnabled: false)
+        try expected.write(to: path)
+        let loaded = try DesktopUpdateServiceState.load(from: path)
+        precondition(loaded?.coreEnabled == true)
+        precondition(loaded?.tunnelEnabled == false)
+        let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
+        precondition(permissions & 0o077 == 0)
+        DesktopUpdateServiceState.remove(at: path)
         precondition(!FileManager.default.fileExists(atPath: path.path))
     }
 

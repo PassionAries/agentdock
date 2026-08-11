@@ -707,48 +707,35 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$mount_dir/AgentDock.app"
           app_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock")"
           helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper")"
+          core_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Helpers/agentdock")"
+          cloudflared_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared")"
           [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
           [[ "$helper_arches" == *arm64* && "$helper_arches" == *x86_64* ]]
+          [[ "$core_arches" == *arm64* && "$core_arches" == *x86_64* ]]
+          [[ "$cloudflared_arches" == *arm64* && "$cloudflared_arches" == *x86_64* ]]
           cmp \
             "$zip_dir/AgentDock.app/Contents/MacOS/AgentDock" \
             "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock"
           cmp \
             "$zip_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper" \
             "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
-
-          payload_dir="$mount_dir/AgentDock.app/Contents/Resources/offline-payload"
-          for architecture in amd64 arm64; do
-            test -f "$payload_dir/agentdock_darwin_$architecture.tar.gz"
-            test -f "$payload_dir/agentdock_darwin_$architecture.tar.gz.sha256"
-            test -x "$payload_dir/cloudflared_darwin_$architecture"
-            test -f "$payload_dir/cloudflared_darwin_$architecture.sha256"
-          done
-          (
-            cd "$payload_dir"
-            shasum -a 256 -c agentdock_darwin_amd64.tar.gz.sha256
-            shasum -a 256 -c agentdock_darwin_arm64.tar.gz.sha256
-            shasum -a 256 -c cloudflared_darwin_amd64.sha256
-            shasum -a 256 -c cloudflared_darwin_arm64.sha256
-          )
-
-          case "$(uname -m)" in
-            arm64) release_arch=arm64 ;;
-            x86_64) release_arch=amd64 ;;
-            *) print -u2 -- "unsupported verification architecture: $(uname -m)"; exit 1 ;;
-          esac
-          offline_home="$RUNNER_TEMP/offline-home"
-          HOME="$offline_home" \
-            zsh "$mount_dir/AgentDock.app/Contents/Resources/install-macos-platform.sh" \
-              --offline \
-              --agentdock-archive "$payload_dir/agentdock_darwin_$release_arch.tar.gz" \
-              --agentdock-checksum-file "$payload_dir/agentdock_darwin_$release_arch.tar.gz.sha256" \
-              --cloudflared-binary "$payload_dir/cloudflared_darwin_$release_arch" \
-              --cloudflared-checksum-file "$payload_dir/cloudflared_darwin_$release_arch.sha256" \
-              --register-service \
-              --tunnel quick \
-              --no-start
-          "$offline_home/.local/bin/agentdock" --help >/dev/null 2>&1
-          "$offline_home/.local/bin/cloudflared" --version >/dev/null
+          cmp \
+            "$zip_dir/AgentDock.app/Contents/Helpers/agentdock" \
+            "$mount_dir/AgentDock.app/Contents/Helpers/agentdock"
+          cmp \
+            "$zip_dir/AgentDock.app/Contents/Helpers/cloudflared" \
+            "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared"
+          test -f "$mount_dir/AgentDock.app/Contents/Resources/core-skills/manifest.json"
+          core_plist="$mount_dir/AgentDock.app/Contents/Library/LaunchAgents/com.uvwt.agentdock.core.plist"
+          tunnel_plist="$mount_dir/AgentDock.app/Contents/Library/LaunchAgents/com.uvwt.agentdock.tunnel.plist"
+          plutil -lint "$core_plist" >/dev/null
+          plutil -lint "$tunnel_plist" >/dev/null
+          test "$(plutil -extract BundleProgram raw -o - "$core_plist")" = "Contents/Helpers/agentdock"
+          test "$(plutil -extract BundleProgram raw -o - "$tunnel_plist")" = "Contents/Helpers/agentdock"
+          codesign --verify --strict --verbose=2 "$mount_dir/AgentDock.app/Contents/Helpers/agentdock"
+          codesign --verify --strict --verbose=2 "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared"
+          "$mount_dir/AgentDock.app/Contents/Helpers/agentdock" --version | grep -q "AgentDock $tag"
+          "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared" --version >/dev/null
           hdiutil detach "$mount_dir" >/dev/null
           dmg_mounted=false
 

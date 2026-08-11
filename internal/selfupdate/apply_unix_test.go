@@ -88,6 +88,31 @@ esac
 	assertVersionScript(t, target, "v0.4.4")
 }
 
+func TestValidateDesktopUpdateCoordinationRequiresPrivateState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, "Library", "Application Support", "AgentDock", "update-services.json")
+
+	if err := validateDesktopUpdateCoordination(); err == nil {
+		t.Fatal("missing update coordination state was accepted")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDesktopUpdateCoordination(); err == nil || !strings.Contains(err.Error(), "不安全") {
+		t.Fatalf("public update coordination state was accepted: %v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDesktopUpdateCoordination(); err != nil {
+		t.Fatalf("private update coordination state was rejected: %v", err)
+	}
+}
+
 func writeVersionScript(t *testing.T, path, version string) {
 	t.Helper()
 	content := `#!/bin/sh

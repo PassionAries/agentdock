@@ -45,7 +45,7 @@ func prepareDesktopUpdate(
 	if err := validateMacOSDesktopTarget(targetPath); err != nil {
 		return nil, fmt.Errorf("当前 macOS App 无效: %w", err)
 	}
-	if err := validateMacOSDesktopVersion(ctx, stagedPath, targetVersion); err != nil {
+	if err := validateMacOSDesktopRuntime(ctx, stagedPath, targetVersion); err != nil {
 		return nil, fmt.Errorf("新版 macOS App 无效: %w", err)
 	}
 	parent := filepath.Dir(targetPath)
@@ -87,7 +87,7 @@ func (update *macOSDesktopUpdate) Install(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("复制新版 App 失败: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	if err := validateMacOSDesktopVersion(ctx, update.newPath, update.targetVersion); err != nil {
+	if err := validateMacOSDesktopRuntime(ctx, update.newPath, update.targetVersion); err != nil {
 		return fmt.Errorf("复制后的新版 App 验证失败: %w", err)
 	}
 
@@ -124,7 +124,7 @@ func (update *macOSDesktopUpdate) Install(ctx context.Context) error {
 		return fmt.Errorf("安装新版 App 失败，旧 App 已恢复: %w", err)
 	}
 	update.installed = true
-	if err := validateMacOSDesktopVersion(ctx, update.targetPath, update.targetVersion); err != nil {
+	if err := validateMacOSDesktopRuntime(ctx, update.targetPath, update.targetVersion); err != nil {
 		return fmt.Errorf("安装后的新版 App 验证失败: %w", err)
 	}
 	return nil
@@ -180,7 +180,9 @@ func (update *macOSDesktopUpdate) Finish(ctx context.Context, outcome desktopUpd
 	if err != nil {
 		return err
 	}
-	deadline := time.Now().Add(15 * time.Second)
+	// 新版 App 要先恢复 Core/Tunnel 的 SMAppService 注册并完成健康检查，
+	// 消费更新结果文件就是事务提交 ACK，因此给后台服务恢复留足时间。
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		pids, findErr := runningMacOSAppPIDs(ctx, update.targetPath)
 		resultConsumed := !outcome.OK

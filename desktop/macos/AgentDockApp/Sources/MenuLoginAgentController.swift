@@ -5,13 +5,10 @@ final class MenuLoginAgentController {
     private let helperIdentifier = "com.uvwt.agentdock.login-helper"
     private let preferenceKey = "menuLoginEnabled"
     private let preferenceInitializedKey = "menuLoginPreferenceInitialized"
-    private let fileManager = FileManager.default
     private let defaults: UserDefaults
-    private let paths: AppPaths
 
-    init(defaults: UserDefaults = .standard, paths: AppPaths = AppPaths()) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.paths = paths
     }
 
     private var loginItem: SMAppService {
@@ -19,8 +16,11 @@ final class MenuLoginAgentController {
     }
 
     func configureOnLaunch() throws {
-        removeLegacyLaunchAgent()
-        migrateLegacyMainAppLoginItem()
+        guard !isRunningFromTransientVolume else { return }
+        let obsoleteMainApp = SMAppService.mainApp
+        if obsoleteMainApp.status == .enabled || obsoleteMainApp.status == .requiresApproval {
+            try? obsoleteMainApp.unregister()
+        }
         if !defaults.bool(forKey: preferenceInitializedKey) {
             defaults.set(true, forKey: preferenceInitializedKey)
             defaults.set(true, forKey: preferenceKey)
@@ -47,8 +47,9 @@ final class MenuLoginAgentController {
     }
 
     func register() throws {
-        removeLegacyLaunchAgent()
-        migrateLegacyMainAppLoginItem()
+        guard !isRunningFromTransientVolume else {
+            throw ValidationError("请先把 AgentDock 拖到“应用程序”文件夹，再启用登录启动。")
+        }
         switch loginItem.status {
         case .enabled, .requiresApproval:
             return
@@ -62,27 +63,13 @@ final class MenuLoginAgentController {
     }
 
     func unregister() throws {
-        removeLegacyLaunchAgent()
         if loginItem.status == .enabled || loginItem.status == .requiresApproval {
             try loginItem.unregister()
         }
     }
 
-    private func migrateLegacyMainAppLoginItem() {
-        let legacy = SMAppService.mainApp
-        if legacy.status == .enabled || legacy.status == .requiresApproval {
-            try? legacy.unregister()
-        }
-    }
-
-    private func removeLegacyLaunchAgent() {
-        let domain = "gui/\(getuid())"
-        _ = try? runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["bootout", "\(domain)/com.uvwt.agentdock.menu"]
-        )
-        if fileManager.fileExists(atPath: paths.menuLaunchAgent.path) {
-            try? fileManager.removeItem(at: paths.menuLaunchAgent)
-        }
+    private var isRunningFromTransientVolume: Bool {
+        let path = Bundle.main.bundleURL.resolvingSymlinksInPath().path
+        return path == "/Volumes" || path.hasPrefix("/Volumes/")
     }
 }

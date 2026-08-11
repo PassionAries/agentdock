@@ -187,6 +187,9 @@ func platformSetTunnelAutostart(ctx context.Context, runtimeRoot string, enabled
 }
 
 func platformLaunchTunnel(ctx context.Context, runtimeRoot string) error {
+	if err := platformPrepareLaunchEnvironment("tunnel"); err != nil {
+		return err
+	}
 	manifest, root, values, err := loadTunnelEnvironment(runtimeRoot)
 	if err != nil {
 		return err

@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="${0:A:h:h:h}"
 SOURCE_DIR="$ROOT_DIR/desktop/macos/AgentDockApp/Sources"
 LOGIN_HELPER_SOURCE="$ROOT_DIR/desktop/macos/AgentDockLoginHelper/main.swift"
-INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-macos-platform.sh"
 BROWSER_INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-browser-runner-macos.sh"
 BROWSER_RUNNER_SOURCE="$ROOT_DIR/tools/browser-runner"
 OUTPUT_DIR="${AGENTDOCK_MACOS_APP_OUTPUT_DIR:-$ROOT_DIR/dist/macos-app}"
@@ -44,7 +43,6 @@ done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
 [[ -f "$APP_ICON_SOURCE" && ! -L "$APP_ICON_SOURCE" ]] || die "缺少 macOS App 图标：$APP_ICON_SOURCE"
 [[ -f "$LOGIN_HELPER_SOURCE" && ! -L "$LOGIN_HELPER_SOURCE" ]] || die "缺少 macOS 登录代理源码：$LOGIN_HELPER_SOURCE"
-[[ -f "$INSTALLER_SCRIPT" && ! -L "$INSTALLER_SCRIPT" ]] || die "缺少 macOS 安装脚本：$INSTALLER_SCRIPT"
 [[ -f "$BROWSER_INSTALLER_SCRIPT" && ! -L "$BROWSER_INSTALLER_SCRIPT" ]] || die "缺少浏览器支持安装脚本：$BROWSER_INSTALLER_SCRIPT"
 [[ -d "$BROWSER_RUNNER_SOURCE" && ! -L "$BROWSER_RUNNER_SOURCE" ]] || die "缺少 browser-runner 源码：$BROWSER_RUNNER_SOURCE"
 [[ -f "$BROWSER_RUNNER_SOURCE/package-lock.json" && ! -L "$BROWSER_RUNNER_SOURCE/package-lock.json" ]] || die "缺少 browser-runner package-lock.json"
@@ -123,10 +121,12 @@ APP_DIR="$OUTPUT_DIR/AgentDock.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+HELPERS_DIR="$CONTENTS_DIR/Helpers"
+LAUNCH_AGENTS_DIR="$CONTENTS_DIR/Library/LaunchAgents"
 LOGIN_ITEM_APP="$CONTENTS_DIR/Library/LoginItems/AgentDockLoginHelper.app"
 LOGIN_ITEM_CONTENTS="$LOGIN_ITEM_APP/Contents"
 LOGIN_ITEM_MACOS="$LOGIN_ITEM_CONTENTS/MacOS"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$LOGIN_ITEM_MACOS"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPERS_DIR" "$LAUNCH_AGENTS_DIR" "$LOGIN_ITEM_MACOS"
 
 if (( ${#compiled_binaries[@]} == 1 )); then
   cp -p "$compiled_binaries[1]" "$MACOS_DIR/AgentDock"
@@ -170,10 +170,9 @@ cat > "$LOGIN_ITEM_CONTENTS/Info.plist" <<PLIST
 PLIST
 plutil -lint "$LOGIN_ITEM_CONTENTS/Info.plist" >/dev/null
 
-cp -p "$INSTALLER_SCRIPT" "$RESOURCES_DIR/install-macos-platform.sh"
 cp -p "$BROWSER_INSTALLER_SCRIPT" "$RESOURCES_DIR/install-browser-runner-macos.sh"
 ditto "$BROWSER_RUNNER_BUNDLE" "$RESOURCES_DIR/browser-runner"
-chmod 0755 "$RESOURCES_DIR/install-macos-platform.sh" "$RESOURCES_DIR/install-browser-runner-macos.sh"
+chmod 0755 "$RESOURCES_DIR/install-browser-runner-macos.sh"
 find "$RESOURCES_DIR/browser-runner" -type d -exec chmod 0755 {} +
 find "$RESOURCES_DIR/browser-runner" -type f -exec chmod 0644 {} +
 
@@ -200,10 +199,11 @@ iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AgentDock.icns"
 [[ -f "$RESOURCES_DIR/AgentDock.icns" && ! -L "$RESOURCES_DIR/AgentDock.icns" ]] || \
   die "macOS App 图标生成失败"
 
-# 图形安装器必须在断网环境中完成核心和 Tunnel 安装。构建阶段只接受已经
-# 生成并带 SHA-256 的载荷，避免 App 在运行时静默回退到网络下载。
-OFFLINE_RESOURCES_DIR="$RESOURCES_DIR/offline-payload"
-mkdir -p "$OFFLINE_RESOURCES_DIR"
+# 桌面版把 Core、cloudflared 和官方核心 Skill 直接收进 App Bundle。
+# 版本更新因此只替换一个 AgentDock.app，不再维护 ~/.local/bin 的第二套生产文件。
+helper_core_binaries=()
+helper_cloudflared_binaries=()
+CORE_SKILL_BUNDLE="$RESOURCES_DIR/core-skills"
 for release_architecture in "${release_architectures[@]}"; do
   agentdock_archive="agentdock_darwin_${release_architecture}.tar.gz"
   agentdock_checksum="$agentdock_archive.sha256"
@@ -237,13 +237,83 @@ for release_architecture in "${release_architectures[@]}"; do
   file "$OFFLINE_PAYLOAD_DIR/$cloudflared_binary" | grep -q "$expected_file_architecture" || \
     die "$cloudflared_binary 架构不匹配，期望 $expected_file_architecture"
 
-  cp -p "$OFFLINE_PAYLOAD_DIR/$agentdock_archive" "$OFFLINE_RESOURCES_DIR/$agentdock_archive"
-  cp -p "$OFFLINE_PAYLOAD_DIR/$agentdock_checksum" "$OFFLINE_RESOURCES_DIR/$agentdock_checksum"
-  cp -p "$OFFLINE_PAYLOAD_DIR/$cloudflared_binary" "$OFFLINE_RESOURCES_DIR/$cloudflared_binary"
-  cp -p "$OFFLINE_PAYLOAD_DIR/$cloudflared_checksum" "$OFFLINE_RESOURCES_DIR/$cloudflared_checksum"
-  chmod 0644 "$OFFLINE_RESOURCES_DIR/$agentdock_archive" "$OFFLINE_RESOURCES_DIR/$agentdock_checksum" "$OFFLINE_RESOURCES_DIR/$cloudflared_checksum"
-  chmod 0755 "$OFFLINE_RESOURCES_DIR/$cloudflared_binary"
+  helper_core_binaries+=("$payload_check_dir/bin/agentdock")
+  helper_cloudflared_binaries+=("$OFFLINE_PAYLOAD_DIR/$cloudflared_binary")
+  if [[ ! -d "$CORE_SKILL_BUNDLE" ]]; then
+    ditto "$payload_check_dir/share/agentdock/core-skills" "$CORE_SKILL_BUNDLE"
+  elif ! diff -qr "$payload_check_dir/share/agentdock/core-skills" "$CORE_SKILL_BUNDLE" >/dev/null; then
+    die "不同架构 Release 中的核心 Skill Bundle 不一致"
+  fi
 done
+
+if (( ${#helper_core_binaries[@]} == 1 )); then
+  cp -p "$helper_core_binaries[1]" "$HELPERS_DIR/agentdock"
+  cp -p "$helper_cloudflared_binaries[1]" "$HELPERS_DIR/cloudflared"
+else
+  lipo -create "${helper_core_binaries[@]}" -output "$HELPERS_DIR/agentdock"
+  lipo -create "${helper_cloudflared_binaries[@]}" -output "$HELPERS_DIR/cloudflared"
+fi
+chmod 0755 "$HELPERS_DIR/agentdock" "$HELPERS_DIR/cloudflared"
+find "$CORE_SKILL_BUNDLE" -type d -exec chmod 0755 {} +
+find "$CORE_SKILL_BUNDLE" -type f -exec chmod 0644 {} +
+[[ -f "$CORE_SKILL_BUNDLE/manifest.json" && ! -L "$CORE_SKILL_BUNDLE/manifest.json" ]] || \
+  die "App Bundle 缺少核心 Skill manifest"
+
+cat > "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.core.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.uvwt.agentdock.core</string>
+  <key>BundleProgram</key>
+  <string>Contents/Helpers/agentdock</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>agentdock</string>
+    <string>service</string>
+    <string>launch-core</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+</dict>
+</plist>
+PLIST
+
+cat > "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.tunnel.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.uvwt.agentdock.tunnel</string>
+  <key>BundleProgram</key>
+  <string>Contents/Helpers/agentdock</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>agentdock</string>
+    <string>tunnel</string>
+    <string>launch</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+</dict>
+</plist>
+PLIST
+plutil -lint "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.core.plist" >/dev/null
+plutil -lint "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.tunnel.plist" >/dev/null
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -276,6 +346,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>AgentDock 需要控制 System Events 和 Finder，以执行你发起的桌面自动化任务。</string>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © AgentDock contributors</string>
 </dict>
@@ -285,7 +357,11 @@ plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 
 print -- "==> ad-hoc 签名 AgentDock.app"
 codesign --force --sign - --identifier "com.uvwt.agentdock.login-helper" "$LOGIN_ITEM_APP"
-codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
+codesign --force --sign - --identifier "com.uvwt.agentdock.core" "$HELPERS_DIR/agentdock"
+codesign --force --sign - --identifier "com.uvwt.agentdock.cloudflared" "$HELPERS_DIR/cloudflared"
+# 嵌套代码先分别签名，再签外层 App。不要用 --deep 做签名操作，否则会重新签
+# Core/cloudflared 并破坏它们的稳定代码身份；--deep 只用于最终递归验证。
+codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 ZIP_PATH="$OUTPUT_DIR/AgentDock-macos-universal.zip"
@@ -320,3 +396,5 @@ print -- "built: $APP_DIR"
 print -- "zip: $ZIP_PATH"
 print -- "dmg: $DMG_PATH"
 file "$MACOS_DIR/AgentDock"
+file "$HELPERS_DIR/agentdock"
+file "$HELPERS_DIR/cloudflared"

@@ -1,20 +1,30 @@
 import AppKit
 import Foundation
+import ServiceManagement
 
 struct HealthPayload: Decodable {
     let ok: Bool
     let version: String
 }
 
-private struct NativeServiceStatus: Decodable {
-    let running: Bool
-    let healthy: Bool
-    let startupEnabled: Bool
+struct DesktopUpdateCheck: Decodable {
+    let updateAvailable: Bool
+    let message: String
 
     private enum CodingKeys: String, CodingKey {
-        case running
-        case healthy
-        case startupEnabled = "startup_enabled"
+        case updateAvailable = "update_available"
+        case message
+    }
+
+    static func decode(_ output: String) throws -> DesktopUpdateCheck {
+        guard let data = output.data(using: .utf8) else {
+            throw ValidationError("无法读取 AgentDock 更新检查结果。")
+        }
+        do {
+            return try JSONDecoder().decode(DesktopUpdateCheck.self, from: data)
+        } catch {
+            throw ValidationError("无法解析 AgentDock 更新检查结果。")
+        }
     }
 }
 
@@ -25,6 +35,8 @@ struct ServiceStatus {
     let version: String?
     let configuration: ServiceConfiguration?
     let autostartEnabled: Bool
+    let requiresApproval: Bool
+    let migrationRequired: Bool
 
     static let missing = ServiceStatus(
         installed: false,
@@ -32,13 +44,19 @@ struct ServiceStatus {
         healthy: false,
         version: nil,
         configuration: nil,
-        autostartEnabled: false
+        autostartEnabled: false,
+        requiresApproval: false,
+        migrationRequired: false
     )
 }
 
 final class ServiceController: @unchecked Sendable {
+    static let coreLabel = "com.uvwt.agentdock.core"
+    static let tunnelLabel = "com.uvwt.agentdock.tunnel"
+    static let corePlistName = "com.uvwt.agentdock.core.plist"
+    static let tunnelPlistName = "com.uvwt.agentdock.tunnel.plist"
+
     let paths: AppPaths
-    let label = "com.uvwt.agentdock"
 
     init(paths: AppPaths = AppPaths()) {
         self.paths = paths
@@ -46,24 +64,30 @@ final class ServiceController: @unchecked Sendable {
 
     func status() async -> ServiceStatus {
         let fileManager = FileManager.default
+        let migrationRequired = LegacyDesktopRuntimeMigration.isPresent(paths: paths)
         let installed = fileManager.isExecutableFile(atPath: paths.binary.path)
+            && fileManager.isExecutableFile(atPath: paths.cloudflared.path)
+            && fileManager.fileExists(atPath: paths.coreSkillBundle.appendingPathComponent("manifest.json").path)
             && fileManager.fileExists(atPath: paths.environment.path)
-            && fileManager.fileExists(atPath: paths.launchAgent.path)
         guard installed else { return .missing }
 
         let configuration = ServiceConfiguration.load(from: paths.environment)
-        let nativeStatus = try? await runInBackground { try self.readNativeStatus() }
-        let loaded = nativeStatus?.running ?? isLoaded()
-        let autostart = nativeStatus?.startupEnabled ?? isAutostartEnabled()
-        let healthy = nativeStatus?.healthy ?? false
-        guard loaded, healthy, let healthURL = configuration?.healthURL else {
+        let registration = coreService.status
+        let requiresApproval = registration == .requiresApproval
+        let enabled = registration == .enabled
+        let registered = enabled || requiresApproval
+        let loaded = enabled && isLoaded(label: Self.coreLabel)
+
+        guard loaded, let healthURL = configuration?.healthURL else {
             return ServiceStatus(
                 installed: true,
                 loaded: loaded,
-                healthy: healthy,
+                healthy: false,
                 version: nil,
                 configuration: configuration,
-                autostartEnabled: autostart
+                autostartEnabled: registered,
+                requiresApproval: requiresApproval,
+                migrationRequired: migrationRequired
             )
         }
 
@@ -74,77 +98,127 @@ final class ServiceController: @unchecked Sendable {
             healthy: health?.ok == true,
             version: health?.version,
             configuration: configuration,
-            autostartEnabled: autostart
+            autostartEnabled: registered,
+            requiresApproval: requiresApproval,
+            migrationRequired: migrationRequired
         )
     }
 
     func start() async throws {
-        try await runInBackground {
-            try self.runNativeService(arguments: ["start"])
+        try registerCoreIfNeeded()
+        guard let configuration = ServiceConfiguration.load(from: paths.environment),
+              await waitForHealth(configuration: configuration) else {
+            throw ValidationError("AgentDock 后台服务已启用，但健康检查没有通过。")
         }
     }
 
     func stop() async throws {
-        try await runInBackground {
-            try self.runNativeService(arguments: ["stop"])
-        }
+        try unregister(service: coreService, label: Self.coreLabel)
     }
 
     func restart() async throws {
-        try await runInBackground {
-            try self.runNativeService(arguments: ["restart"])
+        try reregister(service: coreService, label: Self.coreLabel, displayName: "AgentDock Core")
+        guard let configuration = ServiceConfiguration.load(from: paths.environment),
+              await waitForHealth(configuration: configuration) else {
+            throw ValidationError("AgentDock Core 已重新注册，但健康检查没有通过。")
         }
     }
 
     func setAutostart(enabled: Bool) async throws {
-        try await runInBackground {
-            try self.runNativeService(arguments: [
-                "autostart",
-                "--component", "core",
-                "--enabled", enabled ? "true" : "false"
-            ])
+        if enabled {
+            try await start()
+        } else {
+            try await stop()
         }
     }
 
-    private func runNativeService(arguments: [String]) throws {
-        let result = try runProcess(
-            executable: paths.binary.path,
-            arguments: ["service"] + arguments + ["--runtime-root", paths.appSupport.path]
-        )
-        guard result.status == 0 else {
-            throw ValidationError(commandError(result.output, action: arguments.first ?? "管理"))
+    func tunnelEnabled() -> Bool {
+        let status = tunnelService.status
+        return status == .enabled || status == .requiresApproval
+    }
+
+    func configuredTunnelMode() throws -> TunnelMode {
+        guard FileManager.default.fileExists(atPath: paths.tunnelEnvironment.path) else {
+            return .local
+        }
+        let environment = try ManagedEnvironment.load(from: paths.tunnelEnvironment)
+        let rawMode = environment.values["AGENTDOCK_TUNNEL_MODE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return TunnelMode(rawValue: rawMode) ?? .local
+    }
+
+    func reconcileTunnelRegistrationFromConfiguration() async throws {
+        // 旧结构仍存在时必须先走迁移事务，不能在旁边提前注册第二套 Tunnel。
+        guard !LegacyDesktopRuntimeMigration.isPresent(paths: paths) else { return }
+
+        switch try configuredTunnelMode() {
+        case .local:
+            try setTunnelEnabled(false)
+        case .quick, .named:
+            try setTunnelEnabled(true)
+            if tunnelService.status == .enabled, !(await waitForTunnelProcess()) {
+                throw ValidationError("AgentDock Tunnel 配置要求公网运行，但后台进程没有稳定启动。")
+            }
         }
     }
 
-    private func readNativeStatus() throws -> NativeServiceStatus {
-        let result = try runProcess(
-            executable: paths.binary.path,
-            arguments: ["service", "status", "--runtime-root", paths.appSupport.path]
-        )
-        guard result.status == 0,
-              let data = result.output.data(using: .utf8) else {
-            throw ValidationError(commandError(result.output, action: "读取状态"))
+    func setTunnelEnabled(_ enabled: Bool) throws {
+        if enabled {
+            try register(
+                service: tunnelService,
+                plistName: Self.tunnelPlistName,
+                displayName: "AgentDock Tunnel"
+            )
+        } else {
+            try unregister(service: tunnelService, label: Self.tunnelLabel)
         }
-        return try JSONDecoder().decode(NativeServiceStatus.self, from: data)
     }
 
-    func isAutostartEnabled() -> Bool {
-        guard let result = try? runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["print-disabled", serviceDomain]
-        ), result.status == 0 else {
-            return true
+    func restartTunnel() throws {
+        try reregister(service: tunnelService, label: Self.tunnelLabel, displayName: "AgentDock Tunnel")
+    }
+
+    func reregisterBackgroundServices(coreEnabled: Bool, tunnelEnabled: Bool) async throws {
+        if coreEnabled {
+            try restoreRegistration(service: coreService, label: Self.coreLabel, displayName: "AgentDock Core")
+        } else {
+            try unregister(service: coreService, label: Self.coreLabel)
         }
-        let escaped = NSRegularExpression.escapedPattern(for: label)
-        let pattern = "[\\\"']?\(escaped)[\\\"']?\\s*=>\\s*true"
-        return result.output.range(of: pattern, options: .regularExpression) == nil
+        if tunnelEnabled {
+            try restoreRegistration(service: tunnelService, label: Self.tunnelLabel, displayName: "AgentDock Tunnel")
+        } else {
+            try unregister(service: tunnelService, label: Self.tunnelLabel)
+        }
+        if tunnelEnabled,
+           tunnelService.status == .enabled,
+           !(await waitForTunnelProcess()) {
+            throw ValidationError("重新注册新版 AgentDock Tunnel 后进程没有稳定运行。")
+        }
+        if coreService.status == .enabled,
+           let configuration = ServiceConfiguration.load(from: paths.environment),
+           !(await waitForHealth(configuration: configuration)) {
+            throw ValidationError("重新注册新版 AgentDock Core 后健康检查没有通过。")
+        }
+    }
+
+    func openBackgroundItemsSettings() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
+    func waitForTunnelProcess(timeout: TimeInterval = 10) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: self.waitForStableLaunchdProcess(
+                    label: Self.tunnelLabel,
+                    timeout: timeout
+                ))
+            }
+        }
     }
 
     func isLoaded() -> Bool {
-        (try? runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["print", serviceTarget]
-        ).status) == 0
+        isLoaded(label: Self.coreLabel)
     }
 
     func waitForHealth(configuration: ServiceConfiguration, timeout: TimeInterval = 30) async -> Bool {
@@ -156,18 +230,74 @@ final class ServiceController: @unchecked Sendable {
     }
 
     func update() async throws -> String {
-        try await runInBackground {
-            let result = try runUpdateProcess(
+        try validateServiceManagementReadiness()
+
+        let check = try await runInBackground {
+            let result = try runProcess(
                 executable: self.paths.binary.path,
-                arguments: ["update"],
-                environment: ["AGENTDOCK_DESKTOP_APP_PATH": Bundle.main.bundlePath],
-                outputURL: self.paths.updateLog
+                arguments: ["update", "--check"],
+                environment: ["AGENTDOCK_DESKTOP_APP_PATH": self.paths.appBundle.path]
             )
             guard result.status == 0 else {
-                throw ValidationError(self.commandError(result.output, action: "更新"))
+                throw ValidationError(self.commandError(result.output, action: "检查更新"))
             }
-            return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            return try DesktopUpdateCheck.decode(result.output)
         }
+        guard check.updateAvailable else {
+            // 没有 pending update result 时这只能是上一次未完成流程留下的临时状态。
+            DesktopUpdateServiceState.remove(at: paths.updateServiceState)
+            return check.message
+        }
+
+        let currentStatus = await status()
+        let serviceState = DesktopUpdateServiceState(
+            coreEnabled: currentStatus.autostartEnabled,
+            tunnelEnabled: tunnelEnabled()
+        )
+        try serviceState.write(to: paths.updateServiceState)
+
+        let output: String
+        do {
+            try setTunnelEnabled(false)
+            try await stop()
+            output = try await runInBackground {
+                let result = try runUpdateProcess(
+                    executable: self.paths.binary.path,
+                    arguments: ["update"],
+                    environment: ["AGENTDOCK_DESKTOP_APP_PATH": self.paths.appBundle.path],
+                    outputURL: self.paths.updateLog
+                )
+                guard result.status == 0 else {
+                    throw ValidationError(self.commandError(result.output, action: "更新"))
+                }
+                return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        } catch {
+            let updateError = error
+            do {
+                try await reregisterBackgroundServices(
+                    coreEnabled: serviceState.coreEnabled,
+                    tunnelEnabled: serviceState.tunnelEnabled
+                )
+                DesktopUpdateServiceState.remove(at: paths.updateServiceState)
+            } catch {
+                throw ValidationError("更新没有应用，而且后台服务恢复失败：\(updateError.localizedDescription)；\(error.localizedDescription)")
+            }
+            throw updateError
+        }
+
+        // 真正的 App 替换会终止旧 GUI，并由新版 App 根据 update-result.json 恢复服务。
+        // 能执行到这里说明更新进程正常返回但没有完成 GUI handoff，因此旧 GUI 必须自己收尾。
+        do {
+            try await reregisterBackgroundServices(
+                coreEnabled: serviceState.coreEnabled,
+                tunnelEnabled: serviceState.tunnelEnabled
+            )
+            DesktopUpdateServiceState.remove(at: paths.updateServiceState)
+        } catch {
+            throw ValidationError("更新进程已经返回，但后台服务恢复失败：\(error.localizedDescription)")
+        }
+        return output
     }
 
     func openLogs() {
@@ -180,50 +310,156 @@ final class ServiceController: @unchecked Sendable {
         NSWorkspace.shared.open(paths.appSupport)
     }
 
+    private var coreService: SMAppService {
+        SMAppService.agent(plistName: Self.corePlistName)
+    }
+
+    private var tunnelService: SMAppService {
+        SMAppService.agent(plistName: Self.tunnelPlistName)
+    }
+
+    private func registerCoreIfNeeded() throws {
+        try register(
+            service: coreService,
+            plistName: Self.corePlistName,
+            displayName: "AgentDock Core"
+        )
+    }
+
+    private func register(service: SMAppService, plistName: String, displayName: String) throws {
+        try validateServiceManagementReadiness()
+        try validateBundledServiceDefinition(plistName: plistName, displayName: displayName)
+        switch service.status {
+        case .enabled:
+            return
+        case .requiresApproval:
+            throw ValidationError("\(displayName) 已注册，但需要你在“系统设置 → 通用 → 登录项与扩展”中允许后台运行。")
+        case .notRegistered, .notFound:
+            // SMAppService 在服务首次 register 前可能返回 .notFound，即使 Bundle 内 plist
+            // 已经存在。定义是否完整由上面的 Bundle 文件校验负责，不用 status 猜测。
+            try service.register()
+        @unknown default:
+            throw ValidationError("无法确认 \(displayName) 的后台服务状态。")
+        }
+        if service.status == .requiresApproval {
+            throw ValidationError("\(displayName) 需要你在“系统设置 → 通用 → 登录项与扩展”中允许后台运行。")
+        }
+        guard service.status == .enabled else {
+            throw ValidationError("\(displayName) 注册完成，但系统没有将它标记为可运行。")
+        }
+    }
+
+    private func unregister(service: SMAppService, label: String) throws {
+        switch service.status {
+        case .notRegistered, .notFound:
+            return
+        case .enabled, .requiresApproval:
+            try service.unregister()
+            guard waitUntilUnloaded(label: label, timeout: 5) else {
+                throw ValidationError("后台服务 \(label) 注销后仍未退出。")
+            }
+        @unknown default:
+            return
+        }
+    }
+
+    private func reregister(service: SMAppService, label: String, displayName: String) throws {
+        try unregister(service: service, label: label)
+        let plistName = label == Self.coreLabel ? Self.corePlistName : Self.tunnelPlistName
+        try register(service: service, plistName: plistName, displayName: displayName)
+    }
+
+    private func restoreRegistration(service: SMAppService, label: String, displayName: String) throws {
+        try validateServiceManagementReadiness()
+        let plistName = label == Self.coreLabel ? Self.corePlistName : Self.tunnelPlistName
+        try validateBundledServiceDefinition(plistName: plistName, displayName: displayName)
+        try unregister(service: service, label: label)
+        if service.status == .notRegistered || service.status == .notFound {
+            try service.register()
+        }
+        guard service.status == .enabled || service.status == .requiresApproval else {
+            throw ValidationError("无法恢复 \(displayName) 的后台注册状态。")
+        }
+    }
+
     private var serviceDomain: String { "gui/\(getuid())" }
-    private var serviceTarget: String { "\(serviceDomain)/\(label)" }
 
-    private func bootstrapIfNeeded() throws {
-        guard !isLoaded() else { return }
-        let result = try runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["bootstrap", serviceDomain, paths.launchAgent.path]
-        )
-        guard result.status == 0 else {
-            throw ValidationError(commandError(result.output, action: "加载"))
+    func validatePersistentAppLocation() throws {
+        let path = paths.appBundle.resolvingSymlinksInPath().path
+        if path == "/Volumes" || path.hasPrefix("/Volumes/") {
+            throw ValidationError("请先把 AgentDock 拖到“应用程序”文件夹，再启用后台服务。")
         }
     }
 
-    private func kickstart() throws {
-        let result = try runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["kickstart", "-k", serviceTarget]
-        )
-        guard result.status == 0 else {
-            throw ValidationError(commandError(result.output, action: "启动"))
+    func validateServiceManagementReadiness() throws {
+        try validatePersistentAppLocation()
+        if LegacyDesktopRuntimeMigration.isPresent(paths: paths) {
+            throw ValidationError("检测到旧版 AgentDock 后台结构，请先在主面板应用当前设置完成迁移。")
         }
     }
 
-    private func stopSynchronously() throws {
-        guard isLoaded() else { return }
-        let result = try runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["bootout", serviceTarget]
-        )
-        guard result.status == 0 else {
-            throw ValidationError(commandError(result.output, action: "停止"))
+    func validateBundledServiceDefinition(plistName: String, displayName: String) throws {
+        let plist = paths.appBundle
+            .appendingPathComponent("Contents/Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent(plistName)
+        guard let values = try? plist.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true else {
+            throw ValidationError("AgentDock.app 缺少 \(displayName) 的后台服务定义，请重新安装应用。")
         }
     }
 
-    private func setLaunchctlDisabled(_ disabled: Bool) throws {
-        let action = disabled ? "disable" : "enable"
-        let result = try runProcess(
+    private func isLoaded(label: String) -> Bool {
+        (try? runProcess(
             executable: "/bin/launchctl",
-            arguments: [action, serviceTarget]
-        )
-        guard result.status == 0 else {
-            throw ValidationError(commandError(result.output, action: disabled ? "关闭登录启动" : "开启登录启动"))
+            arguments: ["print", "\(serviceDomain)/\(label)"]
+        ).status) == 0
+    }
+
+    private func launchdProcessID(label: String) -> Int? {
+        guard let result = try? runProcess(
+            executable: "/bin/launchctl",
+            arguments: ["print", "\(serviceDomain)/\(label)"]
+        ), result.status == 0 else { return nil }
+        for rawLine in result.output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("pid = "),
+                  let pid = Int(line.dropFirst("pid = ".count)),
+                  pid > 0 else { continue }
+            return pid
         }
+        return nil
+    }
+
+    private func waitForStableLaunchdProcess(label: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previousPID: Int?
+        var stableChecks = 0
+        while Date() < deadline {
+            if let pid = launchdProcessID(label: label) {
+                if pid == previousPID {
+                    stableChecks += 1
+                } else {
+                    previousPID = pid
+                    stableChecks = 1
+                }
+                if stableChecks >= 4 { return true }
+            } else {
+                previousPID = nil
+                stableChecks = 0
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return false
+    }
+
+    private func waitUntilUnloaded(label: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !isLoaded(label: label) { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return !isLoaded(label: label)
     }
 
     private func waitForHealthSynchronously(configuration: ServiceConfiguration, timeout: TimeInterval) -> Bool {

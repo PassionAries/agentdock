@@ -25,24 +25,15 @@ enum TunnelMode: String, CaseIterable {
     }
 }
 
-struct OfflinePayloadPaths {
-    let agentDockArchive: String
-    let agentDockChecksum: String
-    let cloudflaredBinary: String
-    let cloudflaredChecksum: String
-}
-
 struct InstallRequest {
     let mode: TunnelMode
     let serverURL: String
     let tunnelToken: String
-    let reuseExistingTunnelToken: Bool
 
-    init(mode: TunnelMode, serverURL: String, tunnelToken: String, reuseExistingTunnelToken: Bool = false) {
+    init(mode: TunnelMode, serverURL: String, tunnelToken: String) {
         self.mode = mode
         self.serverURL = serverURL
         self.tunnelToken = tunnelToken
-        self.reuseExistingTunnelToken = reuseExistingTunnelToken
     }
 
     func validatedServerURL() throws -> String? {
@@ -95,37 +86,6 @@ struct InstallRequest {
             throw ValidationError("Tunnel Token 必须是单行文本。")
         }
         return token
-    }
-
-    func installerArguments(
-        scriptPath: String,
-        version: String,
-        resultPath: String,
-        tokenPath: String?,
-        offlinePayload: OfflinePayloadPaths
-    ) throws -> [String] {
-        var arguments = [
-            scriptPath,
-            "--version", version.hasPrefix("v") ? version : "v\(version)",
-            "--register-service",
-            "--non-interactive",
-            "--tunnel", mode.rawValue,
-            "--result-file", resultPath,
-            "--offline",
-            "--agentdock-archive", offlinePayload.agentDockArchive,
-            "--agentdock-checksum-file", offlinePayload.agentDockChecksum,
-            "--cloudflared-binary", offlinePayload.cloudflaredBinary,
-            "--cloudflared-checksum-file", offlinePayload.cloudflaredChecksum,
-        ]
-        if mode == .named {
-            arguments += ["--server-url", try validatedServerURL() ?? ""]
-            if let tokenPath, !tokenPath.isEmpty {
-                arguments += ["--tunnel-token-file", tokenPath]
-            } else if !reuseExistingTunnelToken {
-                throw ValidationError("缺少安全的 Tunnel Token 临时文件。")
-            }
-        }
-        return arguments
     }
 
     private func isIPAddress(_ host: String) -> Bool {

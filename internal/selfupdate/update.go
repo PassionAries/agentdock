@@ -68,6 +68,7 @@ type options struct {
 	ExecutablePath        string
 	DesktopTargetPath     string
 	DesktopCurrentVersion string
+	DesktopOnly           bool
 	GOOS                  string
 	GOARCH                string
 	ReleaseAPI            string
@@ -85,6 +86,7 @@ type applyRequest struct {
 	BundlePath        string
 	DesktopTargetPath string
 	DesktopStagedPath string
+	DesktopOnly       bool
 	TargetVersion     string
 	Output            io.Writer
 }
@@ -128,6 +130,7 @@ func runtimeOptions(output io.Writer) (options, error) {
 		ExecutablePath:        executable,
 		DesktopTargetPath:     desktopTarget,
 		DesktopCurrentVersion: desktopUpdateVersion(desktopTarget),
+		DesktopOnly:           desktopUpdateOwnsExecutable(desktopTarget, executable),
 		GOOS:                  runtime.GOOS,
 		GOARCH:                runtime.GOARCH,
 		ReleaseAPI:            defaultReleaseAPI,
@@ -160,6 +163,9 @@ func run(ctx context.Context, opts options) error {
 	if !inspection.Result.UpdateAvailable {
 		fmt.Fprintln(opts.Output, inspection.Result.Message)
 		return nil
+	}
+	if opts.DesktopOnly {
+		return runDesktopOnlyUpdate(ctx, opts, inspection)
 	}
 
 	currentVersion := inspection.Result.CurrentVersion
@@ -253,6 +259,51 @@ func run(ctx context.Context, opts options) error {
 	return nil
 }
 
+func runDesktopOnlyUpdate(ctx context.Context, opts options, inspection updateInspection) error {
+	targetVersion := inspection.Result.LatestVersion
+	asset := inspection.DesktopArchiveAsset
+	checksumAsset := inspection.DesktopChecksumAsset
+	if asset.Name == "" || checksumAsset.Name == "" {
+		return errors.New("macOS 桌面更新缺少 AgentDock.app Release 资源")
+	}
+
+	fmt.Fprintf(opts.Output, "当前版本：%s\n最新版本：%s\n\n", inspection.Result.CurrentVersion, targetVersion)
+	fmt.Fprintf(opts.Output, "正在下载 %s...\n", asset.Name)
+	archiveData, err := download(ctx, opts.HTTPClient, asset.URL, maxDesktopArchiveBytes)
+	if err != nil {
+		return fmt.Errorf("下载 macOS 桌面更新文件失败: %w", err)
+	}
+	checksumData, err := download(ctx, opts.HTTPClient, checksumAsset.URL, 1<<20)
+	if err != nil {
+		return fmt.Errorf("下载 macOS 桌面校验文件失败: %w", err)
+	}
+	if err := verifyChecksum(archiveData, checksumData); err != nil {
+		return fmt.Errorf("macOS 桌面更新文件校验失败，当前版本未被修改: %w", err)
+	}
+
+	tempDir, err := os.MkdirTemp("", "agentdock-desktop-update-*")
+	if err != nil {
+		return fmt.Errorf("创建 macOS 桌面更新临时目录失败: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+	stagedApp, err := opts.ExtractDesktop(ctx, archiveData, tempDir, targetVersion)
+	if err != nil {
+		return fmt.Errorf("解压 macOS 桌面更新文件失败: %w", err)
+	}
+	fmt.Fprintln(opts.Output, "macOS App 校验通过")
+
+	_, err = opts.Apply(ctx, applyRequest{
+		CurrentPath:       opts.ExecutablePath,
+		CurrentVersion:    inspection.Result.CurrentVersion,
+		DesktopTargetPath: opts.DesktopTargetPath,
+		DesktopStagedPath: stagedApp,
+		DesktopOnly:       true,
+		TargetVersion:     targetVersion,
+		Output:            opts.Output,
+	})
+	return err
+}
+
 func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) {
 	if opts.HTTPClient == nil {
 		return updateInspection{}, errors.New("更新 HTTP 客户端不能为空")
@@ -288,6 +339,25 @@ func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) 
 	if currentVersion == targetVersion && !desktopNeedsUpdate {
 		result.Message = fmt.Sprintf("当前已是最新版本：%s", targetVersion)
 		return updateInspection{Result: result}, nil
+	}
+
+	if opts.DesktopOnly {
+		desktopArchiveAsset, ok := findAsset(latest.Assets, macOSDesktopArchiveName)
+		if !ok {
+			return updateInspection{}, fmt.Errorf("Release %s 缺少 macOS 桌面更新文件 %s", targetVersion, macOSDesktopArchiveName)
+		}
+		desktopChecksumAsset, ok := findAsset(latest.Assets, macOSDesktopArchiveName+".sha256")
+		if !ok {
+			return updateInspection{}, fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, macOSDesktopArchiveName)
+		}
+		result.UpdateAvailable = true
+		result.DesktopUpdateAvailable = true
+		result.Message = fmt.Sprintf("发现 AgentDock App 更新：%s → %s", currentVersion, targetVersion)
+		return updateInspection{
+			Result:               result,
+			DesktopArchiveAsset:  desktopArchiveAsset,
+			DesktopChecksumAsset: desktopChecksumAsset,
+		}, nil
 	}
 
 	archiveName, executableName, err := platformAssetNames(opts.GOOS, opts.GOARCH)
