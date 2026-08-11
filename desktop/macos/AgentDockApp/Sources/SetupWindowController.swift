@@ -313,7 +313,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             stateLabel.textColor = .systemOrange
         } else if status.healthy {
             if AppVersion.matchesHealthVersion(status.version) {
-                stateLabel.stringValue = "● 运行正常 · AgentDock \(AppVersion.current)"
+                stateLabel.stringValue = "● 运行正常 · \(AppVersion.current)"
                 stateLabel.textColor = .systemGreen
             } else {
                 stateLabel.stringValue = "● 版本异常 · AgentDock \(AppVersion.current) · Core \(AppVersion.display(status.version))"
