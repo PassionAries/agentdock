@@ -47,6 +47,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let progress = NSProgressIndicator()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let applyButton = NSButton(title: "配置并启用", target: nil, action: nil)
+    private let permissionsButton = NSButton(title: "权限检查…", target: nil, action: nil)
     private let advancedButton = NSButton(title: "高级设置…", target: nil, action: nil)
     private let logsButton = NSButton(title: "打开日志", target: nil, action: nil)
 
@@ -73,6 +74,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         menuLoginAgent: menuLoginAgent,
         onChanged: onChanged
     )
+    private lazy var permissionsWindow = DesktopPermissionsWindowController()
 
     init(
         service: ServiceController,
@@ -154,6 +156,10 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         guard status.installed else { return }
         updateServiceSection(status)
         refreshCredentialFields()
+    }
+
+    func presentPermissions() {
+        permissionsWindow.present()
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -258,6 +264,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         logsButton.bezelStyle = .inline
         logsButton.target = self
         logsButton.action = #selector(openLogsPressed)
+        permissionsButton.bezelStyle = .inline
+        permissionsButton.target = self
+        permissionsButton.action = #selector(openPermissionsPressed)
         advancedButton.bezelStyle = .inline
         advancedButton.target = self
         advancedButton.action = #selector(openAdvancedPressed)
@@ -266,7 +275,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         applyButton.target = self
         applyButton.action = #selector(applyPressed)
 
-        let footer = NSStackView(views: [logsButton, advancedButton, progress, statusLabel, NSView(), applyButton])
+        let footer = NSStackView(views: [logsButton, permissionsButton, advancedButton, progress, statusLabel, NSView(), applyButton])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 10
@@ -625,6 +634,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    @objc private func openPermissionsPressed() { permissionsWindow.present() }
     @objc private func openAdvancedPressed() { advancedSettings.present(status: currentStatus) }
     @objc private func openLogsPressed() { service.openLogs() }
 

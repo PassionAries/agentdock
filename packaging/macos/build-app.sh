@@ -346,6 +346,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>AgentDock 需要控制 System Events 和 Finder，以执行你发起的桌面自动化任务。</string>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © AgentDock contributors</string>
 </dict>

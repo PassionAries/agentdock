@@ -144,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         menu.addItem(item(currentStatus.installed ? "打开 AgentDock" : "设置 AgentDock…", #selector(showSetup)))
+        menu.addItem(item("权限检查…", #selector(openPermissions)))
         if currentStatus.installed {
             menu.addItem(.separator())
 
@@ -173,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSetup() { setupWindow.present(status: currentStatus) }
+    @objc private func openPermissions() { setupWindow.presentPermissions() }
     @objc private func openLogs() { service.openLogs() }
     @objc private func openConfiguration() { service.openConfiguration() }
     @objc private func openBackgroundSettings() { service.openBackgroundItemsSettings() }

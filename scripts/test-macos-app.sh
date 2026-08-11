@@ -48,6 +48,16 @@ swiftc \
   -o "$TMP_ROOT/service-controller-validation-tests"
 "$TMP_ROOT/service-controller-validation-tests"
 
+swiftc \
+  -swift-version 5 \
+  -parse-as-library \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/DesktopPermissionChecker.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/FileAccessPermissionChecker.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Sources/PermissionUIComponents.swift" \
+  "$ROOT_DIR/desktop/macos/AgentDockApp/Tests/PermissionCheckerTests.swift" \
+  -o "$TMP_ROOT/permission-checker-tests"
+"$TMP_ROOT/permission-checker-tests"
+
 mkdir -p "$TMP_ROOT/output"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip"
 : > "$TMP_ROOT/output/AgentDock-macos-universal.zip.sha256"
@@ -148,6 +158,7 @@ plutil -lint "$APP/Contents/Info.plist" >/dev/null
 test "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" = "com.uvwt.agentdock"
 test "$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")" = "AgentDock.icns"
 test "$(plutil -extract LSUIElement raw -o - "$APP/Contents/Info.plist")" = "true"
+test -n "$(plutil -extract NSAppleEventsUsageDescription raw -o - "$APP/Contents/Info.plist")"
 codesign --verify --deep --strict --verbose=2 "$APP"
 hdiutil verify "$DMG" >/dev/null
 (
