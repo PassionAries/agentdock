@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import http from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 let payload = {};
 try {
@@ -317,10 +318,47 @@ async function waitForCDP(port, timeoutMs = 15000) {
 
 async function cdpJSON(cdpURL, pathPart) {
   const base = String(cdpURL || '').replace(/\/+$/, '');
-  if (!base) throw new Error('cdp_url is required');
-  const res = await fetch(`${base}${pathPart}`);
-  if (!res.ok) throw new Error(`CDP HTTP ${res.status} for ${pathPart}`);
+  if (!base) {
+    const err = new Error('cdp_url is required');
+    err.code = 'BROWSER_CDP_UNAVAILABLE';
+    err.details = { path: pathPart };
+    throw err;
+  }
+  let res;
+  try {
+    res = await fetch(`${base}${pathPart}`, { signal: AbortSignal.timeout(cdpTimeout()) });
+  } catch (cause) {
+    const err = new Error(`Unable to reach CDP endpoint: ${cause?.message || cause}`);
+    err.code = 'BROWSER_CDP_CONNECTION_FAILED';
+    err.details = { cdp_url: base, path: pathPart };
+    throw err;
+  }
+  if (!res.ok) {
+    const err = new Error(`CDP HTTP ${res.status} for ${pathPart}`);
+    err.code = 'BROWSER_CDP_CONNECTION_FAILED';
+    err.details = { cdp_url: base, path: pathPart, status: res.status };
+    throw err;
+  }
   return await res.json();
+}
+
+async function discoverLocalCDP(state) {
+  const candidates = [];
+  for (const session of Object.values(state?.sessions || {})) {
+    const url = String(session?.cdp_url || '').trim();
+    // AgentDock 自己启动的浏览器跟随原会话关闭，不能再被其他会话自动挂载。
+    if (!browserProcessIsOwned(session) && url && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(url)) candidates.push(url);
+  }
+  candidates.push('http://127.0.0.1:9222');
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      await cdpJSON(candidate, '/json/version');
+      return candidate;
+    } catch {
+      // 本地探测失败只表示该候选不可用，继续尝试其他明确的 loopback endpoint。
+    }
+  }
+  return '';
 }
 
 function cdpTimeout() {
@@ -339,14 +377,20 @@ function cdpCall(wsURL, method, params = {}, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const id = 1;
     const ws = new WebSocket(wsURL);
+    const fail = (code, message, details = {}) => {
+      const err = new Error(message);
+      err.code = code;
+      err.details = { method, ...details };
+      return err;
+    };
     const timer = setTimeout(() => {
       try { ws.close(); } catch {}
-      reject(new Error(`CDP method timed out: ${method}`));
+      reject(fail('BROWSER_CDP_COMMAND_FAILED', `CDP method timed out: ${method}`, { timeout_ms: timeoutMs }));
     }, timeoutMs);
     ws.onopen = () => ws.send(JSON.stringify({ id, method, params }));
     ws.onerror = () => {
       clearTimeout(timer);
-      reject(new Error(`CDP websocket error: ${method}`));
+      reject(fail('BROWSER_CDP_CONNECTION_FAILED', `CDP websocket error: ${method}`));
     };
     ws.onmessage = event => {
       let msg;
@@ -354,8 +398,11 @@ function cdpCall(wsURL, method, params = {}, timeoutMs = 10000) {
       if (msg.id !== id) return;
       clearTimeout(timer);
       try { ws.close(); } catch {}
-      if (msg.error) reject(new Error(`${method}: ${msg.error.message || JSON.stringify(msg.error)}`));
-      else resolve(msg.result || {});
+      if (msg.error) {
+        reject(fail('BROWSER_CDP_COMMAND_FAILED', `${method}: ${msg.error.message || JSON.stringify(msg.error)}`, { protocol_error: msg.error }));
+      } else {
+        resolve(msg.result || {});
+      }
     };
   });
 }
@@ -365,8 +412,16 @@ async function createCDPResponseMonitor(target) {
   const requests = new Map();
   const responses = [];
   const waiters = new Set();
+  const consoleErrors = [];
+  const networkErrors = [];
+  const pageErrors = [];
+  const navigationWaiters = new Set();
   let closed = false;
 
+  const pushBounded = (items, value) => {
+    items.push(String(value || ''));
+    if (items.length > 100) items.shift();
+  };
   const settleWaiter = (waiter, response) => {
     clearTimeout(waiter.timer);
     waiters.delete(waiter);
@@ -374,42 +429,87 @@ async function createCDPResponseMonitor(target) {
   };
 
   await new Promise((resolve, reject) => {
+    const pending = new Set([1, 2, 3, 4]);
     const timer = setTimeout(() => {
       try { ws.close(); } catch {}
-      const err = new Error('Timed out enabling CDP network monitoring');
-      err.code = 'BROWSER_CDP_MONITOR_FAILED';
+      const err = new Error('Timed out enabling CDP monitoring');
+      err.code = 'BROWSER_CDP_COMMAND_FAILED';
+      err.details = { phase: 'monitor_enable' };
       reject(err);
     }, 10000);
-    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Network.enable', params: {} }));
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ id: 1, method: 'Network.enable', params: {} }));
+      ws.send(JSON.stringify({ id: 2, method: 'Runtime.enable', params: {} }));
+      ws.send(JSON.stringify({ id: 3, method: 'Log.enable', params: {} }));
+      ws.send(JSON.stringify({ id: 4, method: 'Page.enable', params: {} }));
+    };
     ws.onerror = () => {
       clearTimeout(timer);
-      const err = new Error('CDP network monitor websocket error');
-      err.code = 'BROWSER_CDP_MONITOR_FAILED';
+      const err = new Error('CDP monitor websocket error');
+      err.code = 'BROWSER_CDP_CONNECTION_FAILED';
+      err.details = { phase: 'monitor_enable' };
       reject(err);
     };
     ws.onmessage = event => {
       let message;
       try { message = JSON.parse(event.data); } catch { return; }
-      if (message.id === 1) {
-        clearTimeout(timer);
+      if (pending.has(message.id)) {
         if (message.error) {
-          const err = new Error(`Network.enable: ${message.error.message || JSON.stringify(message.error)}`);
-          err.code = 'BROWSER_CDP_MONITOR_FAILED';
+          clearTimeout(timer);
+          const err = new Error(`CDP monitor enable failed: ${message.error.message || JSON.stringify(message.error)}`);
+          err.code = 'BROWSER_CDP_COMMAND_FAILED';
+          err.details = { protocol_error: message.error };
           reject(err);
-        } else {
+          return;
+        }
+        pending.delete(message.id);
+        if (pending.size === 0) {
+          clearTimeout(timer);
           resolve();
         }
         return;
       }
       if (message.method === 'Network.requestWillBeSent') {
-        requests.set(message.params.requestId, String(message.params.request?.method || ''));
+        requests.set(message.params.requestId, {
+          method: String(message.params.request?.method || ''),
+          url: String(message.params.request?.url || '')
+        });
+        return;
+      }
+      if (message.method === 'Network.loadingFailed') {
+        const request = requests.get(message.params.requestId) || {};
+        pushBounded(networkErrors, `${request.method || ''} ${request.url || ''} ${message.params.errorText || ''}`.trim());
+        return;
+      }
+      if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
+        const text = (message.params.args || []).map(item => item.value ?? item.description ?? '').join(' ');
+        pushBounded(consoleErrors, text || 'console.error');
+        return;
+      }
+      if (message.method === 'Runtime.exceptionThrown') {
+        const details = message.params.exceptionDetails || {};
+        pushBounded(pageErrors, details.exception?.description || details.text || 'Runtime exception');
+        return;
+      }
+      if (message.method === 'Log.entryAdded' && message.params.entry?.level === 'error') {
+        pushBounded(consoleErrors, message.params.entry.text || 'Browser log error');
+        return;
+      }
+      if (message.method === 'Page.domContentEventFired' || message.method === 'Page.loadEventFired') {
+        for (const waiter of [...navigationWaiters]) {
+          if (waiter.eventName !== message.method) continue;
+          clearTimeout(waiter.timer);
+          navigationWaiters.delete(waiter);
+          waiter.resolve();
+        }
         return;
       }
       if (message.method !== 'Network.responseReceived') return;
+      const request = requests.get(message.params.requestId) || {};
       const response = {
         url: String(message.params.response?.url || ''),
         status: Number(message.params.response?.status || 0),
-        method: requests.get(message.params.requestId) || ''
+        method: request.method || ''
       };
       responses.push(response);
       if (responses.length > 200) responses.shift();
@@ -426,6 +526,30 @@ async function createCDPResponseMonitor(target) {
   });
 
   return {
+    async waitForNavigation(action, operation) {
+      const waitUntil = String(action.wait_until || 'domcontentloaded').toLowerCase();
+      const eventName = waitUntil === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired';
+      let waiter;
+      const navigation = new Promise((resolve, reject) => {
+        waiter = { eventName, resolve, reject, timer: null };
+        waiter.timer = setTimeout(() => {
+          navigationWaiters.delete(waiter);
+          const err = new Error(`Timed out waiting for navigation state: ${waitUntil}`);
+          err.code = 'BROWSER_WAIT_TIMEOUT';
+          err.details = { action: action.action, wait_until: waitUntil, timeout_ms: Number(action.timeout_ms || 10000) };
+          reject(err);
+        }, Number(action.timeout_ms || 10000));
+        navigationWaiters.add(waiter);
+      });
+      try {
+        await operation();
+        await navigation;
+      } catch (err) {
+        clearTimeout(waiter?.timer);
+        navigationWaiters.delete(waiter);
+        throw err;
+      }
+    },
     wait(action) {
       const existing = responses.findLast(response => responseMatches(response, action));
       if (existing) return Promise.resolve(existing);
@@ -446,6 +570,13 @@ async function createCDPResponseMonitor(target) {
         waiters.add(waiter);
       });
     },
+    snapshot() {
+      return {
+        console_errors: [...consoleErrors],
+        network_errors: [...networkErrors],
+        page_errors: [...pageErrors]
+      };
+    },
     close() {
       if (closed) return;
       closed = true;
@@ -454,6 +585,11 @@ async function createCDPResponseMonitor(target) {
         waiter.reject(Object.assign(new Error('CDP response monitor closed'), { code: 'BROWSER_CDP_MONITOR_CLOSED' }));
       }
       waiters.clear();
+      for (const waiter of navigationWaiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(Object.assign(new Error('CDP response monitor closed'), { code: 'BROWSER_CDP_MONITOR_CLOSED' }));
+      }
+      navigationWaiters.clear();
       try { ws.close(); } catch {}
     }
   };
@@ -472,7 +608,7 @@ async function cdpPageTarget(session, requestedPageId = '') {
     : pages.find(item => !String(item.url || '').startsWith('chrome://')) || pages[0];
   if (!page?.webSocketDebuggerUrl) {
     const err = new Error(requested ? `Unknown browser page_id: ${requested}` : 'No debuggable page target found');
-    err.code = requested ? 'BROWSER_PAGE_NOT_FOUND' : 'BROWSER_PAGE_UNAVAILABLE';
+    err.code = requested ? 'BROWSER_CDP_TARGET_NOT_FOUND' : 'BROWSER_CDP_UNAVAILABLE';
     err.details = { page_id: requested || undefined, available_page_ids: pages.map(item => item.id) };
     throw err;
   }
@@ -641,61 +777,255 @@ async function pollUntil(check, timeoutMs, description) {
   throw err;
 }
 
+async function cdpCallOnDocument(target, functionDeclaration, callArgs = []) {
+  // cdpCall 每次使用独立 WebSocket，RemoteObject objectId 不能跨连接复用。
+  // 这里把固定的内部函数与 JSON 序列化参数放在同一次 evaluate 中，既保持调用原子性，也不向外暴露任意脚本执行。
+  const expression = `(${functionDeclaration}).apply(document, ${JSON.stringify(callArgs)})`;
+  const result = await cdpCall(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true
+  }, cdpTimeout());
+  if (result.exceptionDetails) {
+    const err = new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'CDP DOM operation failed');
+    err.code = 'BROWSER_CDP_COMMAND_FAILED';
+    err.details = { exception: result.exceptionDetails };
+    throw err;
+  }
+  return result?.result?.value;
+}
+
+async function cdpElementState(target, selector) {
+  return await cdpCallOnDocument(target, function(selectorValue) {
+    const el = this.querySelector(selectorValue);
+    if (!el) return { found: false, visible: false };
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return {
+      found: true,
+      visible: style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0
+    };
+  }.toString(), [selector]);
+}
+
+async function cdpRequireElement(target, selector, operation) {
+  const state = await cdpElementState(target, selector);
+  if (state?.found) return;
+  const err = new Error(`Element not found for ${operation}: ${selector}`);
+  err.code = 'BROWSER_CDP_TARGET_NOT_FOUND';
+  err.details = { selector, operation };
+  throw err;
+}
+
+async function cdpWaitForSelector(target, action) {
+  const selector = String(action.selector || '').trim();
+  const state = String(action.state || 'visible').toLowerCase();
+  if (!selector) {
+    const err = new Error('selector is required for wait_for_selector');
+    err.code = 'BROWSER_CDP_TARGET_NOT_FOUND';
+    throw err;
+  }
+  await pollUntil(async () => {
+    const current = await cdpElementState(target, selector);
+    if (state === 'hidden') return !current.found || !current.visible;
+    if (state === 'detached') return !current.found;
+    if (state === 'attached') return current.found;
+    return current.found && current.visible;
+  }, Number(action.timeout_ms || 10000), `selector ${selector} to be ${state}`);
+}
+
+function textStateInDocument(expectedValue, exactMatch) {
+  const expected = String(expectedValue || '').replace(/\s+/g, ' ').trim();
+  const elements = Array.from(this.body?.querySelectorAll('*') || []);
+  let found = false;
+  let visible = false;
+  for (const el of elements) {
+    const actual = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    const matches = exactMatch === true ? actual === expected : actual.includes(expected);
+    if (!matches) continue;
+    found = true;
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if (style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0) visible = true;
+  }
+  return { found, visible };
+}
+
+async function cdpWaitForText(target, action) {
+  const expected = String(action.text ?? action.value ?? '').trim();
+  const state = String(action.state || 'visible').toLowerCase();
+  if (!expected) {
+    const err = new Error('wait_for_text requires text or value');
+    err.code = 'BROWSER_CDP_TARGET_NOT_FOUND';
+    throw err;
+  }
+  await pollUntil(async () => {
+    const current = await cdpCallOnDocument(target, textStateInDocument.toString(), [expected, action.exact === true]);
+    if (state === 'hidden') return !current.found || !current.visible;
+    if (state === 'detached') return !current.found;
+    if (state === 'attached') return current.found;
+    return current.found && current.visible;
+  }, Number(action.timeout_ms || 10000), `text ${expected} to be ${state}`);
+}
+
+async function cdpPressKey(target, key) {
+  const value = String(key || '');
+  const keyMap = {
+    Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
+    Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 },
+    Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+    Backspace: { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8 },
+    ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38 },
+    ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 },
+    ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 },
+    ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 }
+  };
+  const mapped = keyMap[value] || { key: value, text: value.length === 1 ? value : undefined };
+  await cdpCall(target.webSocketDebuggerUrl, 'Input.dispatchKeyEvent', { type: 'keyDown', ...mapped }, cdpTimeout());
+  await cdpCall(target.webSocketDebuggerUrl, 'Input.dispatchKeyEvent', { type: 'keyUp', ...mapped, text: undefined }, cdpTimeout());
+}
+
 async function runCDPActions(session, actions = [], requestedPageId = '') {
-  if (!Array.isArray(actions) || actions.length === 0) return;
+  if (!Array.isArray(actions) || actions.length === 0) return {};
   let target = await cdpPageTarget(session, requestedPageId);
-  const responseMonitor = actions.some(action => action.action === 'wait_for_response')
-    ? await createCDPResponseMonitor(target)
-    : null;
+  const monitor = await createCDPResponseMonitor(target);
   try {
     for (const action of actions) {
       const type = action.action;
       if (type === 'wait') {
         await new Promise(resolve => setTimeout(resolve, action.value ?? 1000));
       } else if (type === 'goto') {
-        await cdpCall(target.webSocketDebuggerUrl, 'Page.navigate', { url: action.url }, cdpTimeout());
-        await new Promise(resolve => setTimeout(resolve, action.value ?? 1500));
+        await monitor.waitForNavigation(action, () => cdpCall(target.webSocketDebuggerUrl, 'Page.navigate', { url: action.url }, cdpTimeout()));
         target = await cdpPageTarget(session, requestedPageId);
+      } else if (type === 'click') {
+        const selector = String(action.selector || '');
+        await cdpRequireElement(target, selector, 'click');
+        await cdpCallOnDocument(target, function(selectorValue) {
+          const el = this.querySelector(selectorValue);
+          el.scrollIntoView({ block: 'center', inline: 'center' });
+          el.click();
+          return true;
+        }.toString(), [selector]);
+      } else if (type === 'fill') {
+        const selector = String(action.selector || '');
+        await cdpRequireElement(target, selector, 'fill');
+        await cdpCallOnDocument(target, function(selectorValue, value) {
+          const el = this.querySelector(selectorValue);
+          el.focus();
+          const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+          if (setter) setter.call(el, String(value ?? '')); else el.value = String(value ?? '');
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }.toString(), [selector, action.value ?? '']);
+      } else if (type === 'press') {
+        const selector = String(action.selector || '');
+        if (selector) {
+          await cdpRequireElement(target, selector, 'press');
+          await cdpCallOnDocument(target, function(selectorValue) {
+            this.querySelector(selectorValue).focus();
+            return true;
+          }.toString(), [selector]);
+        }
+        await cdpPressKey(target, action.key);
+      } else if (type === 'select') {
+        const selector = String(action.selector || '');
+        await cdpRequireElement(target, selector, 'select');
+        await cdpCallOnDocument(target, function(selectorValue, value) {
+          const el = this.querySelector(selectorValue);
+          el.value = String(value ?? '');
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return el.value;
+        }.toString(), [selector, action.value ?? '']);
+      } else if (type === 'scroll') {
+        await cdpCall(target.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
+          type: 'mouseWheel', x: 1, y: 1,
+          deltaX: Number(action.delta_x || 0), deltaY: Number(action.delta_y || 800)
+        }, cdpTimeout());
       } else if (type === 'reload') {
-        await cdpCall(target.webSocketDebuggerUrl, 'Page.reload', {}, cdpTimeout());
-        await new Promise(resolve => setTimeout(resolve, action.wait_ms || 1000));
+        await monitor.waitForNavigation(action, () => cdpCall(target.webSocketDebuggerUrl, 'Page.reload', {}, cdpTimeout()));
+      } else if (type === 'back' || type === 'forward') {
+        const history = await cdpCall(target.webSocketDebuggerUrl, 'Page.getNavigationHistory', {}, cdpTimeout());
+        const offset = type === 'back' ? -1 : 1;
+        const entry = history.entries?.[Number(history.currentIndex || 0) + offset];
+        if (entry) {
+          await monitor.waitForNavigation(action, () => cdpCall(target.webSocketDebuggerUrl, 'Page.navigateToHistoryEntry', { entryId: entry.id }, cdpTimeout()));
+        }
+      } else if (type === 'wait_for_selector') {
+        await cdpWaitForSelector(target, action);
       } else if (type === 'wait_for_url') {
         await pollUntil(async () => {
           target = await cdpPageTarget(session, requestedPageId);
           return textOrURLMatches(target.url, action.url);
         }, Number(action.timeout_ms || 10000), `URL ${action.url}`);
       } else if (type === 'wait_for_text') {
-        const expected = String(action.text ?? action.value ?? '');
-        await pollUntil(async () => {
-          const result = await cdpCall(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
-            expression: `(() => document.body ? document.body.innerText : '')()`,
-            returnByValue: true
-          }, cdpTimeout()).catch(() => ({ result: { value: '' } }));
-          return String(result?.result?.value || '').includes(expected);
-        }, Number(action.timeout_ms || 10000), `text ${expected}`);
+        await cdpWaitForText(target, action);
       } else if (type === 'wait_for_response') {
-        await responseMonitor.wait(action);
+        await monitor.wait(action);
       } else {
-        throw new Error(`Unsupported CDP browser action: ${type}`);
+        const err = new Error(`Unsupported CDP browser action: ${type}`);
+        err.code = 'BROWSER_CDP_COMMAND_FAILED';
+        err.details = { action: type };
+        throw err;
       }
     }
+    return monitor.snapshot();
   } finally {
-    responseMonitor?.close();
+    monitor.close();
   }
 }
 
-async function cdpSnapshot(session, sessionId, requestedPageId = '') {
+async function cdpSnapshot(session, sessionId, requestedPageId = '', diagnostics = {}) {
   const pages = await cdpPageTargets(session);
   const target = await cdpPageTarget(session, requestedPageId);
   const timeout = cdpTimeout();
   const textResult = await cdpCall(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
-    expression: `(() => document.body ? document.body.innerText : '')()`,
+    expression: 'document.body ? document.body.innerText : ""',
     returnByValue: true
   }, timeout).catch(() => ({ result: { value: '' } }));
   const titleResult = await cdpCall(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
-    expression: `(() => document.title || '')()`,
+    expression: 'document.title || ""',
     returnByValue: true
   }, timeout).catch(() => ({ result: { value: target.title || '' } }));
+  const pageMetrics = await cdpCallOnDocument(target, function() {
+    const active = document.activeElement;
+    const focus = !active || active === document.body ? null : {
+      tag: active.tagName?.toLowerCase() || '',
+      id: active.id || '',
+      class: typeof active.className === 'string' ? active.className.slice(0, 120) : '',
+      name: active.getAttribute?.('name') || '',
+      placeholder: active.getAttribute?.('placeholder') || '',
+      text: (active.innerText || active.textContent || '').trim().slice(0, 120)
+    };
+    return {
+      viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
+      page_size: {
+        width: Math.max(document.documentElement?.scrollWidth || 0, document.body?.scrollWidth || 0, window.innerWidth || 0),
+        height: Math.max(document.documentElement?.scrollHeight || 0, document.body?.scrollHeight || 0, window.innerHeight || 0),
+        device_pixel_ratio: window.devicePixelRatio || 1
+      },
+      focused_element: focus
+    };
+  }.toString()).catch(() => ({ viewport: session.viewport || null, page_size: {}, focused_element: null }));
+  const interactiveElements = await cdpCallOnDocument(target, function(limit) {
+    const selector = 'a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="tab"],[tabindex]';
+    return Array.from(this.querySelectorAll(selector)).filter(el => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    }).slice(0, Number(limit || 40)).map((el, index) => ({
+      index,
+      tag: el.tagName.toLowerCase(),
+      type: el.getAttribute('type') || '',
+      role: el.getAttribute('role') || '',
+      id: el.id || '',
+      name: el.getAttribute('name') || '',
+      placeholder: el.getAttribute('placeholder') || '',
+      text: (el.innerText || el.value || el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 120)
+    }));
+  }.toString(), [Number(args.max_interactive_elements || 40)]).catch(() => []);
   const text = String(textResult?.result?.value || '');
   const maxText = Number(args.max_text_chars || 8000);
   const storageResult = await saveCDPStorageStateIfNeeded(session, sessionId, target);
@@ -710,28 +1040,55 @@ async function cdpSnapshot(session, sessionId, requestedPageId = '') {
     text: text.slice(0, maxText),
     text_length: text.length,
     artifact: {},
-    console_errors: [],
-    network_errors: [],
-    page_errors: [],
-    viewport: session.viewport || null,
-    interactive_elements: []
+    console_errors: Array.isArray(diagnostics.console_errors) ? diagnostics.console_errors : [],
+    network_errors: Array.isArray(diagnostics.network_errors) ? diagnostics.network_errors : [],
+    page_errors: Array.isArray(diagnostics.page_errors) ? diagnostics.page_errors : [],
+    viewport: pageMetrics.viewport || session.viewport || null,
+    page_size: pageMetrics.page_size || {},
+    focused_element: pageMetrics.focused_element || null,
+    interactive_elements: interactiveElements,
+    browser_ownership: session.browser_ownership || (session.visible_process ? 'owned' : 'attached')
   };
   if (shouldCaptureScreenshot(args)) {
-    const screenshot = await cdpCall(target.webSocketDebuggerUrl, 'Page.captureScreenshot', { format: 'png' }, timeout).catch(() => null);
+    const screenshotParams = {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: args.full_page === true
+    };
+    if (args.full_page === true && pageMetrics.page_size?.width && pageMetrics.page_size?.height) {
+      screenshotParams.clip = {
+        x: 0,
+        y: 0,
+        width: pageMetrics.page_size.width,
+        height: pageMetrics.page_size.height,
+        scale: 1
+      };
+    }
+    const screenshot = await cdpCall(target.webSocketDebuggerUrl, 'Page.captureScreenshot', screenshotParams, timeout).catch(() => null);
     if (screenshot?.data) {
       const screenshotDir = path.join(artifactDir, 'screenshots');
       await fs.mkdir(screenshotDir, { recursive: true });
       const screenshotFile = `snapshot-${Date.now()}.png`;
       const screenshotPath = path.join(screenshotDir, screenshotFile);
       await fs.writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+      const screenshotArtifactId = `browser-screenshot-${crypto.createHash('sha256').update(screenshotPath).digest('hex').slice(0, 16)}`;
+      const stat = await fs.stat(screenshotPath).catch(() => null);
       result.screenshot_path = screenshotPath;
       result.screenshot_file = screenshotFile;
-      result.artifact = { path: screenshotPath, mime_type: 'image/png' };
+      result.screenshot_artifact_id = screenshotArtifactId;
+      result.screenshot_size_bytes = stat?.size || 0;
+      result.screenshot_width = args.full_page === true ? pageMetrics.page_size?.width : pageMetrics.viewport?.width;
+      result.screenshot_height = args.full_page === true ? pageMetrics.page_size?.height : pageMetrics.viewport?.height;
+      result.artifact = {
+        kind: 'browser_screenshot',
+        path: screenshotPath,
+        file: screenshotFile,
+        artifact_id: screenshotArtifactId
+      };
     }
   }
   return { ...storageResult, ...result };
 }
-
 
 async function daemonRequest(controlURL, action, body = {}, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -924,6 +1281,7 @@ async function launchKeepOpenBrowser(session, sessionId) {
   const { profileDir } = browserProfileLocation({ ...session, headless: false }, sessionId);
   await fs.mkdir(profileDir, { recursive: true });
   const launchArgs = [
+    ...(session.headless !== false ? ['--headless=new'] : []),
     `--remote-debugging-port=${port}`,
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${profileDir}`,
@@ -936,7 +1294,7 @@ async function launchKeepOpenBrowser(session, sessionId) {
     session.url || 'about:blank'
   ];
   let child;
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' && session.headless === false) {
     const appName = executable.includes('Google Chrome.app') ? 'Google Chrome' : executable.includes('Microsoft Edge.app') ? 'Microsoft Edge' : executable;
     child = spawn('/usr/bin/open', ['-na', appName, '--args', ...launchArgs], { detached: true, stdio: 'ignore' });
   } else {
@@ -946,6 +1304,7 @@ async function launchKeepOpenBrowser(session, sessionId) {
   const version = await waitForCDP(port, Number(session.timeout_ms || 25000));
   return {
     backend: 'cdp',
+    browser_ownership: 'owned',
     cdp_url: `http://127.0.0.1:${port}`,
     visible_process: {
       pid: child.pid,
@@ -1022,6 +1381,7 @@ async function closeCDPBrowser(session) {
 }
 
 async function closeOwnedBrowser(session) {
+  if (!browserProcessIsOwned(session)) return false;
   let daemonClosed = false;
   let closed = false;
   if (session.backend === 'daemon' && session.control_url) {
@@ -1036,6 +1396,12 @@ async function closeOwnedBrowser(session) {
     await removeEphemeralProfile(session);
   }
   return closed;
+}
+
+function browserProcessIsOwned(session) {
+  if (session?.browser_ownership) return session.browser_ownership === 'owned';
+  // 兼容升级前的状态文件：旧版 owned 会话没有 ownership，但会记录自己启动的进程或 daemon。
+  return Boolean(session?.visible_process || session?.backend === 'daemon');
 }
 
 function normalizeLocalStorage(value) {
@@ -1350,6 +1716,7 @@ async function main() {
     state.sessions[sessionId] = {
       session_id: sessionId,
       backend: args.backend || 'playwright',
+      browser_ownership: args.backend === 'cdp' ? 'attached' : undefined,
       cdp_url: args.cdp_url || undefined,
       browser: args.browser || 'chromium',
       browser_defaulted: !args.browser,
@@ -1377,10 +1744,32 @@ async function main() {
       visible = await launchKeepOpenBrowser(state.sessions[sessionId], sessionId);
       state.sessions[sessionId] = { ...state.sessions[sessionId], ...visible };
     }
-    if (state.sessions[sessionId].backend === 'cdp' && state.sessions[sessionId].storage_state_path) {
-      await applyCDPStorageState(state.sessions[sessionId]);
+    if (state.sessions[sessionId].backend === 'cdp' && !state.sessions[sessionId].cdp_url) {
+      const discovered = await discoverLocalCDP(state);
+      if (discovered) {
+        state.sessions[sessionId].cdp_url = discovered;
+        state.sessions[sessionId].browser_ownership = 'attached';
+      } else {
+        const launchSession = {
+          ...state.sessions[sessionId],
+          // CDP 的默认本机后端优先系统浏览器，避免 browser=chromium 走回 Playwright daemon。
+          browser: state.sessions[sessionId].browser_defaulted ? 'system' : state.sessions[sessionId].browser
+        };
+        const owned = await launchKeepOpenBrowser(launchSession, sessionId);
+        state.sessions[sessionId] = { ...state.sessions[sessionId], ...owned };
+      }
     }
-    await writeState(state);
+    if (!['playwright', 'daemon', 'cdp'].includes(state.sessions[sessionId].backend)) {
+      const err = new Error(`Unsupported browser backend: ${state.sessions[sessionId].backend}`);
+      err.code = 'BROWSER_OPERATION_FAILED';
+      err.details = { backend: state.sessions[sessionId].backend };
+      throw err;
+    }
+    if (state.sessions[sessionId].backend === 'cdp') {
+      // 显式 attach 的 CDP 会话必须在持久化前验证端点，避免失败连接留下坏 session。
+      await cdpJSON(state.sessions[sessionId].cdp_url, '/json/version');
+      if (state.sessions[sessionId].storage_state_path) await applyCDPStorageState(state.sessions[sessionId]);
+    }
     let pageInfo = { page_id: null, pages: [] };
     if (state.sessions[sessionId].backend === 'daemon' && state.sessions[sessionId].control_url) {
       const status = await daemonRequest(state.sessions[sessionId].control_url, 'status', {}, daemonTimeout());
@@ -1390,7 +1779,8 @@ async function main() {
       const activePage = await cdpPageTarget(state.sessions[sessionId]);
       pageInfo = { page_id: activePage.id, pages: describeCDPPages(pages, activePage) };
     }
-    console.log(JSON.stringify({ ok: true, session_id: sessionId, status: 'created', ...pageInfo, keep_open: state.sessions[sessionId].keep_open, visible_process: state.sessions[sessionId].visible_process, backend: state.sessions[sessionId].backend, cdp_url: state.sessions[sessionId].cdp_url }));
+    await writeState(state);
+    console.log(JSON.stringify({ ok: true, session_id: sessionId, status: 'created', ...pageInfo, keep_open: state.sessions[sessionId].keep_open, visible_process: state.sessions[sessionId].visible_process, backend: state.sessions[sessionId].backend, cdp_url: state.sessions[sessionId].cdp_url, browser_ownership: state.sessions[sessionId].browser_ownership }));
     return;
   }
 
@@ -1406,7 +1796,7 @@ async function main() {
   if (operation === 'session_close') {
     const stopped = await closeOwnedBrowser(session);
     const existed = await closeSessionState(state, sessionId);
-    console.log(JSON.stringify({ ok: true, session_id: sessionId, status: existed ? 'closed' : 'not_found', visible_process_stopped: stopped }));
+    console.log(JSON.stringify({ ok: true, session_id: sessionId, status: existed ? 'closed' : 'not_found', visible_process_stopped: stopped, browser_ownership: session.browser_ownership }));
     return;
   }
   if (session.backend === 'playwright' && (operation === 'action' || operation === 'snapshot')) {
@@ -1445,10 +1835,12 @@ async function main() {
     throw new Error(`Unknown operation: ${operation}`);
   }
   if (session.backend === 'cdp') {
-    if (operation === 'action') await runCDPActions(session, args.actions || [], args.page_id || '');
+    const diagnostics = operation === 'action'
+      ? await runCDPActions(session, args.actions || [], args.page_id || '')
+      : {};
     if (operation === 'action' || operation === 'snapshot') {
       const closeAfter = args.close_after === true;
-      const result = await cdpSnapshot(session, sessionId, args.page_id || '');
+      const result = await cdpSnapshot(session, sessionId, args.page_id || '', diagnostics);
       if (closeAfter) {
         await closeOwnedBrowser(session);
         await closeSessionState(state, sessionId);
@@ -1465,7 +1857,11 @@ async function main() {
   throw new Error(`Unsupported browser backend: ${session.backend}`);
 }
 
-main().catch(err => {
-  console.log(JSON.stringify(structuredErrorPayload(err)));
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch(err => {
+    console.log(JSON.stringify(structuredErrorPayload(err)));
+    process.exit(1);
+  });
+}
+
+export { browserProcessIsOwned, createCDPResponseMonitor, textStateInDocument };

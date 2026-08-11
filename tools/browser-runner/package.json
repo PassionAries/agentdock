@@ -2,6 +2,9 @@
   "name": "coding-tools-browser-runner",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test browser-runner.test.js"
+  },
   "dependencies": {
     "playwright-core": "1.61.1"
   }

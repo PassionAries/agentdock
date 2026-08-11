@@ -113,6 +113,24 @@ func TestBrowserInputSchemaPublishesPageWaitAndStorageStateFields(t *testing.T) 
 	}
 }
 
+func TestBrowserSessionBackendSchemaPublishesSupportedBackends(t *testing.T) {
+	properties := InputSchema("browser_session")["properties"].(map[string]any)
+	backend := properties["backend"].(map[string]any)
+	values, ok := backend["enum"].([]string)
+	if !ok || len(values) != 2 || values[0] != "playwright" || values[1] != "cdp" {
+		t.Fatalf("browser backend enum = %#v", backend["enum"])
+	}
+}
+
+func TestBrowserOutputSchemaPublishesCDPOwnership(t *testing.T) {
+	for _, tool := range []string{"browser_session", "browser_act", "browser_snapshot"} {
+		properties := OutputSchema(tool)["properties"].(map[string]any)
+		if _, ok := properties["browser_ownership"]; !ok {
+			t.Fatalf("%s output schema missing browser_ownership", tool)
+		}
+	}
+}
+
 func TestViewImageInputSchemaDeclaresObjectTypeForEveryOneOfBranch(t *testing.T) {
 	schema := InputSchema("view_image")
 	if schema["type"] != "object" {
