@@ -202,6 +202,7 @@ test "$(docker run --rm "$browser_image" id -g)" = "10001"
 docker run --rm "$browser_image" sh -c '
   test "$AGENTDOCK_BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium
   test -x "$AGENTDOCK_BROWSER_EXECUTABLE_PATH"
+  dpkg-query -W chromium-sandbox >/dev/null
 '
 
 browser_token="browser-smoke-${RANDOM}-${RANDOM}"
