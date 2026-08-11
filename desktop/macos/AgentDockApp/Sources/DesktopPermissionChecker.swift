@@ -97,6 +97,10 @@ enum DesktopPermissionChecker {
         openPrivacySettings(pane: "Privacy_AllFiles")
     }
 
+    static func openAppManagementSettings() {
+        openPrivacySettings(pane: "Privacy_AppBundles")
+    }
+
     static func openFilesAndFoldersSettings() {
         openPrivacySettings(pane: "Privacy_FilesAndFolders")
     }

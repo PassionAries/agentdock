@@ -65,10 +65,34 @@ final class DesktopPermissionsWindowController: NSWindowController {
             contentStack.addArrangedSubview(PermissionUI.separator())
         }
 
+        let appManagementTitle = NSTextField(labelWithString: "应用程序管理（按需）")
+        appManagementTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        let appManagementDetail = PermissionUI.detailLabel(
+            "更新 AgentDock 或管理其他应用时可能需要。普通使用无需开启。"
+        )
+        appManagementDetail.widthAnchor.constraint(equalToConstant: 380).isActive = true
+        let appManagementText = NSStackView(views: [appManagementTitle, appManagementDetail])
+        appManagementText.orientation = .vertical
+        appManagementText.alignment = .leading
+        appManagementText.spacing = 3
+        let appManagementButton = NSButton(
+            title: "打开应用程序管理设置",
+            target: self,
+            action: #selector(openAppManagementSettings)
+        )
+        appManagementButton.bezelStyle = .rounded
+        let appManagementRow = NSStackView(views: [appManagementText, NSView(), appManagementButton])
+        appManagementRow.orientation = .horizontal
+        appManagementRow.alignment = .centerY
+        appManagementRow.spacing = 8
+        appManagementRow.widthAnchor.constraint(equalToConstant: 580).isActive = true
+        contentStack.addArrangedSubview(appManagementRow)
+        contentStack.addArrangedSubview(PermissionUI.separator())
+
         let filesTitle = NSTextField(labelWithString: "文件与文件夹")
         filesTitle.font = .systemFont(ofSize: 15, weight: .semibold)
         let filesDetail = PermissionUI.detailLabel(
-            "检查桌面、文稿、下载以及你选择的其他目录是否可真实读取。"
+            "检查 AgentDock 是否可以访问桌面、文稿、下载和你选择的其他目录。"
         )
         filesDetail.widthAnchor.constraint(equalToConstant: 580).isActive = true
         let filesButton = NSButton(title: "检查文件访问…", target: self, action: #selector(openFileAccess))
@@ -163,5 +187,9 @@ final class DesktopPermissionsWindowController: NSWindowController {
 
     @objc private func openFileAccess() {
         fileAccessWindow.present()
+    }
+
+    @objc private func openAppManagementSettings() {
+        DesktopPermissionChecker.openAppManagementSettings()
     }
 }

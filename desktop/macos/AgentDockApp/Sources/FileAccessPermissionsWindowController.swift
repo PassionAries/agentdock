@@ -55,7 +55,7 @@ final class FileAccessPermissionsWindowController: NSWindowController {
         let title = NSTextField(labelWithString: "文件访问")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
         let intro = PermissionUI.detailLabel(
-            "这里做真实目录读取测试。桌面、文稿、下载属于“文件与文件夹”权限；外置磁盘或其他目录可通过下方选择后单独检查。"
+            "检查 AgentDock 是否可以访问桌面、文稿、下载和你选择的其他目录。"
         )
         intro.widthAnchor.constraint(equalToConstant: 600).isActive = true
         contentStack.addArrangedSubview(title)
@@ -96,7 +96,7 @@ final class FileAccessPermissionsWindowController: NSWindowController {
         let fullDiskTitle = NSTextField(labelWithString: "完全磁盘访问（可选）")
         fullDiskTitle.font = .systemFont(ofSize: 15, weight: .semibold)
         let fullDiskDetail = PermissionUI.detailLabel(
-            "仅在需要读取其他应用的受保护数据时开启。它比桌面/文稿/下载权限范围更大，普通 AgentDock 使用不要求默认开启；macOS 没有可靠的公开状态检测 API，因此这里不伪造授权状态。"
+            "仅在需要访问其他应用的受保护数据时开启。普通使用无需开启。"
         )
         fullDiskDetail.widthAnchor.constraint(equalToConstant: 600).isActive = true
         let fullDiskButton = NSButton(title: "打开完全磁盘访问设置", target: self, action: #selector(openFullDiskSettings))
