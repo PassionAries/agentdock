@@ -93,10 +93,10 @@ final class FileAccessPermissionsWindowController: NSWindowController {
         contentStack.addArrangedSubview(selectedActions)
 
         contentStack.addArrangedSubview(PermissionUI.separator())
-        let fullDiskTitle = NSTextField(labelWithString: "完全磁盘访问（可选）")
+        let fullDiskTitle = NSTextField(labelWithString: "完全磁盘访问")
         fullDiskTitle.font = .systemFont(ofSize: 15, weight: .semibold)
         let fullDiskDetail = PermissionUI.detailLabel(
-            "仅在需要访问其他应用的受保护数据时开启。普通使用无需开启。"
+            "用于访问其他应用的受保护数据。"
         )
         fullDiskDetail.widthAnchor.constraint(equalToConstant: 600).isActive = true
         let fullDiskButton = NSButton(title: "打开完全磁盘访问设置", target: self, action: #selector(openFullDiskSettings))

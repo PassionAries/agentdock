@@ -65,10 +65,10 @@ final class DesktopPermissionsWindowController: NSWindowController {
             contentStack.addArrangedSubview(PermissionUI.separator())
         }
 
-        let appManagementTitle = NSTextField(labelWithString: "应用程序管理（按需）")
+        let appManagementTitle = NSTextField(labelWithString: "应用程序管理")
         appManagementTitle.font = .systemFont(ofSize: 13, weight: .medium)
         let appManagementDetail = PermissionUI.detailLabel(
-            "更新 AgentDock 或管理其他应用时可能需要。普通使用无需开启。"
+            "用于更新 AgentDock 或管理其他应用。"
         )
         appManagementDetail.widthAnchor.constraint(equalToConstant: 380).isActive = true
         let appManagementText = NSStackView(views: [appManagementTitle, appManagementDetail])
