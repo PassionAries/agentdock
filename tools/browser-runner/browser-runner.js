@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import http from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 let payload = {};
 try {
@@ -345,7 +346,8 @@ async function discoverLocalCDP(state) {
   const candidates = [];
   for (const session of Object.values(state?.sessions || {})) {
     const url = String(session?.cdp_url || '').trim();
-    if (url && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(url)) candidates.push(url);
+    // AgentDock 自己启动的浏览器跟随原会话关闭，不能再被其他会话自动挂载。
+    if (!browserProcessIsOwned(session) && url && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(url)) candidates.push(url);
   }
   candidates.push('http://127.0.0.1:9222');
   for (const candidate of [...new Set(candidates)]) {
@@ -413,6 +415,7 @@ async function createCDPResponseMonitor(target) {
   const consoleErrors = [];
   const networkErrors = [];
   const pageErrors = [];
+  const navigationWaiters = new Set();
   let closed = false;
 
   const pushBounded = (items, value) => {
@@ -426,7 +429,7 @@ async function createCDPResponseMonitor(target) {
   };
 
   await new Promise((resolve, reject) => {
-    const pending = new Set([1, 2, 3]);
+    const pending = new Set([1, 2, 3, 4]);
     const timer = setTimeout(() => {
       try { ws.close(); } catch {}
       const err = new Error('Timed out enabling CDP monitoring');
@@ -438,6 +441,7 @@ async function createCDPResponseMonitor(target) {
       ws.send(JSON.stringify({ id: 1, method: 'Network.enable', params: {} }));
       ws.send(JSON.stringify({ id: 2, method: 'Runtime.enable', params: {} }));
       ws.send(JSON.stringify({ id: 3, method: 'Log.enable', params: {} }));
+      ws.send(JSON.stringify({ id: 4, method: 'Page.enable', params: {} }));
     };
     ws.onerror = () => {
       clearTimeout(timer);
@@ -491,6 +495,15 @@ async function createCDPResponseMonitor(target) {
         pushBounded(consoleErrors, message.params.entry.text || 'Browser log error');
         return;
       }
+      if (message.method === 'Page.domContentEventFired' || message.method === 'Page.loadEventFired') {
+        for (const waiter of [...navigationWaiters]) {
+          if (waiter.eventName !== message.method) continue;
+          clearTimeout(waiter.timer);
+          navigationWaiters.delete(waiter);
+          waiter.resolve();
+        }
+        return;
+      }
       if (message.method !== 'Network.responseReceived') return;
       const request = requests.get(message.params.requestId) || {};
       const response = {
@@ -513,6 +526,30 @@ async function createCDPResponseMonitor(target) {
   });
 
   return {
+    async waitForNavigation(action, operation) {
+      const waitUntil = String(action.wait_until || 'domcontentloaded').toLowerCase();
+      const eventName = waitUntil === 'load' ? 'Page.loadEventFired' : 'Page.domContentEventFired';
+      let waiter;
+      const navigation = new Promise((resolve, reject) => {
+        waiter = { eventName, resolve, reject, timer: null };
+        waiter.timer = setTimeout(() => {
+          navigationWaiters.delete(waiter);
+          const err = new Error(`Timed out waiting for navigation state: ${waitUntil}`);
+          err.code = 'BROWSER_WAIT_TIMEOUT';
+          err.details = { action: action.action, wait_until: waitUntil, timeout_ms: Number(action.timeout_ms || 10000) };
+          reject(err);
+        }, Number(action.timeout_ms || 10000));
+        navigationWaiters.add(waiter);
+      });
+      try {
+        await operation();
+        await navigation;
+      } catch (err) {
+        clearTimeout(waiter?.timer);
+        navigationWaiters.delete(waiter);
+        throw err;
+      }
+    },
     wait(action) {
       const existing = responses.findLast(response => responseMatches(response, action));
       if (existing) return Promise.resolve(existing);
@@ -548,6 +585,11 @@ async function createCDPResponseMonitor(target) {
         waiter.reject(Object.assign(new Error('CDP response monitor closed'), { code: 'BROWSER_CDP_MONITOR_CLOSED' }));
       }
       waiters.clear();
+      for (const waiter of navigationWaiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(Object.assign(new Error('CDP response monitor closed'), { code: 'BROWSER_CDP_MONITOR_CLOSED' }));
+      }
+      navigationWaiters.clear();
       try { ws.close(); } catch {}
     }
   };
@@ -792,6 +834,40 @@ async function cdpWaitForSelector(target, action) {
   }, Number(action.timeout_ms || 10000), `selector ${selector} to be ${state}`);
 }
 
+function textStateInDocument(expectedValue, exactMatch) {
+  const expected = String(expectedValue || '').replace(/\s+/g, ' ').trim();
+  const elements = Array.from(this.body?.querySelectorAll('*') || []);
+  let found = false;
+  let visible = false;
+  for (const el of elements) {
+    const actual = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    const matches = exactMatch === true ? actual === expected : actual.includes(expected);
+    if (!matches) continue;
+    found = true;
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if (style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0) visible = true;
+  }
+  return { found, visible };
+}
+
+async function cdpWaitForText(target, action) {
+  const expected = String(action.text ?? action.value ?? '').trim();
+  const state = String(action.state || 'visible').toLowerCase();
+  if (!expected) {
+    const err = new Error('wait_for_text requires text or value');
+    err.code = 'BROWSER_CDP_TARGET_NOT_FOUND';
+    throw err;
+  }
+  await pollUntil(async () => {
+    const current = await cdpCallOnDocument(target, textStateInDocument.toString(), [expected, action.exact === true]);
+    if (state === 'hidden') return !current.found || !current.visible;
+    if (state === 'detached') return !current.found;
+    if (state === 'attached') return current.found;
+    return current.found && current.visible;
+  }, Number(action.timeout_ms || 10000), `text ${expected} to be ${state}`);
+}
+
 async function cdpPressKey(target, key) {
   const value = String(key || '');
   const keyMap = {
@@ -819,8 +895,7 @@ async function runCDPActions(session, actions = [], requestedPageId = '') {
       if (type === 'wait') {
         await new Promise(resolve => setTimeout(resolve, action.value ?? 1000));
       } else if (type === 'goto') {
-        await cdpCall(target.webSocketDebuggerUrl, 'Page.navigate', { url: action.url }, cdpTimeout());
-        await new Promise(resolve => setTimeout(resolve, action.value ?? 750));
+        await monitor.waitForNavigation(action, () => cdpCall(target.webSocketDebuggerUrl, 'Page.navigate', { url: action.url }, cdpTimeout()));
         target = await cdpPageTarget(session, requestedPageId);
       } else if (type === 'click') {
         const selector = String(action.selector || '');
@@ -870,15 +945,13 @@ async function runCDPActions(session, actions = [], requestedPageId = '') {
           deltaX: Number(action.delta_x || 0), deltaY: Number(action.delta_y || 800)
         }, cdpTimeout());
       } else if (type === 'reload') {
-        await cdpCall(target.webSocketDebuggerUrl, 'Page.reload', {}, cdpTimeout());
-        await new Promise(resolve => setTimeout(resolve, 750));
+        await monitor.waitForNavigation(action, () => cdpCall(target.webSocketDebuggerUrl, 'Page.reload', {}, cdpTimeout()));
       } else if (type === 'back' || type === 'forward') {
         const history = await cdpCall(target.webSocketDebuggerUrl, 'Page.getNavigationHistory', {}, cdpTimeout());
         const offset = type === 'back' ? -1 : 1;
         const entry = history.entries?.[Number(history.currentIndex || 0) + offset];
         if (entry) {
-          await cdpCall(target.webSocketDebuggerUrl, 'Page.navigateToHistoryEntry', { entryId: entry.id }, cdpTimeout());
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await monitor.waitForNavigation(action, () => cdpCall(target.webSocketDebuggerUrl, 'Page.navigateToHistoryEntry', { entryId: entry.id }, cdpTimeout()));
         }
       } else if (type === 'wait_for_selector') {
         await cdpWaitForSelector(target, action);
@@ -888,15 +961,7 @@ async function runCDPActions(session, actions = [], requestedPageId = '') {
           return textOrURLMatches(target.url, action.url);
         }, Number(action.timeout_ms || 10000), `URL ${action.url}`);
       } else if (type === 'wait_for_text') {
-        const expected = String(action.text ?? action.value ?? '');
-        await pollUntil(async () => {
-          const result = await cdpCall(target.webSocketDebuggerUrl, 'Runtime.evaluate', {
-            expression: 'document.body ? document.body.innerText : ""',
-            returnByValue: true
-          }, cdpTimeout()).catch(() => ({ result: { value: '' } }));
-          const actual = String(result?.result?.value || '');
-          return action.exact === true ? actual === expected : actual.includes(expected);
-        }, Number(action.timeout_ms || 10000), `text ${expected}`);
+        await cdpWaitForText(target, action);
       } else if (type === 'wait_for_response') {
         await monitor.wait(action);
       } else {
@@ -1316,6 +1381,7 @@ async function closeCDPBrowser(session) {
 }
 
 async function closeOwnedBrowser(session) {
+  if (!browserProcessIsOwned(session)) return false;
   let daemonClosed = false;
   let closed = false;
   if (session.backend === 'daemon' && session.control_url) {
@@ -1330,6 +1396,12 @@ async function closeOwnedBrowser(session) {
     await removeEphemeralProfile(session);
   }
   return closed;
+}
+
+function browserProcessIsOwned(session) {
+  if (session?.browser_ownership) return session.browser_ownership === 'owned';
+  // 兼容升级前的状态文件：旧版 owned 会话没有 ownership，但会记录自己启动的进程或 daemon。
+  return Boolean(session?.visible_process || session?.backend === 'daemon');
 }
 
 function normalizeLocalStorage(value) {
@@ -1785,7 +1857,11 @@ async function main() {
   throw new Error(`Unsupported browser backend: ${session.backend}`);
 }
 
-main().catch(err => {
-  console.log(JSON.stringify(structuredErrorPayload(err)));
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch(err => {
+    console.log(JSON.stringify(structuredErrorPayload(err)));
+    process.exit(1);
+  });
+}
+
+export { browserProcessIsOwned, createCDPResponseMonitor, textStateInDocument };
