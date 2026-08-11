@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusText = "未安装"
         } else if currentStatus.healthy {
             if AppVersion.matchesHealthVersion(currentStatus.version) {
-                statusText = "运行正常 · AgentDock \(AppVersion.current)"
+                statusText = "运行正常"
             } else {
                 statusText = "版本异常 · AgentDock \(AppVersion.current) · Core \(AppVersion.display(currentStatus.version))"
             }
