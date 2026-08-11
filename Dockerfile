@@ -101,18 +101,19 @@ ENV AGENTDOCK_BROWSER_ENABLED=true \
 
 USER agentdock:agentdock
 
+FROM build AS browser-test-build
+
+RUN CGO_ENABLED=0 go test -c -tags browser_integration -o /out/browser-integration.test ./internal/tool/browser \
+    && CGO_ENABLED=0 go test -c -tags browser_integration -o /out/app-browser-integration.test ./internal/app
+
 FROM browser AS browser-test
 
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends xauth xvfb \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /usr/local/go /usr/local/go
-COPY --from=build /src /src
-ENV PATH=/usr/local/go/bin:$PATH
-WORKDIR /src
+COPY --from=browser-test-build --chmod=0755 /out/browser-integration.test /usr/local/bin/browser-integration.test
+COPY --from=browser-test-build --chmod=0755 /out/app-browser-integration.test /usr/local/bin/app-browser-integration.test
 USER agentdock:agentdock
-RUN CGO_ENABLED=0 xvfb-run -a env AGENTDOCK_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium \
-    go test -tags browser_integration ./internal/tool/browser ./internal/app -count=1
 
 FROM runtime-base AS runtime

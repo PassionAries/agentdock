@@ -291,6 +291,15 @@ https://agentdock.example.com/mcp
 
 浏览器工具（`browser_session`、`browser_act`、`browser_snapshot`）使用 Go 原生 CDP。非 browser 镜像环境需要本机安装 Chrome、Chromium 或 Microsoft Edge；AgentDock 不自动下载浏览器，浏览器能力不依赖 Node.js 或 Playwright。
 
+Docker 中启用浏览器能力时，在普通 Compose 文件上叠加 `docker-compose.browser.yml`。该覆盖文件会切换到 `browser-latest`、启用浏览器工具，并且只对 AgentDock browser 容器放宽 Docker seccomp，让 Chromium 能创建自己的 PID / Network namespace，同时继续保留 Chromium 自身 sandbox：
+
+```bash
+curl -fL https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.browser.yml -o docker-compose.browser.yml
+docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d
+```
+
+不要改成 Chromium `--no-sandbox`。如果不使用 Compose 而是直接运行 browser 镜像，需要仅对该 browser 容器显式传入 `--security-opt seccomp=unconfined`。
+
 正式镜像同步发布到：
 
 ```text

@@ -97,10 +97,9 @@ elif [[ "$pull_images" != "false" ]]; then
 fi
 
 AGENTDOCK_AUTH_TOKEN=compose-config-token \
-AGENTDOCK_IMAGE="$browser_image" \
-AGENTDOCK_BROWSER_ENABLED=true \
+AGENTDOCK_BROWSER_IMAGE="$browser_image" \
 AGENTDOCK_PUBLISH_PORT=18767 \
-  docker compose config >"$work_dir/compose.yml"
+  docker compose -f docker-compose.yml -f docker-compose.browser.yml config >"$work_dir/compose.yml"
 grep -q '/home/agentdock/.agentdock' "$work_dir/compose.yml"
 grep -q '/home/agentdock/AgentDock' "$work_dir/compose.yml"
 grep -q 'agentdock-healthcheck' "$work_dir/compose.yml"
@@ -108,6 +107,7 @@ grep -Eq 'shm_size|1073741824|1000000000' "$work_dir/compose.yml"
 grep -Eq 'published: "?18767"?' "$work_dir/compose.yml"
 grep -q 'target: 8765' "$work_dir/compose.yml"
 grep -q 'AGENTDOCK_BROWSER_ENABLED: "true"' "$work_dir/compose.yml" || grep -q 'AGENTDOCK_BROWSER_ENABLED: true' "$work_dir/compose.yml"
+grep -q 'seccomp=unconfined' "$work_dir/compose.yml"
 
 AGENTDOCK_AUTH_TOKEN=compose-config-token \
 AGENTDOCK_SERVER_URL=https://agent.example.test \
@@ -205,8 +205,18 @@ docker run --rm "$browser_image" sh -c '
   dpkg-query -W chromium-sandbox >/dev/null
 '
 
+if [[ "$build_images" == "true" ]]; then
+  for test_binary in browser-integration.test app-browser-integration.test; do
+    docker run --rm \
+      --security-opt seccomp=unconfined \
+      --entrypoint xvfb-run \
+      agentdock:test-browser-integration \
+      -a "/usr/local/bin/$test_binary" -test.count=1
+  done
+fi
+
 browser_token="browser-smoke-${RANDOM}-${RANDOM}"
-browser_container="$(docker run -d --rm -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
+browser_container="$(docker run -d --rm --security-opt seccomp=unconfined -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
 wait_for_healthy "$browser_container" browser
 browser_port="$(docker port "$browser_container" 8765/tcp | awk -F: 'NR == 1 {print $NF}')"
 AGENTDOCK_SMOKE_URL="http://127.0.0.1:$browser_port" \

@@ -680,6 +680,26 @@ func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
 	}
 }
 
+func TestBrowserComposeKeepsChromiumSandboxEnabled(t *testing.T) {
+	data, err := os.ReadFile("../docker-compose.browser.yml")
+	if err != nil {
+		t.Fatalf("read docker-compose.browser.yml: %v", err)
+	}
+	compose := string(data)
+	for _, want := range []string{
+		`AGENTDOCK_BROWSER_IMAGE:-ghcr.io/uvwt/agentdock:browser-latest`,
+		`AGENTDOCK_BROWSER_ENABLED: "true"`,
+		`seccomp=unconfined`,
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("docker-compose.browser.yml missing %q", want)
+		}
+	}
+	if strings.Contains(compose, "--no-sandbox") {
+		t.Fatal("browser compose must keep Chromium sandbox enabled")
+	}
+}
+
 func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testing.T) {
 	var setupBuilder strings.Builder
 	for _, path := range []string{
