@@ -209,6 +209,7 @@ if [[ "$build_images" == "true" ]]; then
   for test_binary in browser-integration.test app-browser-integration.test; do
     docker run --rm \
       --security-opt seccomp=unconfined \
+      --shm-size=1g \
       --entrypoint sh \
       -e TEST_BINARY="/usr/local/bin/$test_binary" \
       agentdock:test-browser-integration \
@@ -244,7 +245,7 @@ if [[ "$build_images" == "true" ]]; then
 fi
 
 browser_token="browser-smoke-${RANDOM}-${RANDOM}"
-browser_container="$(docker run -d --rm --security-opt seccomp=unconfined -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
+browser_container="$(docker run -d --rm --security-opt seccomp=unconfined --shm-size=1g -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
 wait_for_healthy "$browser_container" browser
 browser_port="$(docker port "$browser_container" 8765/tcp | awk -F: 'NR == 1 {print $NF}')"
 AGENTDOCK_SMOKE_URL="http://127.0.0.1:$browser_port" \

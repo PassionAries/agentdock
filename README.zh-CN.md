@@ -298,7 +298,7 @@ curl -fL https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.br
 docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d
 ```
 
-不要改成 Chromium `--no-sandbox`。如果不使用 Compose 而是直接运行 browser 镜像，需要仅对该 browser 容器显式传入 `--security-opt seccomp=unconfined`。
+不要改成 Chromium `--no-sandbox`。如果不使用 Compose 而是直接运行 browser 镜像，需要仅对该 browser 容器显式传入 `--security-opt seccomp=unconfined --shm-size=1g`。
 
 正式镜像同步发布到：
 

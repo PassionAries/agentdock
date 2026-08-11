@@ -296,7 +296,7 @@ curl -fL https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.br
 docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d
 ```
 
-Do not replace this with Chromium `--no-sandbox`. If you run the browser image without Compose, pass `--security-opt seccomp=unconfined` to that browser container explicitly.
+Do not replace this with Chromium `--no-sandbox`. If you run the browser image without Compose, pass `--security-opt seccomp=unconfined --shm-size=1g` to that browser container explicitly.
 
 Production images are published to:
 
