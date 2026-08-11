@@ -67,8 +67,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     throw ValidationError("AgentDock 更新结果在服务恢复过程中丢失。")
                 }
                 DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
-                self.refreshStatus()
-                self.presentUpdateResult(result)
+
+                // 更新事务恢复的是升级前的瞬时注册状态；公网 mode 才是 Tunnel 的长期意图。
+                // 收敛失败不回滚已经成功安装的新版本，但必须随更新结果明确提示用户。
+                var tunnelRecoveryWarning: String?
+                do {
+                    try await service.reconcileTunnelRegistrationFromConfiguration()
+                } catch {
+                    tunnelRecoveryWarning = "Tunnel 未能按当前公网模式恢复：\(error.localizedDescription)"
+                    NSLog("AgentDock 更新后 Tunnel 状态收敛失败：%@", error.localizedDescription)
+                }
+                self.presentUpdateResult(result, warning: tunnelRecoveryWarning)
             } catch {
                 // 成功更新结果只有在新版后台服务恢复后才消费。结果文件保持存在时，
                 // 外部更新事务会超时并自动恢复旧 App。
@@ -215,10 +224,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func presentUpdateResult(_ result: DesktopUpdateResult) {
+    private func presentUpdateResult(_ result: DesktopUpdateResult, warning: String? = nil) {
         NSApp.activate(ignoringOtherApps: true)
         let title = result.ok ? "AgentDock 更新完成" : "AgentDock 更新失败"
-        presentAlert(title: title, message: result.message)
+        let message = [result.message, warning]
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
+        presentAlert(title: title, message: message)
         refreshStatus()
     }
 
