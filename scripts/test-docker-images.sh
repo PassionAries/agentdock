@@ -209,9 +209,37 @@ if [[ "$build_images" == "true" ]]; then
   for test_binary in browser-integration.test app-browser-integration.test; do
     docker run --rm \
       --security-opt seccomp=unconfined \
-      --entrypoint xvfb-run \
+      --entrypoint sh \
+      -e TEST_BINARY="/usr/local/bin/$test_binary" \
       agentdock:test-browser-integration \
-      -a "/usr/local/bin/$test_binary" -test.count=1
+      -c '
+        set -eu
+        Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+        xvfb_pid=$!
+        cleanup_xvfb() {
+          kill "$xvfb_pid" >/dev/null 2>&1 || true
+          wait "$xvfb_pid" 2>/dev/null || true
+        }
+        trap cleanup_xvfb EXIT INT TERM
+
+        ready=false
+        for attempt in $(seq 1 50); do
+          if [ -S /tmp/.X11-unix/X99 ]; then
+            ready=true
+            break
+          fi
+          if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+            cat /tmp/xvfb.log >&2
+            exit 1
+          fi
+          sleep 0.1
+        done
+        if [ "$ready" != true ]; then
+          cat /tmp/xvfb.log >&2
+          exit 1
+        fi
+        DISPLAY=:99 "$TEST_BINARY" -test.count=1
+      '
   done
 fi
 

@@ -110,7 +110,7 @@ FROM browser AS browser-test
 
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends xauth xvfb \
+    && apt-get install -y --no-install-recommends xvfb \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=browser-test-build --chmod=0755 /out/browser-integration.test /usr/local/bin/browser-integration.test
 COPY --from=browser-test-build --chmod=0755 /out/app-browser-integration.test /usr/local/bin/app-browser-integration.test
