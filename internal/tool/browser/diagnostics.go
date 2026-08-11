@@ -32,11 +32,16 @@ type diagnostics struct {
 	pageErrors    []PageError
 	responses     []responseRecord
 	requests      map[network.RequestID]requestRecord
+	responseByID  map[network.RequestID]responseRecord
 	responseWake  chan struct{}
 }
 
 func newDiagnostics() *diagnostics {
-	return &diagnostics{requests: make(map[network.RequestID]requestRecord), responseWake: make(chan struct{}, 1)}
+	return &diagnostics{
+		requests:     make(map[network.RequestID]requestRecord),
+		responseByID: make(map[network.RequestID]responseRecord),
+		responseWake: make(chan struct{}, 1),
+	}
 }
 
 func (d *diagnostics) attach(ctx context.Context) {
@@ -57,11 +62,17 @@ func (d *diagnostics) attach(ctx context.Context) {
 				record.Method = request.Method
 			}
 			d.responses = append(d.responses, record)
+			d.responseByID[event.RequestID] = record
 			select {
 			case d.responseWake <- struct{}{}:
 			default:
 			}
 		case *network.EventLoadingFailed:
+			// Chromium 在部分平台会给无响应体的成功响应补发 ERR_ABORTED。
+			// 例如 fetch 收到 204 后，ResponseReceived 已经证明请求成功，此事件不能再被当成网络失败。
+			if response, ok := d.responseByID[event.RequestID]; ok && benignAbortAfterNoBodyResponse(event.ErrorText, response) {
+				return
+			}
 			request := d.requests[event.RequestID]
 			d.networkErrors = appendBoundedNetwork(d.networkErrors, NetworkError{URL: request.URL, Method: request.Method, ErrorText: event.ErrorText})
 		case *cdpruntime.EventConsoleAPICalled:
@@ -110,6 +121,16 @@ func (d *diagnostics) hasMatchingResponse(action WaitResponseAction) bool {
 		}
 	}
 	return false
+}
+
+func benignAbortAfterNoBodyResponse(errorText string, response responseRecord) bool {
+	if !strings.EqualFold(strings.TrimSpace(errorText), "net::ERR_ABORTED") {
+		return false
+	}
+	if strings.EqualFold(response.Method, "HEAD") {
+		return true
+	}
+	return (response.Status >= 100 && response.Status < 200) || response.Status == 204 || response.Status == 205 || response.Status == 304
 }
 
 func consoleMessage(args []*cdpruntime.RemoteObject) string {

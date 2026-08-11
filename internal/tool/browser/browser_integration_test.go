@@ -43,7 +43,7 @@ func integrationServer(t *testing.T) *httptest.Server {
 <input id="name" value="initial">
 <select id="choice"><option value="one">one</option><option value="two">two</option></select>
 <button id="fetch" onclick="fetch('/api?fast=1').then(()=>document.querySelector('#fetch-result').textContent='fetched')">fetch</button>
-<button id="diagnostics" onclick="console.error('console-boom'); setTimeout(()=>{throw new Error('page-boom')},0); fetch('http://127.0.0.1:1/network-boom')">diagnostics</button>
+<button id="diagnostics" onclick="console.error('console-boom'); setTimeout(()=>{throw new Error('page-boom')},0); fetch('/network-boom').catch(()=>{})">diagnostics</button>
 <button id="hide" onclick="document.querySelector('#hidden-parent').style.opacity='0'">hide</button>
 <div id="hidden-parent"><div id="hidden">visible now</div></div>
 <button id="remove" onclick="document.querySelector('#remove-me').remove()">remove</button>
@@ -58,6 +58,17 @@ document.body.dataset.theme = localStorage.getItem('theme') || '';
 	})
 	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/network-boom", func(w http.ResponseWriter, r *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijacking unavailable", http.StatusInternalServerError)
+			return
+		}
+		conn, _, err := hijacker.Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
 	})
 	mux.HandleFunc("/popup", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
