@@ -9,7 +9,6 @@ import (
 	"github.com/uvwt/agentdock/internal/tool/command/session"
 	toolcore "github.com/uvwt/agentdock/internal/tool/core"
 	toolfile "github.com/uvwt/agentdock/internal/tool/file"
-	toolmedia "github.com/uvwt/agentdock/internal/tool/media"
 	toolrecall "github.com/uvwt/agentdock/internal/tool/recall"
 	"github.com/uvwt/agentdock/internal/workspace"
 )
@@ -136,7 +135,4 @@ func (r *Runtime) skillInspect(args map[string]any) (Result, error) {
 }
 func (r *Runtime) nexusWorkflowJSON(ctx context.Context, method, path string, payload any) (Result, error) {
 	return r.taskTools.NexusWorkflowJSON(ctx, method, path, payload)
-}
-func (r *Runtime) browserRunnerScript() (toolmedia.ControlPath, error) {
-	return r.media.BrowserRunnerScript()
 }

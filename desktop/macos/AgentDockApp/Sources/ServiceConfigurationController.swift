@@ -7,8 +7,6 @@ struct EditableServiceSettings {
     let nexusEndpoint: String
     let nexusTokenReplacement: String?
     let browserEnabled: Bool
-    let browserRunnerDir: String
-    let browserNodePath: String
     let acpEnabled: Bool
     let acpAgent: ACPAgentPreset
     let acpCommand: String
@@ -27,20 +25,8 @@ struct EditableServiceSettings {
             throw ValidationError("Nexus Token 必须是单行文本。")
         }
 
-        let runner = browserRunnerDir.trimmingCharacters(in: .whitespacesAndNewlines)
-        let node = browserNodePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if browserEnabled {
-            guard runner.hasPrefix("/"), node.hasPrefix("/") else {
-                throw ValidationError("浏览器运行目录和 Node 路径必须是绝对路径。")
-            }
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: runner, isDirectory: &isDirectory), isDirectory.boolValue else {
-                throw ValidationError("浏览器运行目录不存在，请重新安装浏览器支持。")
-            }
-            guard FileManager.default.fileExists(atPath: runner + "/browser-runner.js"),
-                  FileManager.default.isExecutableFile(atPath: node) else {
-                throw ValidationError("浏览器支持文件不完整，请重新安装浏览器支持。")
-            }
+        if browserEnabled, BrowserSupportController.detectExecutable() == nil {
+            throw ValidationError("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge。")
         }
 
         var command = ""
@@ -59,8 +45,6 @@ struct EditableServiceSettings {
             nexusEndpoint: endpoint,
             nexusTokenReplacement: nexusTokenReplacement,
             browserEnabled: browserEnabled,
-            browserRunnerDir: runner,
-            browserNodePath: node,
             acpEnabled: acpEnabled,
             acpAgent: acpAgent,
             acpCommand: command,
@@ -110,8 +94,6 @@ final class ServiceConfigurationController {
             "AGENTDOCK_LOG_LEVEL": settings.logLevel,
             "AGENTDOCK_NEXUS_ENDPOINT": settings.nexusEndpoint,
             "AGENTDOCK_BROWSER_ENABLED": settings.browserEnabled ? "true" : "false",
-            "AGENTDOCK_BROWSER_RUNNER_DIR": settings.browserRunnerDir,
-            "AGENTDOCK_BROWSER_NODE_PATH": settings.browserNodePath,
             "AGENTDOCK_ACP_ENABLED": settings.acpEnabled ? "true" : "false",
             "AGENTDOCK_ACP_AGENT": settings.acpAgent.rawValue,
             "AGENTDOCK_ACP_COMMAND": settings.acpCommand,

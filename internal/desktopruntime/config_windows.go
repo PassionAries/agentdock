@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/uvwt/agentdock/internal/fs/atomicfile"
+	toolbrowser "github.com/uvwt/agentdock/internal/tool/browser"
 )
 
 type fileSnapshot struct {
@@ -58,6 +59,11 @@ func restoreSnapshots(snapshots []fileSnapshot) error {
 }
 
 func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) error {
+	if request.BrowserEnabled {
+		if _, err := toolbrowser.FindExecutable("", toolbrowser.BrowserAuto); err != nil {
+			return fmt.Errorf("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge: %w", err)
+		}
+	}
 	runtime, err := loadTunnelRuntime(request.RuntimeRoot)
 	if err != nil {
 		return err
@@ -112,17 +118,15 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	}
 
 	settings := controlPanelSettings{
-		Port:             request.Port,
-		LogLevel:         request.LogLevel,
-		NexusEndpoint:    request.NexusEndpoint,
-		BrowserEnabled:   request.BrowserEnabled,
-		BrowserRunnerDir: request.BrowserRunnerDir,
-		BrowserNodePath:  request.BrowserNodePath,
-		ACPEnabled:       request.ACPEnabled,
-		ACPAgent:         request.ACPAgent,
-		ACPCommand:       acpAdapter.Command,
-		ACPArgs:          append([]string(nil), acpAdapter.Args...),
-		ACPAllowedRoots:  append([]string(nil), request.ACPAllowedRoots...),
+		Port:            request.Port,
+		LogLevel:        request.LogLevel,
+		NexusEndpoint:   request.NexusEndpoint,
+		BrowserEnabled:  request.BrowserEnabled,
+		ACPEnabled:      request.ACPEnabled,
+		ACPAgent:        request.ACPAgent,
+		ACPCommand:      acpAdapter.Command,
+		ACPArgs:         append([]string(nil), acpAdapter.Args...),
+		ACPAllowedRoots: append([]string(nil), request.ACPAllowedRoots...),
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

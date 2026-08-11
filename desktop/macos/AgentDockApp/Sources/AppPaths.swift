@@ -26,7 +26,6 @@ struct AppPaths {
     var logs: URL { home.appendingPathComponent("Library/Logs/AgentDock") }
     var workDirectory: URL { home.appendingPathComponent("AgentDock") }
     var stateDirectory: URL { home.appendingPathComponent(".agentdock") }
-    var browserRunner: URL { stateDirectory.appendingPathComponent("browser-runner") }
 }
 
 struct ServiceConfiguration: Equatable {
@@ -36,8 +35,6 @@ struct ServiceConfiguration: Equatable {
         "AGENTDOCK_NEXUS_ENDPOINT",
         "AGENTDOCK_NEXUS_TOKEN",
         "AGENTDOCK_BROWSER_ENABLED",
-        "AGENTDOCK_BROWSER_RUNNER_DIR",
-        "AGENTDOCK_BROWSER_NODE_PATH",
         "AGENTDOCK_ACP_ENABLED",
         "AGENTDOCK_ACP_AGENT",
         "AGENTDOCK_ACP_COMMAND",
@@ -55,8 +52,6 @@ struct ServiceConfiguration: Equatable {
     let nexusEndpoint: String
     let nexusToken: String
     let browserEnabled: Bool
-    let browserRunnerDir: String
-    let browserNodePath: String
     let acpEnabled: Bool
     let acpAgent: ACPAgentPreset
     let acpCommand: String
@@ -106,8 +101,6 @@ struct ServiceConfiguration: Equatable {
             nexusEndpoint: values["AGENTDOCK_NEXUS_ENDPOINT"] ?? "",
             nexusToken: values["AGENTDOCK_NEXUS_TOKEN"] ?? "",
             browserEnabled: parseBool(values["AGENTDOCK_BROWSER_ENABLED"]),
-            browserRunnerDir: values["AGENTDOCK_BROWSER_RUNNER_DIR"] ?? "",
-            browserNodePath: values["AGENTDOCK_BROWSER_NODE_PATH"] ?? "",
             acpEnabled: parseBool(values["AGENTDOCK_ACP_ENABLED"]),
             acpAgent: ACPAgentPreset.parse(values["AGENTDOCK_ACP_AGENT"] ?? "codex"),
             acpCommand: values["AGENTDOCK_ACP_COMMAND"] ?? "",

@@ -219,8 +219,6 @@ public sealed class RuntimeService : IDisposable
             "--log-level", settings.LogLevel,
             "--nexus-endpoint", settings.NexusEndpoint ?? "",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
-            "--browser-runner-dir", settings.BrowserRunnerDir ?? "",
-            "--browser-node-path", settings.BrowserNodePath ?? "",
             $"--acp-enabled={settings.AcpEnabled.ToString().ToLowerInvariant()}",
             "--acp-agent", NormalizeAcpAgent(settings.AcpAgent),
             "--acp-allowed-roots-json", JsonSerializer.Serialize(settings.AcpAllowedRoots ?? [], JsonOptions)

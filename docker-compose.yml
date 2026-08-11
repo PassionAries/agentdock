@@ -15,7 +15,7 @@ services:
       AGENTDOCK_HOST: "0.0.0.0"
       AGENTDOCK_PORT: "8765"
       AGENTDOCK_SERVER_URL: "${AGENTDOCK_SERVER_URL:-}"
-      # 浏览器版镜像需设为 true，并切换 AGENTDOCK_IMAGE 到 browser 标签。
+      # Go 原生 CDP 浏览器版镜像需设为 true，并切换 AGENTDOCK_IMAGE 到 browser 标签；镜像内 Chromium 路径已预配置。
       AGENTDOCK_BROWSER_ENABLED: "${AGENTDOCK_BROWSER_ENABLED:-false}"
     healthcheck:
       test: ["CMD", "agentdock-healthcheck"]

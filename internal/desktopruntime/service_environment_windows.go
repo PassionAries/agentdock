@@ -24,8 +24,6 @@ var managedCoreEnvironment = []string{
 	"AGENTDOCK_NEXUS_ENDPOINT",
 	"AGENTDOCK_NEXUS_TOKEN",
 	"AGENTDOCK_BROWSER_ENABLED",
-	"AGENTDOCK_BROWSER_RUNNER_DIR",
-	"AGENTDOCK_BROWSER_NODE_PATH",
 	"AGENTDOCK_ACP_ENABLED",
 	"AGENTDOCK_ACP_AGENT",
 	"AGENTDOCK_ACP_COMMAND",
@@ -41,17 +39,15 @@ var managedCoreEnvironment = []string{
 }
 
 type controlPanelSettings struct {
-	Port             int      `json:"port"`
-	LogLevel         string   `json:"log_level"`
-	NexusEndpoint    string   `json:"nexus_endpoint"`
-	BrowserEnabled   bool     `json:"browser_enabled"`
-	BrowserRunnerDir string   `json:"browser_runner_dir"`
-	BrowserNodePath  string   `json:"browser_node_path"`
-	ACPEnabled       bool     `json:"acp_enabled"`
-	ACPAgent         string   `json:"acp_agent"`
-	ACPCommand       string   `json:"acp_command"`
-	ACPArgs          []string `json:"acp_args"`
-	ACPAllowedRoots  []string `json:"acp_allowed_roots"`
+	Port            int      `json:"port"`
+	LogLevel        string   `json:"log_level"`
+	NexusEndpoint   string   `json:"nexus_endpoint"`
+	BrowserEnabled  bool     `json:"browser_enabled"`
+	ACPEnabled      bool     `json:"acp_enabled"`
+	ACPAgent        string   `json:"acp_agent"`
+	ACPCommand      string   `json:"acp_command"`
+	ACPArgs         []string `json:"acp_args"`
+	ACPAllowedRoots []string `json:"acp_allowed_roots"`
 }
 
 func platformPrepareCoreEnvironment(runtimeRoot string) error {
@@ -93,12 +89,6 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		} else if token != "" {
 			managed["AGENTDOCK_NEXUS_TOKEN"] = token
 		}
-	}
-	if settings.BrowserRunnerDir != "" {
-		managed["AGENTDOCK_BROWSER_RUNNER_DIR"] = settings.BrowserRunnerDir
-	}
-	if settings.BrowserNodePath != "" {
-		managed["AGENTDOCK_BROWSER_NODE_PATH"] = settings.BrowserNodePath
 	}
 	if settings.ACPEnabled {
 		info, statErr := os.Stat(settings.ACPCommand)
@@ -177,8 +167,6 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 		return controlPanelSettings{}, fmt.Errorf("不支持的日志级别: %s", settings.LogLevel)
 	}
 	settings.NexusEndpoint = strings.TrimSpace(settings.NexusEndpoint)
-	settings.BrowserRunnerDir = strings.TrimSpace(settings.BrowserRunnerDir)
-	settings.BrowserNodePath = strings.TrimSpace(settings.BrowserNodePath)
 	settings.ACPAgent = strings.ToLower(strings.TrimSpace(settings.ACPAgent))
 	if settings.ACPAgent == "" {
 		settings.ACPAgent = "codex"

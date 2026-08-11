@@ -287,7 +287,9 @@ https://agentdock.example.com/mcp
 | --- | --- |
 | `latest` / `<version>` | 正式运行镜像，不包含 Go 编译工具链 |
 | `dev-latest` / `dev-<version>` | 开发镜像，包含 Go、C 和 C++ 构建工具链 |
-| `browser-latest` / `browser-<version>` | 浏览器自动化镜像，包含 Chromium 运行环境 |
+| `browser-latest` / `browser-<version>` | Go 原生 CDP 浏览器自动化镜像，包含 Chromium 运行环境 |
+
+浏览器工具（`browser_session`、`browser_act`、`browser_snapshot`）使用 Go 原生 CDP。非 browser 镜像环境需要本机安装 Chrome、Chromium 或 Microsoft Edge；AgentDock 不自动下载浏览器，浏览器能力不依赖 Node.js 或 Playwright。
 
 正式镜像同步发布到：
 

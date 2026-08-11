@@ -100,8 +100,6 @@ public partial class MainWindow : Window
                 SelectLogLevel(snapshot.Settings.LogLevel);
                 NexusEndpointTextBox.Text = snapshot.Settings.NexusEndpoint;
                 BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
-                BrowserRunnerDirTextBox.Text = snapshot.Settings.BrowserRunnerDir;
-                BrowserNodePathTextBox.Text = snapshot.Settings.BrowserNodePath;
                 AcpEnabledCheckBox.IsChecked = snapshot.Settings.AcpEnabled;
                 SelectAcpAgent(snapshot.Settings.AcpAgent);
                 AcpAllowedRootTextBox.Text = snapshot.Settings.AcpAllowedRoots.FirstOrDefault()
@@ -347,8 +345,6 @@ public partial class MainWindow : Window
             LogLevel = SelectedLogLevel(),
             NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
-            BrowserRunnerDir = BrowserRunnerDirTextBox.Text.Trim(),
-            BrowserNodePath = BrowserNodePathTextBox.Text.Trim(),
             AcpEnabled = acpEnabled,
             AcpAgent = acpAgent,
             AcpAllowedRoots = acpEnabled ? [acpRoot] : []

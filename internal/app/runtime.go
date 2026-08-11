@@ -16,6 +16,7 @@ import (
 	mcpclient "github.com/uvwt/agentdock/internal/mcp/client"
 	"github.com/uvwt/agentdock/internal/taskstate"
 	toolacp "github.com/uvwt/agentdock/internal/tool/acp"
+	toolbrowser "github.com/uvwt/agentdock/internal/tool/browser"
 	toolcommand "github.com/uvwt/agentdock/internal/tool/command"
 	toolcore "github.com/uvwt/agentdock/internal/tool/core"
 	toolfile "github.com/uvwt/agentdock/internal/tool/file"
@@ -41,6 +42,7 @@ type Runtime struct {
 	git           *toolgit.Service
 	dynamicMCP    *toolmcp.Service
 	media         *toolmedia.Service
+	browser       *toolbrowser.Service
 	recall        *toolrecall.Service
 	taskTools     *tooltask.Service
 	acp           *toolacp.Service
@@ -85,6 +87,7 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 	runtime.git = toolgit.New(ws, runtime.command.CommandEnv)
 	runtime.dynamicMCP = toolmcp.New(mcpClients, envs)
 	runtime.media = toolmedia.New(cfg, ws, runtime.command.InternalCommandEnv)
+	runtime.browser = toolbrowser.New(toolbrowser.Config{AgentDockHome: cfg.AgentDockHome, ExecutablePath: cfg.BrowserExecutablePath})
 	runtime.recall = toolrecall.New(func() config.Config { return runtime.cfg })
 	runtime.taskTools = tooltask.New(func() config.Config { return runtime.cfg }, tasks)
 	if cfg.ACPEnabled {
@@ -133,6 +136,11 @@ func (r *Runtime) Close() error {
 		if r.acp != nil {
 			if err := r.acp.Close(); err != nil {
 				closeErrors = append(closeErrors, fmt.Errorf("close ACP runtime: %w", err))
+			}
+		}
+		if r.browser != nil {
+			if err := r.browser.Close(); err != nil {
+				closeErrors = append(closeErrors, fmt.Errorf("close browser runtime: %w", err))
 			}
 		}
 		if r.command != nil {

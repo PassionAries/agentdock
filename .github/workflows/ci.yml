@@ -44,9 +44,6 @@ jobs:
       - name: Build
         run: go build ./cmd/agentdock
 
-      - name: Check browser runner syntax
-        run: node --check tools/browser-runner/browser-runner.js
-
       - name: Check Linux installer entry
         if: runner.os == 'Linux'
         run: |
@@ -116,6 +113,32 @@ jobs:
           if ($actual -ne $plainText) {
             throw "DPAPI round trip mismatch. Expected '$plainText', got '$actual'."
           }
+
+
+  browser-integration:
+    name: Native browser integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth
+
+      - name: Browser integration race
+        shell: bash
+        run: |
+          browser_path="$(command -v google-chrome-stable || command -v google-chrome || command -v chromium-browser || command -v chromium || true)"
+          test -n "$browser_path"
+          xvfb-run -a env AGENTDOCK_BROWSER_EXECUTABLE_PATH="$browser_path" go test -race -tags browser_integration ./internal/tool/browser ./internal/app -count=1
 
 
   container:

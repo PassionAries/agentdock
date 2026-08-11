@@ -81,6 +81,7 @@ if [[ "$build_images" == "true" ]]; then
   docker build "${docker_build_args[@]}" --target runtime -t "$runtime_image" .
   docker build "${docker_build_args[@]}" --target dev -t "$dev_image" .
   docker build "${docker_build_args[@]}" --target browser -t "$browser_image" .
+  docker build "${docker_build_args[@]}" --target browser-test -t agentdock:test-browser-integration .
 elif [[ "$build_images" != "false" ]]; then
   printf 'AGENTDOCK_TEST_BUILD must be true or false\n' >&2
   exit 1
@@ -199,31 +200,9 @@ docker run --rm "$dev_image" sh -c '
 test "$(docker run --rm "$browser_image" id -u)" = "10001"
 test "$(docker run --rm "$browser_image" id -g)" = "10001"
 docker run --rm "$browser_image" sh -c '
-  test "$AGENTDOCK_BROWSER_RUNNER_DIR" = /opt/agentdock/browser-runner
   test "$AGENTDOCK_BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium
-  test -f "$AGENTDOCK_BROWSER_RUNNER_DIR/browser-runner.js"
-  test -f "$AGENTDOCK_BROWSER_RUNNER_DIR/package-lock.json"
-  test ! -e "$HOME/.agentdock/browser-runner/browser-runner.js"
-  npm --prefix "$AGENTDOCK_BROWSER_RUNNER_DIR" ls --omit=dev >/dev/null
+  test -x "$AGENTDOCK_BROWSER_EXECUTABLE_PATH"
 '
-
-docker run --rm \
-  --entrypoint node \
-  --workdir /opt/agentdock/browser-runner \
-  "$browser_image" \
-  --input-type=module \
-  -e '
-    import { chromium } from "playwright-core";
-    const browser = await chromium.launch({
-      executablePath: process.env.AGENTDOCK_BROWSER_EXECUTABLE_PATH,
-      headless: true
-    });
-    const page = await browser.newPage();
-    await page.setContent("<title>AgentDock Browser Image</title><main>browser-ok</main>");
-    if (await page.title() !== "AgentDock Browser Image") process.exit(1);
-    if (await page.locator("main").textContent() !== "browser-ok") process.exit(1);
-    await browser.close();
-  '
 
 browser_token="browser-smoke-${RANDOM}-${RANDOM}"
 browser_container="$(docker run -d --rm -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
@@ -235,10 +214,6 @@ AGENTDOCK_SMOKE_BROWSER=true \
 AGENTDOCK_SMOKE_TIMEOUT_SECONDS=30 \
   ./scripts/smoke-docker.sh
 
-docker exec "$browser_container" sh -c '
-  test ! -e "$HOME/.agentdock/browser-runner/browser-runner.js"
-  test -f "$HOME/.agentdock/browser-artifacts/browser-state.json"
-'
 docker rm -f "$browser_container" >/dev/null
 browser_container=""
 

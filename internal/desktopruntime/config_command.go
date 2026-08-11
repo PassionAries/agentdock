@@ -14,17 +14,15 @@ import (
 
 // ConfigUpdateRequest 是桌面端保存日常运行设置时使用的结构化请求。
 type ConfigUpdateRequest struct {
-	RuntimeRoot      string
-	Port             int
-	LogLevel         string
-	NexusEndpoint    string
-	NexusTokenFile   string
-	BrowserEnabled   bool
-	BrowserRunnerDir string
-	BrowserNodePath  string
-	ACPEnabled       bool
-	ACPAgent         string
-	ACPAllowedRoots  []string
+	RuntimeRoot     string
+	Port            int
+	LogLevel        string
+	NexusEndpoint   string
+	NexusTokenFile  string
+	BrowserEnabled  bool
+	ACPEnabled      bool
+	ACPAgent        string
+	ACPAllowedRoots []string
 }
 
 func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -41,8 +39,6 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		nexusEndpoint := flags.String("nexus-endpoint", "", "Nexus endpoint")
 		nexusTokenFile := flags.String("nexus-token-file", "", "Nexus Token 临时文件")
 		browserEnabled := flags.Bool("browser-enabled", false, "启用浏览器")
-		browserRunnerDir := flags.String("browser-runner-dir", "", "浏览器运行器目录")
-		browserNodePath := flags.String("browser-node-path", "", "Node.js 路径")
 		acpEnabled := flags.Bool("acp-enabled", false, "启用 Coding Agent")
 		acpAgent := flags.String("acp-agent", "codex", "Coding Agent 预设")
 		acpAllowedRootsJSON := flags.String("acp-allowed-roots-json", "[]", "Coding Agent 允许目录 JSON 数组")
@@ -57,17 +53,15 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			return fmt.Errorf("解析 Coding Agent 允许目录失败: %w", err)
 		}
 		request := ConfigUpdateRequest{
-			RuntimeRoot:      strings.TrimSpace(*runtimeRoot),
-			Port:             *port,
-			LogLevel:         strings.ToLower(strings.TrimSpace(*logLevel)),
-			NexusEndpoint:    strings.TrimSpace(*nexusEndpoint),
-			NexusTokenFile:   strings.TrimSpace(*nexusTokenFile),
-			BrowserEnabled:   *browserEnabled,
-			BrowserRunnerDir: strings.TrimSpace(*browserRunnerDir),
-			BrowserNodePath:  strings.TrimSpace(*browserNodePath),
-			ACPEnabled:       *acpEnabled,
-			ACPAgent:         strings.ToLower(strings.TrimSpace(*acpAgent)),
-			ACPAllowedRoots:  acpAllowedRoots,
+			RuntimeRoot:     strings.TrimSpace(*runtimeRoot),
+			Port:            *port,
+			LogLevel:        strings.ToLower(strings.TrimSpace(*logLevel)),
+			NexusEndpoint:   strings.TrimSpace(*nexusEndpoint),
+			NexusTokenFile:  strings.TrimSpace(*nexusTokenFile),
+			BrowserEnabled:  *browserEnabled,
+			ACPEnabled:      *acpEnabled,
+			ACPAgent:        strings.ToLower(strings.TrimSpace(*acpAgent)),
+			ACPAllowedRoots: acpAllowedRoots,
 		}
 		if err := validateConfigUpdate(request); err != nil {
 			return err
@@ -94,9 +88,7 @@ func validateConfigUpdate(request ConfigUpdateRequest) error {
 	default:
 		return fmt.Errorf("不支持的日志级别: %s", request.LogLevel)
 	}
-	if strings.ContainsAny(request.NexusEndpoint, "\r\n") ||
-		strings.ContainsAny(request.BrowserRunnerDir, "\r\n") ||
-		strings.ContainsAny(request.BrowserNodePath, "\r\n") {
+	if strings.ContainsAny(request.NexusEndpoint, "\r\n") {
 		return errors.New("配置值不能包含换行符")
 	}
 	if !request.ACPEnabled {

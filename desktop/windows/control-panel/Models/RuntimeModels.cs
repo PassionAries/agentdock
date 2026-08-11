@@ -70,12 +70,6 @@ public sealed class ControlPanelSettings
     [JsonPropertyName("browser_enabled")]
     public bool BrowserEnabled { get; set; }
 
-    [JsonPropertyName("browser_runner_dir")]
-    public string BrowserRunnerDir { get; set; } = "";
-
-    [JsonPropertyName("browser_node_path")]
-    public string BrowserNodePath { get; set; } = "";
-
     [JsonPropertyName("acp_enabled")]
     public bool AcpEnabled { get; set; }
 

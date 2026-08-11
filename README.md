@@ -285,7 +285,9 @@ A public endpoint must use HTTPS. `AGENTDOCK_SERVER_URL` must contain only the o
 | --- | --- |
 | `latest` / `<version>` | Production runtime image without the Go toolchain |
 | `dev-latest` / `dev-<version>` | Development image with Go, C, and C++ build tools |
-| `browser-latest` / `browser-<version>` | Browser automation image with Chromium |
+| `browser-latest` / `browser-<version>` | Native Go CDP browser automation image with Chromium |
+
+Browser tools (`browser_session`, `browser_act`, and `browser_snapshot`) use a native Go CDP runtime. Outside the browser image, install Chrome, Chromium, or Microsoft Edge locally; AgentDock does not download a browser and browser automation does not require Node.js or Playwright.
 
 Production images are published to:
 

@@ -19,9 +19,6 @@ func InputSchema(name string) map[string]any {
 	objectProp := func(desc string) map[string]any {
 		return map[string]any{"type": "object", "description": desc, "additionalProperties": true}
 	}
-	arrayProp := func(desc string) map[string]any {
-		return map[string]any{"type": "array", "description": desc, "items": map[string]any{"type": "object"}}
-	}
 
 	switch name {
 	case "read_file":
@@ -279,46 +276,58 @@ func InputSchema(name string) map[string]any {
 		required = []string{"action"}
 	case "browser_session":
 		props["action"] = map[string]any{"type": "string", "description": "Browser session action.", "enum": []string{"start", "close", "cleanup_stale"}}
-		props["url"] = stringProp("Initial URL when action=start. Defaults to about:blank.")
-		props["backend"] = map[string]any{"type": "string", "description": "Browser backend. Defaults to playwright; use cdp for an existing DevTools endpoint or an AgentDock-managed system browser.", "enum": []string{"playwright", "cdp"}}
-		props["browser"] = stringProp("Browser family: chromium, chrome, edge, or msedge. On macOS prefer chrome to use system Google Chrome; edge/msedge selects Microsoft Edge. Do not run or suggest the Playwright browser install command for missing bundled Chromium.")
-		props["channel"] = stringProp("Optional Playwright Chromium channel, such as msedge or chrome.")
-		props["cdp_url"] = stringProp("Optional CDP endpoint. When backend=cdp and omitted, AgentDock first checks known local loopback CDP endpoints, then launches an isolated local system browser if none is available.")
-		props["headless"] = boolProp("Run browser headless. Defaults to true.")
-		props["viewport"] = objectProp("Viewport object, for example {width:1280,height:800}.")
-		props["session_id"] = stringProp("Browser session id.")
-		props["profile_id"] = stringProp("Optional persistent browser profile id stored under browser artifacts. Reuses cookies/localStorage across runs.")
-		props["cookies"] = arrayProp("Optional Playwright cookies to add to the browser context.")
-		props["local_storage"] = objectProp("Optional localStorage map by origin, for example origin to key/value object.")
-		props["storage_state"] = objectProp("Optional Playwright storageState object.")
-		props["storage_state_path"] = stringProp("Optional Playwright storage state JSON path to load when action=start. When saving, an explicitly supplied path is reused as the destination.")
-		props["save_storage_state"] = boolProp("Save context storage state after action/snapshot and return storage_state_path.")
-		props["reload_after_local_storage"] = boolProp("Reload the page after applying localStorage. Defaults to true.")
-		props["max_age_ms"] = intProp("When action=cleanup_stale, remove sessions older than this age. Defaults to 6 hours.")
+		props["url"] = stringProp("Initial URL for action=start. Defaults to about:blank.")
+		props["browser"] = map[string]any{"type": "string", "description": "Chromium-family browser to launch. Defaults to auto.", "enum": []string{"auto", "chrome", "chromium", "edge"}}
+		props["headless"] = boolProp("Run the AgentDock-owned browser headless. Defaults to true.")
+		props["viewport"] = map[string]any{
+			"type": "object", "description": "Viewport for action=start.", "additionalProperties": false,
+			"properties": map[string]any{
+				"width":  boundedIntProp("Viewport width in CSS pixels.", 320, 7680),
+				"height": boundedIntProp("Viewport height in CSS pixels.", 200, 4320),
+			},
+		}
+		props["session_id"] = stringProp("In-memory browser session id for action=close.")
+		props["profile_id"] = stringProp("Optional persistent profile id stored under ~/.agentdock/browser/profiles/<id>.")
+		props["cookies"] = map[string]any{
+			"type": "array", "description": "Cookies injected when action=start.",
+			"items": map[string]any{
+				"type": "object", "additionalProperties": false, "required": []string{"name", "value"},
+				"properties": map[string]any{
+					"name": stringProp("Cookie name."), "value": stringProp("Cookie value."),
+					"url": stringProp("URL used to scope the cookie."), "domain": stringProp("Cookie domain; provide url or domain."),
+					"path": stringProp("Cookie path."), "expires": map[string]any{"type": "number", "minimum": 0},
+					"http_only": boolProp("Set HttpOnly."), "secure": boolProp("Set Secure."),
+					"same_site": map[string]any{"type": "string", "enum": []string{"strict", "lax", "none"}},
+				},
+			},
+		}
+		props["local_storage"] = map[string]any{
+			"type": "object", "description": "Origin to string key/value localStorage map.",
+			"additionalProperties": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+		}
+		props["reload_after_local_storage"] = boolProp("Reload the final URL after localStorage injection. Defaults to true.")
+		props["max_age_ms"] = map[string]any{"type": "integer", "description": "For cleanup_stale, remove current-process sessions inactive for this age. Defaults to 6 hours.", "minimum": 1, "maximum": 31536000000}
 		props["timeout_ms"] = boundedIntProp("Operation timeout in milliseconds. Defaults to 30000 and is capped at 300000.", 1, 300000)
+		required = []string{"action"}
 	case "browser_act":
-		props["session_id"] = stringProp("Browser session id.")
-		props["page_id"] = stringProp("Page id returned by browser_session, browser_act, or browser_snapshot. Selects which page receives the actions.")
+		props["session_id"] = stringProp("In-memory browser session id.")
+		props["page_id"] = stringProp("Optional CDP target id. Omit to use the active page.")
 		props["actions"] = browserActionsProp()
-		props["full_page"] = boolProp("Capture full-page screenshot in the final snapshot.")
-		props["max_text_chars"] = intProp("Maximum body text characters in snapshot.")
-		props["retention_seconds"] = intProp("Signed screenshot URL retention in seconds. Defaults to 86400 and is capped at 604800.")
-		props["close_after"] = boolProp("Close and remove the browser session after the action/snapshot succeeds.")
-		props["save_storage_state"] = boolProp("Save context storage state and return storage_state_path.")
-		props["storage_state_path"] = stringProp("Optional destination path when save_storage_state=true. Relative paths resolve under browser artifacts.")
-		props["max_interactive_elements"] = intProp("Maximum visible interactive elements to return. Defaults to 40.")
-		props["timeout_ms"] = boundedIntProp("Operation timeout in milliseconds. Defaults to 30000 and is capped at 300000.", 1, 300000)
+		props["full_page"] = boolProp("Capture the full page in the final PNG screenshot.")
+		props["max_text_chars"] = boundedIntProp("Maximum normalized body text characters. Defaults to 8000.", 1, 50000)
+		props["max_interactive_elements"] = boundedIntProp("Maximum visible interactive elements. Defaults to 40.", 1, 200)
+		props["retention_seconds"] = boundedIntProp("Screenshot Artifact retention seconds. Zero uses the Artifact default; capped at 604800.", 0, 604800)
+		props["close_after"] = boolProp("Close the session only after all actions, final snapshot, and screenshot Artifact publication succeed.")
+		props["timeout_ms"] = boundedIntProp("Overall operation timeout in milliseconds. Defaults to 30000 and is capped at 300000.", 1, 300000)
 		required = []string{"session_id", "actions"}
 	case "browser_snapshot":
-		props["session_id"] = stringProp("Browser session id.")
-		props["page_id"] = stringProp("Page id returned by browser_session, browser_act, or browser_snapshot. Selects which page is captured.")
-		props["full_page"] = boolProp("Capture full-page screenshot for snapshot.")
-		props["max_text_chars"] = intProp("Maximum body text characters in snapshot.")
-		props["retention_seconds"] = intProp("Signed screenshot URL retention in seconds. Defaults to 86400 and is capped at 604800.")
-		props["close_after"] = boolProp("Close and remove the browser session after snapshot succeeds.")
-		props["save_storage_state"] = boolProp("Save context storage state and return storage_state_path.")
-		props["storage_state_path"] = stringProp("Optional destination path when save_storage_state=true. Relative paths resolve under browser artifacts.")
-		props["max_interactive_elements"] = intProp("Maximum visible interactive elements to return. Defaults to 40.")
+		props["session_id"] = stringProp("In-memory browser session id.")
+		props["page_id"] = stringProp("Optional CDP target id. Omit to use the active page.")
+		props["full_page"] = boolProp("Capture the full page directly through CDP as PNG.")
+		props["max_text_chars"] = boundedIntProp("Maximum normalized body text characters. Defaults to 8000.", 1, 50000)
+		props["max_interactive_elements"] = boundedIntProp("Maximum visible interactive elements. Defaults to 40.", 1, 200)
+		props["retention_seconds"] = boundedIntProp("Screenshot Artifact retention seconds. Zero uses the Artifact default; capped at 604800.", 0, 604800)
+		props["close_after"] = boolProp("Close the session only after snapshot and screenshot Artifact publication succeed.")
 		props["timeout_ms"] = boundedIntProp("Operation timeout in milliseconds. Defaults to 30000 and is capped at 300000.", 1, 300000)
 		required = []string{"session_id"}
 	case "git_read":
@@ -373,7 +382,7 @@ func InputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
-	case "exec_command", "acp_session", "acp_prompt", "acp_interaction", "recall_bootstrap", "recall_search", "recall_read", "recall_write", "recall_maintain", "private_note_manage", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call":
+	case "exec_command", "acp_session", "acp_prompt", "acp_interaction", "recall_bootstrap", "recall_search", "recall_read", "recall_write", "recall_maintain", "private_note_manage", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call", "browser_session", "browser_act", "browser_snapshot":
 		// 这些工具的参数契约需要严格收敛，避免删除或拼错的字段被静默忽略。
 		schema["additionalProperties"] = false
 	}
@@ -384,34 +393,38 @@ func InputSchema(name string) map[string]any {
 }
 
 func browserActionsProp() map[string]any {
+	stringProp := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+	intProp := func(desc string, minimum, maximum int) map[string]any {
+		return map[string]any{"type": "integer", "description": desc, "minimum": minimum, "maximum": maximum}
+	}
+	boolProp := func(desc string) map[string]any { return map[string]any{"type": "boolean", "description": desc} }
+	actionObject := func(name string, required []string, properties map[string]any) map[string]any {
+		properties["action"] = map[string]any{"type": "string", "const": name}
+		return map[string]any{"type": "object", "additionalProperties": false, "required": append([]string{"action"}, required...), "properties": properties}
+	}
+	waitUntil := map[string]any{"type": "string", "enum": []string{"domcontentloaded", "load"}, "description": "Real CDP navigation lifecycle event to await."}
+	state := map[string]any{"type": "string", "enum": []string{"visible", "hidden", "attached", "detached"}}
+	timeout := intProp("Per-action timeout in milliseconds.", 1, 300000)
+	selector := stringProp("CSS selector. Playwright locators and XPath are not accepted.")
+
 	return map[string]any{
-		"type":        "array",
-		"description": "Browser actions. Every item must use the action field; type/ms are not accepted.",
-		"items": map[string]any{
-			"type":                 "object",
-			"additionalProperties": true,
-			"required":             []string{"action"},
-			"properties": map[string]any{
-				"action": map[string]any{
-					"type":        "string",
-					"description": "Required action name. Use this field, not type.",
-					"enum":        []string{"goto", "click", "fill", "press", "wait", "wait_for_selector", "wait_for_url", "wait_for_text", "wait_for_response", "select", "scroll", "reload", "back", "forward"},
-				},
-				"url":         map[string]any{"type": "string", "description": "URL for action=goto, glob/substring for wait_for_url, or URL substring for wait_for_response."},
-				"selector":    map[string]any{"type": "string", "description": "CSS selector for click/fill/press/wait_for_selector/select."},
-				"value":       map[string]any{"description": "Value for fill/select, wait duration for wait, or fallback text for wait_for_text."},
-				"text":        map[string]any{"type": "string", "description": "Text to wait for when action=wait_for_text."},
-				"exact":       map[string]any{"type": "boolean", "description": "Require exact text match for wait_for_text."},
-				"state":       map[string]any{"type": "string", "description": "Element wait state, such as visible, hidden, attached, or detached."},
-				"url_pattern": map[string]any{"type": "string", "description": "Regular expression matched against response URLs for wait_for_response."},
-				"method":      map[string]any{"type": "string", "description": "Optional HTTP method for wait_for_response."},
-				"status":      map[string]any{"type": "integer", "description": "Optional HTTP status for wait_for_response."},
-				"key":         map[string]any{"type": "string", "description": "Keyboard key for action=press."},
-				"timeout_ms":  map[string]any{"type": "integer", "description": "Timeout for wait_for_selector, wait_for_url, wait_for_text, or wait_for_response."},
-				"wait_until":  map[string]any{"type": "string", "description": "Navigation wait state for goto/reload/back/forward/wait_for_url, such as domcontentloaded or load."},
-				"delta_x":     map[string]any{"type": "integer", "description": "Horizontal wheel delta for action=scroll."},
-				"delta_y":     map[string]any{"type": "integer", "description": "Vertical wheel delta for action=scroll."},
-			},
-		},
+		"type": "array", "minItems": 1, "maxItems": 100,
+		"description": "Strict browser actions executed through native Go CDP.",
+		"items": map[string]any{"oneOf": []map[string]any{
+			actionObject("goto", []string{"url"}, map[string]any{"url": stringProp("Destination URL."), "wait_until": waitUntil, "timeout_ms": timeout}),
+			actionObject("click", []string{"selector"}, map[string]any{"selector": selector}),
+			actionObject("fill", []string{"selector", "value"}, map[string]any{"selector": selector, "value": stringProp("Replacement input value.")}),
+			actionObject("press", []string{"key"}, map[string]any{"selector": selector, "key": stringProp("Key name or text to send.")}),
+			actionObject("wait", []string{"value"}, map[string]any{"value": intProp("Duration in milliseconds.", 0, 300000)}),
+			actionObject("wait_for_selector", []string{"selector"}, map[string]any{"selector": selector, "state": state, "timeout_ms": timeout}),
+			actionObject("wait_for_url", []string{"url"}, map[string]any{"url": stringProp("URL substring or * / ? wildcard pattern."), "timeout_ms": timeout}),
+			actionObject("wait_for_text", []string{"text"}, map[string]any{"text": stringProp("Text matched against each individual DOM element after whitespace normalization."), "exact": boolProp("Require one element's normalized text to equal text."), "state": state, "timeout_ms": timeout}),
+			actionObject("wait_for_response", nil, map[string]any{"url": stringProp("Response URL substring."), "url_pattern": stringProp("Response URL regular expression."), "method": stringProp("Optional HTTP method."), "status": intProp("Optional HTTP status.", 100, 599), "timeout_ms": timeout}),
+			actionObject("select", []string{"selector", "value"}, map[string]any{"selector": selector, "value": stringProp("Select element value.")}),
+			actionObject("scroll", nil, map[string]any{"delta_x": intProp("Horizontal scroll delta.", -100000, 100000), "delta_y": intProp("Vertical scroll delta.", -100000, 100000)}),
+			actionObject("reload", nil, map[string]any{"wait_until": waitUntil, "timeout_ms": timeout}),
+			actionObject("back", nil, map[string]any{"wait_until": waitUntil, "timeout_ms": timeout}),
+			actionObject("forward", nil, map[string]any{"wait_until": waitUntil, "timeout_ms": timeout}),
+		}},
 	}
 }

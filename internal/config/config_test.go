@@ -30,9 +30,8 @@ func TestNormalizeDefaultsToUserDirectories(t *testing.T) {
 	if cfg.AgentDockDefaultDir != wantDefault {
 		t.Fatalf("AgentDockDefaultDir = %q, want %q", cfg.AgentDockDefaultDir, wantDefault)
 	}
-	wantRunner := filepath.Join(wantHome, BrowserRunnerDir)
-	if cfg.BrowserRunnerDir != wantRunner {
-		t.Fatalf("BrowserRunnerDir = %q, want %q", cfg.BrowserRunnerDir, wantRunner)
+	if cfg.BrowserExecutablePath != "" {
+		t.Fatalf("BrowserExecutablePath = %q, want empty auto-detection", cfg.BrowserExecutablePath)
 	}
 }
 
@@ -214,12 +213,10 @@ func TestFromEnvRejectsInvalidTypedValues(t *testing.T) {
 
 func TestFromEnvParsesTypedValues(t *testing.T) {
 	tempDir := t.TempDir()
-	runnerDir := filepath.Join(tempDir, "browser-runner")
-	nodePath := filepath.Join(tempDir, "node")
+	browserPath := filepath.Join(tempDir, "chromium")
 	t.Setenv("AGENTDOCK_PORT", " 9876 ")
 	t.Setenv("AGENTDOCK_BROWSER_ENABLED", "true")
-	t.Setenv("AGENTDOCK_BROWSER_RUNNER_DIR", runnerDir)
-	t.Setenv("AGENTDOCK_BROWSER_NODE_PATH", nodePath)
+	t.Setenv("AGENTDOCK_BROWSER_EXECUTABLE_PATH", browserPath)
 	t.Setenv("AGENTDOCK_OAUTH_ENABLED", "true")
 	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "24h")
 	t.Setenv("AGENTDOCK_STDIO", "1")
@@ -228,7 +225,7 @@ func TestFromEnvParsesTypedValues(t *testing.T) {
 		t.Fatalf("FromEnv() error = %v", err)
 	}
 	if cfg.Port != 9876 || !cfg.BrowserEnabled || !cfg.OAuthEnabled || !cfg.Stdio || cfg.OAuthAccessTokenTTLSeconds != int64(24*time.Hour/time.Second) ||
-		cfg.BrowserRunnerDir != runnerDir || cfg.BrowserNodePath != nodePath {
+		cfg.BrowserExecutablePath != browserPath {
 		t.Fatalf("config = %#v", cfg)
 	}
 }
@@ -278,21 +275,12 @@ func TestNormalizeValidatesOAuthAccessTokenTTL(t *testing.T) {
 	}
 }
 
-func TestNormalizeRejectsRelativeBrowserRunnerDir(t *testing.T) {
+func TestNormalizeRejectsRelativeBrowserExecutablePath(t *testing.T) {
 	home := t.TempDir()
 	setTestUserHome(t, home)
-	cfg := Config{BrowserRunnerDir: "relative/browser-runner"}
-	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "BrowserRunnerDir must resolve to an absolute path") {
-		t.Fatalf("Normalize() error = %v, want absolute BrowserRunnerDir error", err)
-	}
-}
-
-func TestNormalizeRejectsRelativeBrowserNodePath(t *testing.T) {
-	home := t.TempDir()
-	setTestUserHome(t, home)
-	cfg := Config{BrowserNodePath: "relative/node"}
-	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "BrowserNodePath must resolve to an absolute path") {
-		t.Fatalf("Normalize() error = %v, want absolute BrowserNodePath error", err)
+	cfg := Config{BrowserExecutablePath: "relative/chromium"}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "BrowserExecutablePath must resolve to an absolute path") {
+		t.Fatalf("Normalize() error = %v, want absolute BrowserExecutablePath error", err)
 	}
 }
 

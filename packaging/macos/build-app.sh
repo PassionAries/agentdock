@@ -4,8 +4,6 @@ set -euo pipefail
 ROOT_DIR="${0:A:h:h:h}"
 SOURCE_DIR="$ROOT_DIR/desktop/macos/AgentDockApp/Sources"
 LOGIN_HELPER_SOURCE="$ROOT_DIR/desktop/macos/AgentDockLoginHelper/main.swift"
-BROWSER_INSTALLER_SCRIPT="$ROOT_DIR/scripts/install-browser-runner-macos.sh"
-BROWSER_RUNNER_SOURCE="$ROOT_DIR/tools/browser-runner"
 OUTPUT_DIR="${AGENTDOCK_MACOS_APP_OUTPUT_DIR:-$ROOT_DIR/dist/macos-app}"
 ARCH_LIST="${AGENTDOCK_MACOS_ARCHES:-$(uname -m)}"
 OFFLINE_PAYLOAD_DIR="${AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR:-}"
@@ -37,15 +35,12 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-for command_name in codesign ditto file hdiutil iconutil lipo npm plutil shasum sips swiftc unzip xcrun; do
+for command_name in codesign ditto file hdiutil iconutil lipo plutil shasum sips swiftc unzip xcrun; do
   command -v "$command_name" >/dev/null 2>&1 || die "缺少命令：$command_name"
 done
 [[ -d "$SOURCE_DIR" ]] || die "缺少 macOS App 源码：$SOURCE_DIR"
 [[ -f "$APP_ICON_SOURCE" && ! -L "$APP_ICON_SOURCE" ]] || die "缺少 macOS App 图标：$APP_ICON_SOURCE"
 [[ -f "$LOGIN_HELPER_SOURCE" && ! -L "$LOGIN_HELPER_SOURCE" ]] || die "缺少 macOS 登录代理源码：$LOGIN_HELPER_SOURCE"
-[[ -f "$BROWSER_INSTALLER_SCRIPT" && ! -L "$BROWSER_INSTALLER_SCRIPT" ]] || die "缺少浏览器支持安装脚本：$BROWSER_INSTALLER_SCRIPT"
-[[ -d "$BROWSER_RUNNER_SOURCE" && ! -L "$BROWSER_RUNNER_SOURCE" ]] || die "缺少 browser-runner 源码：$BROWSER_RUNNER_SOURCE"
-[[ -f "$BROWSER_RUNNER_SOURCE/package-lock.json" && ! -L "$BROWSER_RUNNER_SOURCE/package-lock.json" ]] || die "缺少 browser-runner package-lock.json"
 [[ -n "$OFFLINE_PAYLOAD_DIR" ]] || die "构建 macOS DMG 必须设置 AGENTDOCK_MACOS_OFFLINE_PAYLOAD_DIR"
 [[ -d "$OFFLINE_PAYLOAD_DIR" && ! -L "$OFFLINE_PAYLOAD_DIR" ]] || die "离线载荷目录无效：$OFFLINE_PAYLOAD_DIR"
 
@@ -58,19 +53,6 @@ fi
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentdock-macos-app.XXXXXX")"
 trap 'rm -rf "$TMP_DIR"' EXIT
-
-BROWSER_RUNNER_BUNDLE="$TMP_DIR/browser-runner"
-ditto "$BROWSER_RUNNER_SOURCE" "$BROWSER_RUNNER_BUNDLE"
-print -- "==> 安装 browser-runner 生产依赖"
-(
-  cd "$BROWSER_RUNNER_BUNDLE"
-  npm ci --omit=dev --ignore-scripts --no-bin-links >/dev/null
-)
-[[ -f "$BROWSER_RUNNER_BUNDLE/node_modules/playwright-core/package.json" && ! -L "$BROWSER_RUNNER_BUNDLE/node_modules/playwright-core/package.json" ]] || \
-  die "browser-runner 生产依赖安装失败"
-if find "$BROWSER_RUNNER_BUNDLE" -type l -print -quit | grep -q .; then
-  die "browser-runner Bundle 不能包含符号链接"
-fi
 
 mkdir -p "$OUTPUT_DIR"
 rm -rf \
@@ -169,12 +151,6 @@ cat > "$LOGIN_ITEM_CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 plutil -lint "$LOGIN_ITEM_CONTENTS/Info.plist" >/dev/null
-
-cp -p "$BROWSER_INSTALLER_SCRIPT" "$RESOURCES_DIR/install-browser-runner-macos.sh"
-ditto "$BROWSER_RUNNER_BUNDLE" "$RESOURCES_DIR/browser-runner"
-chmod 0755 "$RESOURCES_DIR/install-browser-runner-macos.sh"
-find "$RESOURCES_DIR/browser-runner" -type d -exec chmod 0755 {} +
-find "$RESOURCES_DIR/browser-runner" -type f -exec chmod 0644 {} +
 
 ICONSET_DIR="$TMP_DIR/AgentDock.iconset"
 mkdir -p "$ICONSET_DIR"

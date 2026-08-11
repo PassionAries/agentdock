@@ -16,13 +16,11 @@ import (
 )
 
 const (
-	ProtocolVersion    = "2026-07-28"
-	ServerName         = "agentdock"
-	Version            = "0.7.3"
-	PathModel          = "host"
-	BrowserRunnerDir   = "browser-runner"
-	BrowserArtifactDir = "browser-artifacts"
-	RecallTimeoutMS    = 30000
+	ProtocolVersion = "2026-08-11"
+	ServerName      = "agentdock"
+	Version         = "0.7.3"
+	PathModel       = "host"
+	RecallTimeoutMS = 30000
 
 	defaultOAuthAccessTokenTTLSeconds = int64(time.Hour / time.Second)
 	maxOAuthAccessTokenTTLSeconds     = int64(999999 * 24 * 60 * 60)
@@ -42,8 +40,7 @@ type Config struct {
 	NexusEndpoint                string
 	NexusToken                   string
 	BrowserEnabled               bool
-	BrowserRunnerDir             string
-	BrowserNodePath              string
+	BrowserExecutablePath        string
 	ACPEnabled                   bool
 	ACPAgentName                 string
 	ACPCommand                   string
@@ -123,8 +120,7 @@ func FromEnv() (Config, error) {
 		NexusEndpoint:                getenv("AGENTDOCK_NEXUS_ENDPOINT", ""),
 		NexusToken:                   os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
 		BrowserEnabled:               browserEnabled,
-		BrowserRunnerDir:             os.Getenv("AGENTDOCK_BROWSER_RUNNER_DIR"),
-		BrowserNodePath:              os.Getenv("AGENTDOCK_BROWSER_NODE_PATH"),
+		BrowserExecutablePath:        os.Getenv("AGENTDOCK_BROWSER_EXECUTABLE_PATH"),
 		ACPEnabled:                   acpEnabled,
 		ACPAgentName:                 acpAgentName,
 		ACPCommand:                   acpCommand,
@@ -179,19 +175,11 @@ func (c *Config) Normalize() error {
 		}
 		*path.value = cleaned
 	}
-	if strings.TrimSpace(c.BrowserRunnerDir) == "" {
-		c.BrowserRunnerDir = filepath.Join(c.AgentDockHome, BrowserRunnerDir)
-	} else {
-		c.BrowserRunnerDir = filepath.Clean(strings.TrimSpace(c.BrowserRunnerDir))
-		if !filepath.IsAbs(c.BrowserRunnerDir) {
-			return fmt.Errorf("BrowserRunnerDir must resolve to an absolute path: %s", c.BrowserRunnerDir)
-		}
-	}
-	c.BrowserNodePath = strings.TrimSpace(c.BrowserNodePath)
-	if c.BrowserNodePath != "" {
-		c.BrowserNodePath = filepath.Clean(c.BrowserNodePath)
-		if !filepath.IsAbs(c.BrowserNodePath) {
-			return fmt.Errorf("BrowserNodePath must resolve to an absolute path: %s", c.BrowserNodePath)
+	c.BrowserExecutablePath = strings.TrimSpace(c.BrowserExecutablePath)
+	if c.BrowserExecutablePath != "" {
+		c.BrowserExecutablePath = filepath.Clean(c.BrowserExecutablePath)
+		if !filepath.IsAbs(c.BrowserExecutablePath) {
+			return fmt.Errorf("BrowserExecutablePath must resolve to an absolute path: %s", c.BrowserExecutablePath)
 		}
 	}
 	if err := c.normalizeACP(); err != nil {

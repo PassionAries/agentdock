@@ -5,7 +5,6 @@ import Foundation
 final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDelegate {
     private let service: ServiceController
     private let configurationController: ServiceConfigurationController
-    private let browserSupport = BrowserSupportController()
     private let menuLoginAgent: MenuLoginAgentController
     private let onChanged: () -> Void
 
@@ -38,9 +37,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private var initialACPEnabled = false
     private var initialACPAgent = ACPAgentPreset.codex
     private var initialACPAllowedRoots: [String] = []
-    private var installedRunnerDir = ""
-    private var installedNodePath = ""
-    private var browserSupportInstalledThisSession = false
     private var isBusy = false
 
     init(
@@ -72,13 +68,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     func present(status: ServiceStatus) {
         guard let configuration = status.configuration else { return }
         currentConfiguration = configuration
-        browserSupportInstalledThisSession = false
-        installedRunnerDir = configuration.browserRunnerDir.isEmpty
-            ? service.paths.browserRunner.path
-            : configuration.browserRunnerDir
-        installedNodePath = configuration.browserNodePath.isEmpty
-            ? existingNodePath()
-            : configuration.browserNodePath
         initialServiceAutostart = status.autostartEnabled
         initialMenuAutostart = menuLoginAgent.isEnabled
         initialPort = configuration.port
@@ -113,9 +102,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if initialBrowserEnabled && !browserFilesInstalled {
-            beginBrowserInstall()
-        }
     }
 
     private func configureUI() {
@@ -334,39 +320,12 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     }
 
     @objc private func browserToggled() {
-        guard browserEnabled.state == .on else {
-            refreshBrowserStatus()
-            refreshApplyState()
-            return
+        if browserEnabled.state == .on, BrowserSupportController.detectExecutable() == nil {
+            browserEnabled.state = .off
+            showStatus("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge。", isError: true)
         }
-        if browserFilesInstalled {
-            refreshBrowserStatus()
-            refreshApplyState()
-            return
-        }
-        beginBrowserInstall()
-    }
-
-    private func beginBrowserInstall() {
-        setBusy(true)
-        browserStatus.stringValue = "正在自动安装 Node.js 运行时和 browser-runner…"
-        Task {
-            do {
-                let result = try await browserSupport.install()
-                installedRunnerDir = result.runnerDir
-                installedNodePath = result.nodePath
-                browserSupportInstalledThisSession = true
-                browserStatus.stringValue = "已安装 · Node \(result.nodeVersion) · 使用本机 Chrome/Chromium"
-                setBusy(false)
-                refreshApplyState()
-            } catch {
-                browserEnabled.state = .off
-                setBusy(false)
-                showStatus(error.localizedDescription, isError: true)
-                refreshBrowserStatus()
-                refreshApplyState()
-            }
-        }
+        refreshBrowserStatus()
+        refreshApplyState()
     }
 
     @objc private func applyPressed() {
@@ -378,8 +337,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             nexusEndpoint: nexusEndpoint.stringValue,
             nexusTokenReplacement: tokenReplacement,
             browserEnabled: browserEnabled.state == .on,
-            browserRunnerDir: installedRunnerDir.isEmpty ? configuration.browserRunnerDir : installedRunnerDir,
-            browserNodePath: installedNodePath.isEmpty ? configuration.browserNodePath : installedNodePath,
             acpEnabled: acpEnabled.state == .on,
             acpAgent: selectedACPAgent(),
             acpCommand: selectedACPAgent() == configuration.acpAgent ? configuration.acpCommand : "",
@@ -408,7 +365,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 initialACPEnabled = validatedSettings.acpEnabled
                 initialACPAgent = validatedSettings.acpAgent
                 initialACPAllowedRoots = validatedSettings.acpAllowedRoots
-                browserSupportInstalledThisSession = false
                 portField.integerValue = initialPort
                 logLevel.selectItem(withTitle: initialLogLevel)
                 nexusEndpoint.stringValue = initialNexusEndpoint
@@ -456,38 +412,16 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         }
     }
 
-    private var browserFilesInstalled: Bool {
-        guard !installedRunnerDir.isEmpty, !installedNodePath.isEmpty else { return false }
-        let fileManager = FileManager.default
-        return fileManager.fileExists(atPath: installedRunnerDir + "/browser-runner.js")
-            && fileManager.fileExists(atPath: installedRunnerDir + "/node_modules/playwright-core/package.json")
-            && fileManager.isExecutableFile(atPath: installedNodePath)
-    }
-
     private func refreshBrowserStatus() {
-        if browserFilesInstalled {
+        if let executable = BrowserSupportController.detectExecutable() {
             browserStatus.stringValue = browserEnabled.state == .on
-                ? "已安装并启用 · 使用本机 Chrome/Chromium"
-                : "已安装但未启用；再次勾选无需重新下载"
+                ? "已启用 · Go 原生 CDP · \(executable)"
+                : "已检测到 Chromium 系浏览器 · 启用后生效"
+            browserStatus.textColor = .secondaryLabelColor
         } else {
-            browserStatus.stringValue = browserEnabled.state == .on
-                ? "等待安装浏览器支持"
-                : "首次勾选后自动下载并安装所需运行环境"
+            browserStatus.stringValue = "未检测到 Chrome、Chromium 或 Microsoft Edge"
+            browserStatus.textColor = browserEnabled.state == .on ? .systemRed : .secondaryLabelColor
         }
-    }
-
-    private func existingNodePath() -> String {
-        var candidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
-            candidates += path.split(separator: ":").map { String($0) + "/node" }
-        }
-        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            if let resolved = try? URL(fileURLWithPath: candidate).resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]),
-               resolved.isRegularFile == true {
-                return URL(fileURLWithPath: candidate).resolvingSymlinksInPath().path
-            }
-        }
-        return ""
     }
 
     private func refreshApplyState() {
@@ -495,8 +429,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             applyButton.isEnabled = false
             return
         }
-        let pathsChanged = browserSupportInstalledThisSession
-            && (browserEnabled.state == .on || initialBrowserEnabled)
         let acpIsEnabled = acpEnabled.state == .on
         let acpSettingsChanged = acpIsEnabled != initialACPEnabled
             || ((acpIsEnabled || initialACPEnabled)
@@ -510,7 +442,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             || !nexusToken.stringValue.isEmpty
             || (browserEnabled.state == .on) != initialBrowserEnabled
             || acpSettingsChanged
-            || pathsChanged
         applyButton.isEnabled = changed
     }
 

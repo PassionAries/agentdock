@@ -164,8 +164,6 @@
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="端口" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="PortTextBox" Grid.Column="1" Width="130" HorizontalAlignment="Left" Margin="0,0,0,10" />
@@ -180,12 +178,8 @@
                 <TextBox x:Name="NexusEndpointTextBox" Grid.Row="2" Grid.Column="1" Margin="0,0,0,10" />
                 <TextBlock Text="Nexus Token" Grid.Row="3" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <PasswordBox x:Name="NexusTokenPasswordBox" Grid.Row="3" Grid.Column="1" Margin="0,0,0,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
-                <TextBlock Text="Browser Runner" Grid.Row="4" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用浏览器自动化工具" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBlock Text="Runner 目录" Grid.Row="5" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBox x:Name="BrowserRunnerDirTextBox" Grid.Row="5" Grid.Column="1" Margin="0,0,0,10" />
-                <TextBlock Text="Node 路径" Grid.Row="6" VerticalAlignment="Center" />
-                <TextBox x:Name="BrowserNodePathTextBox" Grid.Row="6" Grid.Column="1" />
+                <TextBlock Text="浏览器工具" Grid.Row="4" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用 Go 原生 CDP（需本机 Chrome/Chromium/Edge）" VerticalAlignment="Center" Margin="0,0,0,10" />
               </Grid>
             </GroupBox>
 

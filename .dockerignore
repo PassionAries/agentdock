@@ -19,7 +19,3 @@
 !core-skills/skill-vetter-runtime/
 !core-skills/skill-vetter-runtime/**
 !tools/
-!tools/browser-runner/
-!tools/browser-runner/browser-runner.js
-!tools/browser-runner/package.json
-!tools/browser-runner/package-lock.json

@@ -257,8 +257,6 @@ function Get-ControlPanelSettings {
         log_level = $storedLogLevel
         nexus_endpoint = [string] (Get-ObjectProperty -Object $stored -Name 'nexus_endpoint' -Default '')
         browser_enabled = Convert-ToBoolean -Value (Get-ObjectProperty -Object $stored -Name 'browser_enabled' -Default $false)
-        browser_runner_dir = [string] (Get-ObjectProperty -Object $stored -Name 'browser_runner_dir' -Default '')
-        browser_node_path = [string] (Get-ObjectProperty -Object $stored -Name 'browser_node_path' -Default '')
         acp_enabled = Convert-ToBoolean -Value (Get-ObjectProperty -Object $stored -Name 'acp_enabled' -Default $false)
         acp_agent = $storedACPAgent
         acp_command = [string] (Get-ObjectProperty -Object $stored -Name 'acp_command' -Default '')
@@ -450,8 +448,6 @@ function Invoke-LaunchCore {
     foreach ($name in @(
         'AGENTDOCK_NEXUS_ENDPOINT',
         'AGENTDOCK_NEXUS_TOKEN',
-        'AGENTDOCK_BROWSER_RUNNER_DIR',
-        'AGENTDOCK_BROWSER_NODE_PATH',
         'AGENTDOCK_ACP_AGENT',
         'AGENTDOCK_ACP_COMMAND',
         'AGENTDOCK_ACP_ARGS_JSON',
@@ -472,12 +468,6 @@ function Invoke-LaunchCore {
     }
     if (Test-Path -LiteralPath $NexusTokenPath -PathType Leaf) {
         $env:AGENTDOCK_NEXUS_TOKEN = Read-ProtectedText -Path $NexusTokenPath -Entropy 'agentdock.nexus.token.v1'
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string] $settings.browser_runner_dir)) {
-        $env:AGENTDOCK_BROWSER_RUNNER_DIR = [string] $settings.browser_runner_dir
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string] $settings.browser_node_path)) {
-        $env:AGENTDOCK_BROWSER_NODE_PATH = [string] $settings.browser_node_path
     }
     if ([bool] $settings.acp_enabled) {
         if (-not (Test-Path -LiteralPath ([string] $settings.acp_command) -PathType Leaf)) {

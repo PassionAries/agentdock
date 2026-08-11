@@ -42,7 +42,6 @@ RUN apt-get update \
     && useradd --uid "${AGENTDOCK_UID}" --gid "${AGENTDOCK_GID}" --create-home --home-dir /home/agentdock --shell /bin/bash agentdock \
     && install -d -o agentdock -g agentdock -m 0700 \
       /home/agentdock/.agentdock \
-      /home/agentdock/.agentdock/browser-artifacts \
       /home/agentdock/.agentdock/tmp \
       /home/agentdock/AgentDock \
     && npm cache clean --force \
@@ -96,16 +95,23 @@ RUN apt-get update \
       fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-COPY tools/browser-runner/package.json tools/browser-runner/package-lock.json /opt/agentdock/browser-runner/
-RUN cd /opt/agentdock/browser-runner \
-    && npm ci --omit=dev --ignore-scripts \
-    && npm cache clean --force
-COPY --chmod=0644 tools/browser-runner/browser-runner.js /opt/agentdock/browser-runner/browser-runner.js
-
 ENV AGENTDOCK_BROWSER_ENABLED=true \
-    AGENTDOCK_BROWSER_RUNNER_DIR=/opt/agentdock/browser-runner \
     AGENTDOCK_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 
 USER agentdock:agentdock
+
+FROM browser AS browser-test
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends xauth xvfb \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/go /usr/local/go
+COPY --from=build /src /src
+ENV PATH=/usr/local/go/bin:$PATH
+WORKDIR /src
+USER agentdock:agentdock
+RUN CGO_ENABLED=0 xvfb-run -a env AGENTDOCK_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium \
+    go test -tags browser_integration ./internal/tool/browser ./internal/app -count=1
 
 FROM runtime-base AS runtime
