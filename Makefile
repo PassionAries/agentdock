@@ -20,6 +20,7 @@ test:
 
 test-scripts:
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test_recall_backup_export.py
+	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test_shell_variable_boundaries.py
 	./scripts/test-install-entry.sh
 
 vet:

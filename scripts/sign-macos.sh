@@ -62,6 +62,6 @@ fi
 codesign --verify --strict --verbose=2 "$TARGET" >/dev/null
 sign_details="$(codesign -dv --verbose=4 "$TARGET" 2>&1)" || die "无法读取签名详情"
 actual_identifier="$(print -r -- "$sign_details" | sed -n 's/^Identifier=//p' | head -n 1)"
-[[ "$actual_identifier" == "$IDENTIFIER" ]] || die "签名 Identifier 不匹配：期望 $IDENTIFIER，实际 $actual_identifier"
+[[ "$actual_identifier" == "$IDENTIFIER" ]] || die "签名 Identifier 不匹配：期望 ${IDENTIFIER}，实际 $actual_identifier"
 print -- "signed: $TARGET"
 print -- "identifier: $actual_identifier"

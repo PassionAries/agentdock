@@ -1441,7 +1441,7 @@ SUMMARY
   if [[ "$build_from_source" == "yes" ]]; then
     go_version="$(current_go_version || true)"
     if [[ -z "$go_version" ]] || ! semver_ge "$go_version" "$MIN_GO_VERSION"; then
-      warn "当前 Go 版本不足：${go_version:-未安装}，需要 >= $MIN_GO_VERSION。"
+      warn "当前 Go 版本不足：${go_version:-未安装}，需要 >= ${MIN_GO_VERSION}。"
       if confirm "是否安装官方 Go $DEFAULT_GO_VERSION 到 /usr/local/go？" y; then
         install_go_official "$DEFAULT_GO_VERSION"
       else

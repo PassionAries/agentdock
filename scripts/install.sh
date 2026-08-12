@@ -310,7 +310,7 @@ restore_public_config() {
     run_root rm -f "$tunnel_env_file"
   fi
   ENV_BACKUP_ACTIVE=false
-  log "安装未完成，已恢复原公网配置（模式：$PREVIOUS_TUNNEL_MODE）。"
+  log "安装未完成，已恢复原公网配置（模式：${PREVIOUS_TUNNEL_MODE}）。"
 }
 
 commit_public_config() {
@@ -481,7 +481,7 @@ run_simple_linux_install() {
   fi
 
   install_log="$TMP_ROOT/linux-install.log"
-  log "正在安装 AgentDock（公网模式：$mode）"
+  log "正在安装 AgentDock（公网模式：${mode}）"
   status=0
   AGENTDOCK_NONINTERACTIVE=true \
     "$PLATFORM_SHELL" "$installer_path" "$@" >"$install_log" 2>&1 || status=$?
@@ -633,13 +633,13 @@ if [ "$UNINSTALL" = true ]; then
 fi
 
 if [ "$PLATFORM_INSTALLER" != "install-linux-platform.sh" ]; then
-  command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 $PLATFORM_SHELL，无法运行 $PLATFORM_INSTALLER。"
+  command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 ${PLATFORM_SHELL}，无法运行 ${PLATFORM_INSTALLER}。"
   INSTALLER_PATH="$(prepare_release_asset "$PLATFORM_INSTALLER")"
   "$PLATFORM_SHELL" "$INSTALLER_PATH" "$@"
   exit $?
 fi
 
-command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 $PLATFORM_SHELL，无法运行 $PLATFORM_INSTALLER。"
+command -v "$PLATFORM_SHELL" >/dev/null 2>&1 || die "缺少 ${PLATFORM_SHELL}，无法运行 ${PLATFORM_INSTALLER}。"
 
 if is_true "${AGENTDOCK_NONINTERACTIVE:-false}"; then
   backup_public_config

@@ -80,7 +80,7 @@ validate_absolute_path() {
   esac
   case "$path" in
     *"/../"*|*"/.."|*"/./"*|*"/.")
-      die "拒绝使用包含路径跳转的目录（$label）：$path"
+      die "拒绝使用包含路径跳转的目录（${label}）：$path"
       ;;
   esac
 }
@@ -113,7 +113,7 @@ require_safe_removal_path() {
 
   case "$normalized_path" in
     /|/bin|/boot|/dev|/etc|/home|/lib|/lib64|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
-      die "拒绝删除危险路径（$label）：$path"
+      die "拒绝删除危险路径（${label}）：$path"
       ;;
   esac
 
@@ -122,16 +122,16 @@ require_safe_removal_path() {
       account_relative="${normalized_path#/*/}"
       case "$account_relative" in
         */*) ;;
-        *) die "拒绝删除用户主目录（$label）：$path" ;;
+        *) die "拒绝删除用户主目录（${label}）：$path" ;;
       esac
       ;;
   esac
 
   if [ -e "$normalized_path" ] || [ -L "$normalized_path" ]; then
     canonical_path="$(canonical_existing_path "$normalized_path")" || \
-      die "无法解析待删除路径（$label）：$path"
+      die "无法解析待删除路径（${label}）：$path"
     [ "$canonical_path" = "$normalized_path" ] || \
-      die "拒绝删除经过软链接或非规范路径指向的目录（$label）：$path -> $canonical_path"
+      die "拒绝删除经过软链接或非规范路径指向的目录（${label}）：$path -> $canonical_path"
   fi
 
   printf '%s' "$normalized_path"
@@ -179,9 +179,9 @@ validate_service_directory() {
   normalized_path="$(trim_trailing_slashes "$path")"
   if [ -e "$normalized_path" ] || [ -L "$normalized_path" ]; then
     canonical_path="$(canonical_existing_path "$normalized_path")" || \
-      die "无法解析服务目录（$label）：$path"
+      die "无法解析服务目录（${label}）：$path"
     [ "$canonical_path" = "$normalized_path" ] || \
-      die "拒绝使用经过软链接或非规范路径指向的服务目录（$label）：$path -> $canonical_path"
+      die "拒绝使用经过软链接或非规范路径指向的服务目录（${label}）：$path -> $canonical_path"
   fi
 }
 
@@ -340,11 +340,11 @@ if is_true "$PURGE_DATA"; then
   data_dir="$(require_safe_removal_path "数据目录" "$data_dir")"
   validate_managed_source "$source_dir"
   paths_overlap "$source_dir" "$data_dir" && \
-    die "拒绝清除互相重叠的安装目录和数据目录：$source_dir、$data_dir"
+    die "拒绝清除互相重叠的安装目录和数据目录：${source_dir}、$data_dir"
   path_contains "$source_dir" "$config_dir" && \
-    die "拒绝清除与配置目录重叠的安装目录：$source_dir、$config_dir"
+    die "拒绝清除与配置目录重叠的安装目录：${source_dir}、$config_dir"
   path_contains "$data_dir" "$config_dir" && \
-    die "拒绝清除与配置目录重叠的数据目录：$data_dir、$config_dir"
+    die "拒绝清除与配置目录重叠的数据目录：${data_dir}、$config_dir"
 fi
 
 remove_systemd_services "$service_name" "$tunnel_service_name" "$systemd_dir"

@@ -1537,7 +1537,7 @@ fi
 write_result_file
 print -- "installed: $TARGET"
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  print -- "PATH 尚未包含 $INSTALL_DIR，可执行："
+  print -- "PATH 尚未包含 ${INSTALL_DIR}，可执行："
   print -- "  echo 'export PATH=\"$INSTALL_DIR:\$PATH\"' >> ~/.zprofile"
   print -- "  export PATH=\"$INSTALL_DIR:\$PATH\""
 fi

@@ -221,7 +221,7 @@ if [[ "$(normalize_version "$installed_version")" != "$(normalize_version "$targ
   if ! restore_previous_binary "$backup" "$old_version"; then
     die "原子替换后的版本不匹配，且旧版本恢复验证失败；备份保留在 $backup"
   fi
-  die "原子替换后的版本不匹配：期望 $target_version，实际 $installed_version；已恢复旧版本"
+  die "原子替换后的版本不匹配：期望 ${target_version}，实际 ${installed_version}；已恢复旧版本"
 fi
 
 printf '==> restarting %s\n' "$LABEL"
