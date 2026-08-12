@@ -10,6 +10,7 @@ struct EditableServiceSettings {
     let acpEnabled: Bool
     let acpAgent: ACPAgentPreset
     let acpCommand: String
+    let acpArgs: [String]
     let acpAllowedRoots: [String]
 
     func validated() throws -> EditableServiceSettings {
@@ -30,12 +31,18 @@ struct EditableServiceSettings {
         }
 
         var command = ""
+        var arguments: [String] = []
         var allowedRoots: [String] = []
         if acpEnabled {
-            guard let resolved = acpAgent.resolveExecutable(configuredCommand: acpCommand) else {
-                throw ValidationError("\(acpAgent.title) 不可用：\(acpAgent.missingExecutableMessage)。")
+            let resolution = acpAgent.resolveAdapter(
+                configuredCommand: acpCommand,
+                configuredArguments: acpArgs
+            )
+            guard resolution.available else {
+                throw ValidationError("\(acpAgent.title) 不可用：\(acpAgent.missingAdapterMessage)。")
             }
-            command = resolved
+            command = resolution.command
+            arguments = resolution.arguments
             allowedRoots = try ACPDesktopConfiguration.validateAllowedRoots(acpAllowedRoots)
         }
 
@@ -48,6 +55,7 @@ struct EditableServiceSettings {
             acpEnabled: acpEnabled,
             acpAgent: acpAgent,
             acpCommand: command,
+            acpArgs: arguments,
             acpAllowedRoots: allowedRoots
         )
     }
@@ -97,7 +105,7 @@ final class ServiceConfigurationController {
             "AGENTDOCK_ACP_ENABLED": settings.acpEnabled ? "true" : "false",
             "AGENTDOCK_ACP_AGENT": settings.acpAgent.rawValue,
             "AGENTDOCK_ACP_COMMAND": settings.acpCommand,
-            "AGENTDOCK_ACP_ARGS_JSON": try ACPDesktopConfiguration.encodeArguments(settings.acpAgent.arguments),
+            "AGENTDOCK_ACP_ARGS_JSON": try ACPDesktopConfiguration.encodeArguments(settings.acpArgs),
             "AGENTDOCK_ACP_ALLOWED_ROOTS": settings.acpAllowedRoots.joined(separator: ","),
         ]
         if settings.acpEnabled {

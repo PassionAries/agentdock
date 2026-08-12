@@ -68,7 +68,7 @@ struct InstallerConfigurationTests {
         precondition(ACPDesktopConfiguration.parseAllowedRoots("/one, /two") == ["/one", "/two"])
         let encodedGrokArguments = try ACPDesktopConfiguration.encodeArguments(ACPAgentPreset.grok.arguments)
         precondition(encodedGrokArguments == "[\"agent\",\"stdio\"]")
-        try testACPExecutableResolution()
+        try testACPAdapterResolution()
 
         expectFailure("不允许") {
             _ = try environment.dataByUpdating(["AGENTDOCK_OAUTH_TOKEN_SECRET": "nope"])
@@ -149,24 +149,72 @@ struct InstallerConfigurationTests {
         precondition(!FileManager.default.fileExists(atPath: path.path))
     }
 
-    private static func testACPExecutableResolution() throws {
+    private static func testACPAdapterResolution() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AgentDockACPExecutableTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("AgentDockACPAdapterTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let bin = root.appendingPathComponent(".local/bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-        let executable = bin.appendingPathComponent("grok")
-        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let grok = bin.appendingPathComponent("grok")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: grok)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: grok.path)
 
-        let resolved = ACPAgentPreset.grok.resolveExecutable(home: root, environment: [:])
-        precondition(resolved == executable.resolvingSymlinksInPath().path)
-        precondition(ACPAgentPreset.codex.resolveExecutable(home: root, environment: [:]) == nil)
+        let direct = ACPAgentPreset.grok.resolveAdapter(home: root, environment: [:])
+        precondition(direct.available)
+        precondition(direct.command == grok.resolvingSymlinksInPath().path)
+        precondition(direct.arguments == ["agent", "stdio"])
+
+        let node = bin.appendingPathComponent("node")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: node)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+        let packageRoot = root
+            .appendingPathComponent(".local/lib/node_modules/@agentclientprotocol/codex-acp", isDirectory: true)
+        let entry = packageRoot.appendingPathComponent("dist/index.js")
+        try FileManager.default.createDirectory(at: entry.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("console.log('codex acp')\n".utf8).write(to: entry)
+        try Data("{\"bin\":{\"codex-acp\":\"dist/index.js\"}}".utf8)
+            .write(to: packageRoot.appendingPathComponent("package.json"))
+
+        let npm = ACPAgentPreset.codex.resolveAdapter(home: root, environment: [:])
+        precondition(npm.available)
+        precondition(npm.command == node.resolvingSymlinksInPath().path)
+        precondition(npm.arguments == [entry.resolvingSymlinksInPath().path])
+
+        let codexScript = bin.appendingPathComponent("codex-acp")
+        try Data("#!/usr/bin/env node\nconsole.log('codex direct')\n".utf8).write(to: codexScript)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexScript.path)
+        let directNodeScript = ACPAgentPreset.codex.resolveAdapter(home: root, environment: [:])
+        precondition(directNodeScript.available)
+        precondition(directNodeScript.command == node.resolvingSymlinksInPath().path)
+        precondition(directNodeScript.arguments == [codexScript.resolvingSymlinksInPath().path])
+
+        let claudePackageRoot = root
+            .appendingPathComponent(".local/lib/node_modules/@agentclientprotocol/claude-agent-acp", isDirectory: true)
+        let claudeEntry = claudePackageRoot.appendingPathComponent("dist/cli.js")
+        try FileManager.default.createDirectory(at: claudeEntry.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("console.log('claude acp')\n".utf8).write(to: claudeEntry)
+        try Data("{\"bin\":\"dist/cli.js\"}".utf8)
+            .write(to: claudePackageRoot.appendingPathComponent("package.json"))
+        let claude = ACPAgentPreset.claude.resolveAdapter(home: root, environment: [:])
+        precondition(claude.available)
+        precondition(claude.command == node.resolvingSymlinksInPath().path)
+        precondition(claude.arguments == [claudeEntry.resolvingSymlinksInPath().path])
+
+        let configured = ACPAgentPreset.codex.resolveAdapter(
+            configuredCommand: node.path,
+            configuredArguments: [entry.path],
+            home: root,
+            environment: [:]
+        )
+        precondition(configured.available)
+        precondition(configured.command == node.resolvingSymlinksInPath().path)
+        precondition(configured.arguments == [entry.resolvingSymlinksInPath().path])
 
         let workspace = root.appendingPathComponent("Project", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         let roots = try ACPDesktopConfiguration.validateAllowedRoots([workspace.path, workspace.path])
         precondition(roots == [workspace.resolvingSymlinksInPath().path])
+
         expectFailure("整个文件系统") {
             _ = try ACPDesktopConfiguration.validateAllowedRoots(["/"])
         }

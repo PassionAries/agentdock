@@ -331,6 +331,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     @objc private func applyPressed() {
         guard let configuration = currentConfiguration else { return }
         let tokenReplacement = nexusToken.stringValue.isEmpty ? nil : nexusToken.stringValue
+        let selectedAgent = selectedACPAgent()
+        let sameAgent = selectedAgent == configuration.acpAgent
         let settings = EditableServiceSettings(
             port: portField.integerValue,
             logLevel: logLevel.titleOfSelectedItem ?? "info",
@@ -338,8 +340,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             nexusTokenReplacement: tokenReplacement,
             browserEnabled: browserEnabled.state == .on,
             acpEnabled: acpEnabled.state == .on,
-            acpAgent: selectedACPAgent(),
-            acpCommand: selectedACPAgent() == configuration.acpAgent ? configuration.acpCommand : "",
+            acpAgent: selectedAgent,
+            acpCommand: sameAgent ? configuration.acpCommand : "",
+            acpArgs: sameAgent ? configuration.acpArgs : [],
             acpAllowedRoots: ACPDesktopConfiguration.parseAllowedRoots(acpAllowedRoots.stringValue)
         )
         setBusy(true)
@@ -370,6 +373,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 nexusEndpoint.stringValue = initialNexusEndpoint
                 nexusToken.stringValue = ""
                 acpAllowedRoots.stringValue = initialACPAllowedRoots.joined(separator: ", ")
+                if let updatedConfiguration = ServiceConfiguration.load(from: service.paths.environment) {
+                    currentConfiguration = updatedConfiguration
+                }
                 refreshACPStatus()
                 showStatus("设置已保存。", isError: false)
                 setBusy(false)
@@ -396,18 +402,24 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         let configuredCommand = currentConfiguration?.acpAgent == preset
             ? currentConfiguration?.acpCommand ?? ""
             : ""
-        let resolvedCommand = preset.resolveExecutable(configuredCommand: configuredCommand)
+        let configuredArguments = currentConfiguration?.acpAgent == preset
+            ? currentConfiguration?.acpArgs ?? []
+            : []
+        let resolution = preset.resolveAdapter(
+            configuredCommand: configuredCommand,
+            configuredArguments: configuredArguments
+        )
         let enabled = acpEnabled.state == .on
         acpAgent.isEnabled = enabled && !isBusy
         acpAllowedRoots.isEnabled = enabled && !isBusy
         acpChooseDirectory.isEnabled = enabled && !isBusy
-        if let resolvedCommand {
+        if resolution.available {
             acpStatus.stringValue = enabled
-                ? "已检测到 · \(resolvedCommand)"
+                ? resolution.message
                 : "已检测到 \(preset.title) · 启用后生效"
             acpStatus.textColor = .secondaryLabelColor
         } else {
-            acpStatus.stringValue = "未安装 · \(preset.missingExecutableMessage)"
+            acpStatus.stringValue = resolution.message
             acpStatus.textColor = enabled ? .systemRed : .secondaryLabelColor
         }
     }
