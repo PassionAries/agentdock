@@ -519,6 +519,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # 三个多架构镜像并发推送会触发 GHCR secondary rate limit，发布阶段串行执行。
+      max-parallel: 1
       matrix:
         include:
           - variant: runtime
