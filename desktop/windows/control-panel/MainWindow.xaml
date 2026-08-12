@@ -179,7 +179,7 @@
                 <TextBlock Text="Nexus Token" Grid.Row="3" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <PasswordBox x:Name="NexusTokenPasswordBox" Grid.Row="3" Grid.Column="1" Margin="0,0,0,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
                 <TextBlock Text="浏览器工具" Grid.Row="4" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用 Go 原生 CDP（需本机 Chrome/Chromium/Edge）" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用浏览器工具（需本机 Chrome/Chromium/Edge）" VerticalAlignment="Center" Margin="0,0,0,10" />
               </Grid>
             </GroupBox>
 

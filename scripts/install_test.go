@@ -451,8 +451,11 @@ func TestWindowsControlPanelReadsVersionFromCoreBuildInfo(t *testing.T) {
 			t.Fatalf("Windows control panel must read the version from the core binary BuildInfo: %q", want)
 		}
 	}
-	if !strings.Contains(app, "snapshot.Version") || !strings.Contains(window, "snapshot.Version") {
-		t.Fatal("Windows control panel surfaces must display RuntimeSnapshot.Version")
+	if !strings.Contains(window, "snapshot.Version") {
+		t.Fatal("Windows control panel must display RuntimeSnapshot.Version in the main window")
+	}
+	if strings.Contains(app, `return $"运行正常 · {version}"`) || strings.Contains(app, "未知版本") {
+		t.Fatal("Windows tray status must not include the AgentDock version")
 	}
 	for _, source := range []string{app, window, runtimeService} {
 		if strings.Contains(source, "snapshot.Manifest.Version") || strings.Contains(source, "manifest.Version") {
