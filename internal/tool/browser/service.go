@@ -720,7 +720,15 @@ func applyLocalStorage(parent, pageCtx context.Context, finalURL string, values 
 			}
 		}
 	}
-	if finalURL != "" {
+	if finalURL == "about:blank" {
+		// localStorage 注入会临时访问各 origin；默认起始页仍必须恢复为契约规定的 about:blank。
+		if err := runWithContext(parent, pageCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+			_, _, _, _, err := page.Navigate(finalURL).Do(ctx)
+			return err
+		})); err != nil {
+			return err
+		}
+	} else if finalURL != "" {
 		if err := initialNavigation(parent, pageCtx, finalURL); err != nil {
 			return err
 		}

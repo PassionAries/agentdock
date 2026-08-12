@@ -26,7 +26,8 @@ func (s *Service) Act(ctx context.Context, req ActRequest) (Snapshot, error) {
 
 	operationCtx, cancel := withTimeout(ctx, req.Timeout, 30*time.Second)
 	defer cancel()
-	currentPage, err := sess.selectPage(req.PageID)
+	requestedPageID := strings.TrimSpace(req.PageID)
+	currentPage, err := sess.selectPage(requestedPageID)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -72,7 +73,13 @@ func (s *Service) Act(ctx context.Context, req ActRequest) (Snapshot, error) {
 		if err := sess.refreshPages(); err != nil {
 			return Snapshot{}, browserError(ErrCDPFailed, "refresh browser pages after action", "cdp", &ErrorDetails{ActionIndex: intPointer(index)}, err)
 		}
-		if next, selectErr := sess.selectPage(""); selectErr == nil && next != "" {
+		if requestedPageID != "" {
+			// 显式 page_id 是整次 browser_act 的稳定目标；即使动作打开了新标签页，也不能静默漂移。
+			currentPage, err = sess.selectPage(requestedPageID)
+			if err != nil {
+				return Snapshot{}, wrapActionError(err, index, action.Kind)
+			}
+		} else if next, selectErr := sess.selectPage(""); selectErr == nil && next != "" {
 			currentPage = next
 		}
 	}
@@ -110,7 +117,7 @@ func runAction(parent, pageCtx context.Context, diag *diagnostics, action Action
 	case "click":
 		return runWithContext(parent, pageCtx, chromedp.Click(action.Click.Selector, chromedp.ByQuery))
 	case "fill":
-		return runWithContext(parent, pageCtx, chromedp.SetValue(action.Fill.Selector, action.Fill.Value, chromedp.ByQuery))
+		return fillValue(parent, pageCtx, *action.Fill)
 	case "press":
 		a := action.Press
 		tasks := chromedp.Tasks{}
@@ -272,12 +279,66 @@ func waitForResponse(parent context.Context, diag *diagnostics, action WaitRespo
 	}
 }
 
+func fillValue(parent, pageCtx context.Context, action FillAction) error {
+	selector, _ := json.Marshal(action.Selector)
+	value, _ := json.Marshal(action.Value)
+	expr := fmt.Sprintf(`(() => {
+  const el = document.querySelector(%s);
+  if (!el) return {ok:false, reason:'target not found'};
+  if (el.disabled || el.readOnly) return {ok:false, reason:'target is not editable'};
+  const value = %s;
+  el.focus();
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const prototype = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    if (!setter) return {ok:false, reason:'native value setter is unavailable'};
+    setter.call(el, value);
+  } else if (el.isContentEditable) {
+    el.textContent = value;
+  } else {
+    return {ok:false, reason:'target is not editable'};
+  }
+  el.dispatchEvent(new Event('input', {bubbles:true}));
+  el.dispatchEvent(new Event('change', {bubbles:true}));
+  return {ok:true, reason:''};
+})()`, selector, value)
+	var result struct {
+		OK     bool   `json:"ok"`
+		Reason string `json:"reason"`
+	}
+	if err := runWithContext(parent, pageCtx, chromedp.Evaluate(expr, &result)); err != nil {
+		return err
+	}
+	if !result.OK {
+		return browserError(ErrActionFailed, "browser fill target is not editable", "action", &ErrorDetails{Selector: action.Selector, Reason: result.Reason}, nil)
+	}
+	return nil
+}
+
 func selectValue(parent, pageCtx context.Context, action SelectAction) error {
 	selector, _ := json.Marshal(action.Selector)
 	value, _ := json.Marshal(action.Value)
-	expr := fmt.Sprintf(`(() => { const el=document.querySelector(%s); if(!el || el.tagName!=='SELECT') throw new Error('select target not found'); el.value=%s; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return el.value; })()`, selector, value)
-	var selected string
-	return runWithContext(parent, pageCtx, chromedp.Evaluate(expr, &selected))
+	expr := fmt.Sprintf(`(() => {
+  const el = document.querySelector(%s);
+  if (!el || el.tagName !== 'SELECT') return {ok:false, reason:'select target not found', selected:''};
+  const value = %s;
+  if (!Array.from(el.options).some(option => option.value === value)) return {ok:false, reason:'option value not found', selected:el.value};
+  el.value = value;
+  el.dispatchEvent(new Event('input', {bubbles:true}));
+  el.dispatchEvent(new Event('change', {bubbles:true}));
+  return {ok:el.value === value, reason:el.value === value ? '' : 'selected value did not change', selected:el.value};
+})()`, selector, value)
+	var result struct {
+		OK     bool   `json:"ok"`
+		Reason string `json:"reason"`
+	}
+	if err := runWithContext(parent, pageCtx, chromedp.Evaluate(expr, &result)); err != nil {
+		return err
+	}
+	if !result.OK {
+		return browserError(ErrActionFailed, "browser select value is unavailable", "action", &ErrorDetails{Selector: action.Selector, Reason: result.Reason}, nil)
+	}
+	return nil
 }
 
 func scrollBy(parent, pageCtx context.Context, action ScrollAction) error {

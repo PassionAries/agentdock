@@ -13,6 +13,8 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
+const maxDiagnosticResponses = 200
+
 type responseRecord struct {
 	URL    string
 	Method string
@@ -45,55 +47,69 @@ func newDiagnostics() *diagnostics {
 }
 
 func (d *diagnostics) attach(ctx context.Context) {
-	chromedp.ListenTarget(ctx, func(ev any) {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		switch event := ev.(type) {
-		case *network.EventRequestWillBeSent:
-			if event.Request != nil {
-				d.requests[event.RequestID] = requestRecord{URL: event.Request.URL, Method: event.Request.Method}
-			}
-		case *network.EventResponseReceived:
-			if event.Response == nil {
-				return
-			}
-			record := responseRecord{URL: event.Response.URL, Status: int(event.Response.Status)}
-			if request, ok := d.requests[event.RequestID]; ok {
-				record.Method = request.Method
-			}
+	chromedp.ListenTarget(ctx, d.recordEvent)
+}
+
+func (d *diagnostics) recordEvent(ev any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	switch event := ev.(type) {
+	case *network.EventRequestWillBeSent:
+		if event.Request != nil {
+			d.requests[event.RequestID] = requestRecord{URL: event.Request.URL, Method: event.Request.Method}
+		}
+	case *network.EventResponseReceived:
+		if event.Response == nil {
+			return
+		}
+		record := responseRecord{URL: event.Response.URL, Status: int(event.Response.Status)}
+		if request, ok := d.requests[event.RequestID]; ok {
+			record.Method = request.Method
+		}
+		if len(d.responses) == maxDiagnosticResponses {
+			copy(d.responses, d.responses[1:])
+			d.responses[len(d.responses)-1] = record
+		} else {
 			d.responses = append(d.responses, record)
-			d.responseByID[event.RequestID] = record
-			select {
-			case d.responseWake <- struct{}{}:
-			default:
-			}
-		case *network.EventLoadingFailed:
-			// Chromium 在部分平台会给无响应体的成功响应补发 ERR_ABORTED。
-			// 例如 fetch 收到 204 后，ResponseReceived 已经证明请求成功，此事件不能再被当成网络失败。
-			if response, ok := d.responseByID[event.RequestID]; ok && benignAbortAfterNoBodyResponse(event.ErrorText, response) {
-				return
-			}
-			request := d.requests[event.RequestID]
-			d.networkErrors = appendBoundedNetwork(d.networkErrors, NetworkError{URL: request.URL, Method: request.Method, ErrorText: event.ErrorText})
-		case *cdpruntime.EventConsoleAPICalled:
-			if strings.EqualFold(string(event.Type), "error") || strings.EqualFold(string(event.Type), "assert") {
-				d.consoleErrors = appendBoundedConsole(d.consoleErrors, ConsoleError{Message: consoleMessage(event.Args)})
-			}
-		case *cdpruntime.EventExceptionThrown:
-			message := "unhandled page exception"
-			if event.ExceptionDetails != nil {
-				message = strings.TrimSpace(event.ExceptionDetails.Text)
-				if event.ExceptionDetails.Exception != nil && strings.TrimSpace(event.ExceptionDetails.Exception.Description) != "" {
-					message = strings.TrimSpace(event.ExceptionDetails.Exception.Description)
-				}
-			}
-			d.pageErrors = appendBoundedPage(d.pageErrors, PageError{Message: message})
-		case *log.EventEntryAdded:
-			if event.Entry != nil && strings.EqualFold(string(event.Entry.Level), "error") {
-				d.consoleErrors = appendBoundedConsole(d.consoleErrors, ConsoleError{Message: strings.TrimSpace(event.Entry.Text)})
+		}
+		d.responseByID[event.RequestID] = record
+		select {
+		case d.responseWake <- struct{}{}:
+		default:
+		}
+	case *network.EventLoadingFinished:
+		delete(d.requests, event.RequestID)
+		delete(d.responseByID, event.RequestID)
+	case *network.EventLoadingFailed:
+		response, hasResponse := d.responseByID[event.RequestID]
+		request := d.requests[event.RequestID]
+		delete(d.requests, event.RequestID)
+		delete(d.responseByID, event.RequestID)
+		// Chromium 在部分平台会给无响应体的成功响应补发 ERR_ABORTED。
+		// 例如 fetch 收到 204 后，ResponseReceived 已经证明请求成功，此事件不能再被当成网络失败。
+		if hasResponse && benignAbortAfterNoBodyResponse(event.ErrorText, response) {
+			return
+		}
+		d.networkErrors = appendBoundedNetwork(d.networkErrors, NetworkError{URL: request.URL, Method: request.Method, ErrorText: event.ErrorText})
+	case *cdpruntime.EventConsoleAPICalled:
+		if strings.EqualFold(string(event.Type), "error") || strings.EqualFold(string(event.Type), "assert") {
+			d.consoleErrors = appendBoundedConsole(d.consoleErrors, ConsoleError{Message: consoleMessage(event.Args)})
+		}
+	case *cdpruntime.EventExceptionThrown:
+		message := "unhandled page exception"
+		if event.ExceptionDetails != nil {
+			message = strings.TrimSpace(event.ExceptionDetails.Text)
+			if event.ExceptionDetails.Exception != nil && strings.TrimSpace(event.ExceptionDetails.Exception.Description) != "" {
+				message = strings.TrimSpace(event.ExceptionDetails.Exception.Description)
 			}
 		}
-	})
+		d.pageErrors = appendBoundedPage(d.pageErrors, PageError{Message: message})
+	case *log.EventEntryAdded:
+		if event.Entry != nil && strings.EqualFold(string(event.Entry.Level), "error") {
+			d.consoleErrors = appendBoundedConsole(d.consoleErrors, ConsoleError{Message: strings.TrimSpace(event.Entry.Text)})
+		}
+	}
 }
 
 func (d *diagnostics) enable(parent, pageCtx context.Context) error {

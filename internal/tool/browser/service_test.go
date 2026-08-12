@@ -36,6 +36,31 @@ func TestFindExecutableUsesConfiguredPathAndRejectsMissing(t *testing.T) {
 	}
 }
 
+func TestBrowserErrorCodeContract(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "not found", got: ErrNotFound, want: "BROWSER_NOT_FOUND"},
+		{name: "launch failed", got: ErrLaunchFailed, want: "LAUNCH_FAILED"},
+		{name: "profile in use", got: ErrProfileInUse, want: "PROFILE_IN_USE"},
+		{name: "session not found", got: ErrSessionNotFound, want: "SESSION_NOT_FOUND"},
+		{name: "page not found", got: ErrPageNotFound, want: "PAGE_NOT_FOUND"},
+		{name: "action invalid", got: ErrActionInvalid, want: "ACTION_INVALID"},
+		{name: "action failed", got: ErrActionFailed, want: "ACTION_FAILED"},
+		{name: "timeout", got: ErrTimeout, want: "TIMEOUT"},
+		{name: "cdp failed", got: ErrCDPFailed, want: "CDP_FAILED"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got != test.want {
+				t.Fatalf("browser error code = %q, want %q", test.got, test.want)
+			}
+		})
+	}
+}
+
 func TestExecutableCandidatesRespectRequestedBrowser(t *testing.T) {
 	candidates := executableCandidates("darwin", BrowserEdge)
 	if len(candidates) == 0 {

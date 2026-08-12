@@ -4,14 +4,14 @@ import "fmt"
 
 const (
 	ErrNotFound        = "BROWSER_NOT_FOUND"
-	ErrLaunchFailed    = "BROWSER_LAUNCH_FAILED"
-	ErrProfileInUse    = "BROWSER_PROFILE_IN_USE"
-	ErrSessionNotFound = "BROWSER_SESSION_NOT_FOUND"
-	ErrPageNotFound    = "BROWSER_PAGE_NOT_FOUND"
-	ErrActionInvalid   = "BROWSER_ACTION_INVALID"
-	ErrActionFailed    = "BROWSER_ACTION_FAILED"
-	ErrTimeout         = "BROWSER_TIMEOUT"
-	ErrCDPFailed       = "BROWSER_CDP_FAILED"
+	ErrLaunchFailed    = "LAUNCH_FAILED"
+	ErrProfileInUse    = "PROFILE_IN_USE"
+	ErrSessionNotFound = "SESSION_NOT_FOUND"
+	ErrPageNotFound    = "PAGE_NOT_FOUND"
+	ErrActionInvalid   = "ACTION_INVALID"
+	ErrActionFailed    = "ACTION_FAILED"
+	ErrTimeout         = "TIMEOUT"
+	ErrCDPFailed       = "CDP_FAILED"
 )
 
 // ErrorDetails is deliberately typed so dynamic maps never cross the browser

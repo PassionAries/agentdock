@@ -41,6 +41,7 @@ func integrationServer(t *testing.T) *httptest.Server {
 		fmt.Fprint(w, `<!doctype html>
 <title>AgentDock Browser Integration</title>
 <input id="name" value="initial">
+<div id="fill-events"></div>
 <select id="choice"><option value="one">one</option><option value="two">two</option></select>
 <button id="fetch" onclick="fetch('/api?fast=1').then(()=>document.querySelector('#fetch-result').textContent='fetched')">fetch</button>
 <button id="diagnostics" onclick="console.error('console-boom'); setTimeout(()=>{throw new Error('page-boom')},0); fetch('/network-boom').catch(()=>{})">diagnostics</button>
@@ -54,6 +55,10 @@ func integrationServer(t *testing.T) *httptest.Server {
 <script>
 document.body.dataset.cookie = document.cookie;
 document.body.dataset.theme = localStorage.getItem('theme') || '';
+const nameInput = document.querySelector('#name');
+const fillEvents = document.querySelector('#fill-events');
+nameInput.addEventListener('input', () => { fillEvents.textContent = 'input'; });
+nameInput.addEventListener('change', () => { fillEvents.textContent += '-change'; });
 </script>`)
 	})
 	mux.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +133,18 @@ func TestBrowserIntegrationActionsSnapshotAndDiagnostics(t *testing.T) {
 	service := newIntegrationService(t)
 	started := startIntegrationSession(t, service, server.URL, true)
 
+	filled, err := service.Act(context.Background(), ActRequest{
+		SessionID: started.SessionID,
+		Timeout:   5 * time.Second,
+		Actions:   []Action{{Kind: "fill", Fill: &FillAction{Selector: "#name", Value: "event-check"}}},
+	})
+	if err != nil {
+		t.Fatalf("fill behavior error = %v", err)
+	}
+	if filled.FocusedElement == nil || filled.FocusedElement.ID != "name" || !strings.Contains(filled.Text, "input-change") {
+		t.Fatalf("fill behavior snapshot = %#v", filled)
+	}
+
 	snapshot, err := service.Act(context.Background(), ActRequest{
 		SessionID: started.SessionID,
 		Timeout:   20 * time.Second,
@@ -194,11 +211,11 @@ func TestBrowserIntegrationExactElementTextAndNavigationLifecycle(t *testing.T) 
 
 	_, err = service.Act(context.Background(), ActRequest{
 		SessionID: started.SessionID, Timeout: 3 * time.Second,
-		Actions: []Action{{Kind: "select", Select: &SelectAction{Selector: "#missing-select", Value: "x"}}},
+		Actions: []Action{{Kind: "select", Select: &SelectAction{Selector: "#choice", Value: "missing-option"}}},
 	})
 	var actionErr *Error
 	if !errors.As(err, &actionErr) || actionErr.Code != ErrActionFailed {
-		t.Fatalf("failed action error = %v, want %s", err, ErrActionFailed)
+		t.Fatalf("missing option error = %v, want %s", err, ErrActionFailed)
 	}
 	if _, err := service.Snapshot(context.Background(), SnapshotRequest{SessionID: started.SessionID, Timeout: 5 * time.Second}); err != nil {
 		t.Fatalf("session was not retained after action failure: %v", err)
@@ -295,6 +312,23 @@ func TestBrowserIntegrationInjectionProfilesTargetsAndCleanup(t *testing.T) {
 	if popup.PageID == started.PageID || popup.Title != "Popup" || len(popup.Pages) < 2 {
 		t.Fatalf("new target did not become active: start=%s snapshot=%#v", started.PageID, popup)
 	}
+
+	pinned, err := service.Act(context.Background(), ActRequest{
+		SessionID: started.SessionID,
+		PageID:    started.PageID,
+		Timeout:   10 * time.Second,
+		Actions: []Action{
+			{Kind: "fill", Fill: &FillAction{Selector: "#name", Value: "pinned-page"}},
+			{Kind: "wait_for_text", WaitText: &WaitTextAction{Text: "input-change", Exact: true, State: StateVisible, Timeout: 5 * time.Second}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("explicit page_id drifted during multi-action request: %v", err)
+	}
+	if pinned.PageID != started.PageID || pinned.Title != "AgentDock Browser Integration" {
+		t.Fatalf("explicit page_id result = %#v, want page %s", pinned, started.PageID)
+	}
+
 	popupSess, _ := service.getSession(started.SessionID)
 	popupPage, _ := popupSess.selectPage(popup.PageID)
 	popupSess.mu.Lock()
@@ -329,6 +363,30 @@ func TestBrowserIntegrationInjectionProfilesTargetsAndCleanup(t *testing.T) {
 			names = append(names, entry.Name())
 		}
 		t.Fatalf("temporary profile was not removed: %v path=%s entries=%v", err, tempProfile, names)
+	}
+
+	blank, err := service.Start(context.Background(), StartRequest{
+		Browser: BrowserAuto, Headless: true, Timeout: 20 * time.Second,
+		LocalStorage: map[string]map[string]string{server.URL: {"profile-key": "profile-kept"}},
+	})
+	if err != nil {
+		t.Fatalf("start with localStorage and default URL: %v", err)
+	}
+	if blank.URL != "about:blank" {
+		t.Fatalf("default URL after localStorage injection = %q, want about:blank", blank.URL)
+	}
+	injected, err := service.Act(context.Background(), ActRequest{
+		SessionID: blank.SessionID,
+		Timeout:   10 * time.Second,
+		Actions: []Action{
+			{Kind: "goto", Goto: &GotoAction{URL: server.URL + "/persist-read", WaitUntil: WaitLoad, Timeout: 5 * time.Second}},
+		},
+	})
+	if err != nil || !strings.Contains(injected.Text, "profile-kept") {
+		t.Fatalf("localStorage after restoring about:blank = %q err=%v", injected.Text, err)
+	}
+	if _, err := service.CloseSession(CloseRequest{SessionID: blank.SessionID}); err != nil {
+		t.Fatal(err)
 	}
 
 	profile := "integration-persist"

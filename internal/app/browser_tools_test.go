@@ -79,7 +79,7 @@ func TestBrowserFailureNeverExposesProcessDiagnostics(t *testing.T) {
 		Code: toolbrowser.ErrLaunchFailed, Message: "failed", Phase: "browser_launch",
 		Details: &toolbrowser.ErrorDetails{Path: "/missing/chrome"},
 	})
-	if result["browser_ok"] != false || result["code"] != toolbrowser.ErrLaunchFailed {
+	if result["browser_ok"] != false || result["code"] != "LAUNCH_FAILED" {
 		t.Fatalf("result = %#v", result)
 	}
 	for _, forbidden := range []string{"stdout", "stderr", "suggested_retry", "backend", "cdp_url"} {
