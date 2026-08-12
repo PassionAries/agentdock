@@ -1,9 +1,0 @@
-services:
-  agentdock:
-    image: ${AGENTDOCK_BROWSER_IMAGE:-ghcr.io/uvwt/agentdock:browser-latest}
-    # Chromium 的 Linux sandbox 需要创建自己的 PID/Network namespace。
-    # Docker 默认 seccomp 会拦截这一步；只对 browser 容器放宽 seccomp，保留 Chromium 自身 sandbox。
-    security_opt:
-      - seccomp=unconfined
-    environment:
-      AGENTDOCK_BROWSER_ENABLED: "true"

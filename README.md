@@ -289,15 +289,6 @@ A public endpoint must use HTTPS. `AGENTDOCK_SERVER_URL` must contain only the o
 
 Browser tools (`browser_session`, `browser_act`, and `browser_snapshot`) use a native Go CDP runtime. Outside the browser image, install Chrome, Chromium, or Microsoft Edge locally; AgentDock does not download a browser and browser automation does not require Node.js or Playwright.
 
-For Docker browser automation, layer `docker-compose.browser.yml` on top of the normal Compose file. The overlay selects `browser-latest`, enables browser tools, and relaxes Docker seccomp only for the AgentDock browser container so Chromium can create its own PID/network namespaces while keeping the Chromium sandbox enabled:
-
-```bash
-curl -fL https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.browser.yml -o docker-compose.browser.yml
-docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d
-```
-
-Do not replace this with Chromium `--no-sandbox`. If you run the browser image without Compose, pass `--security-opt seccomp=unconfined --shm-size=1g` to that browser container explicitly.
-
 Production images are published to:
 
 ```text

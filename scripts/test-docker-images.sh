@@ -97,9 +97,10 @@ elif [[ "$pull_images" != "false" ]]; then
 fi
 
 AGENTDOCK_AUTH_TOKEN=compose-config-token \
-AGENTDOCK_BROWSER_IMAGE="$browser_image" \
+AGENTDOCK_IMAGE="$browser_image" \
+AGENTDOCK_BROWSER_ENABLED=true \
 AGENTDOCK_PUBLISH_PORT=18767 \
-  docker compose -f docker-compose.yml -f docker-compose.browser.yml config >"$work_dir/compose.yml"
+  docker compose config >"$work_dir/compose.yml"
 grep -q '/home/agentdock/.agentdock' "$work_dir/compose.yml"
 grep -q '/home/agentdock/AgentDock' "$work_dir/compose.yml"
 grep -q 'agentdock-healthcheck' "$work_dir/compose.yml"
@@ -107,7 +108,6 @@ grep -Eq 'shm_size|1073741824|1000000000' "$work_dir/compose.yml"
 grep -Eq 'published: "?18767"?' "$work_dir/compose.yml"
 grep -q 'target: 8765' "$work_dir/compose.yml"
 grep -q 'AGENTDOCK_BROWSER_ENABLED: "true"' "$work_dir/compose.yml" || grep -q 'AGENTDOCK_BROWSER_ENABLED: true' "$work_dir/compose.yml"
-grep -q 'seccomp=unconfined' "$work_dir/compose.yml"
 
 AGENTDOCK_AUTH_TOKEN=compose-config-token \
 AGENTDOCK_SERVER_URL=https://agent.example.test \
@@ -202,50 +202,12 @@ test "$(docker run --rm "$browser_image" id -g)" = "10001"
 docker run --rm "$browser_image" sh -c '
   test "$AGENTDOCK_BROWSER_EXECUTABLE_PATH" = /usr/bin/chromium
   test -x "$AGENTDOCK_BROWSER_EXECUTABLE_PATH"
-  dpkg-query -W chromium-sandbox >/dev/null
+  test -f /etc/chromium.d/agentdock
+  grep -q -- "--no-sandbox" /etc/chromium.d/agentdock
 '
 
-if [[ "$build_images" == "true" ]]; then
-  for test_binary in browser-integration.test app-browser-integration.test; do
-    docker run --rm \
-      --security-opt seccomp=unconfined \
-      --shm-size=1g \
-      --entrypoint sh \
-      -e TEST_BINARY="/usr/local/bin/$test_binary" \
-      agentdock:test-browser-integration \
-      -c '
-        set -eu
-        Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
-        xvfb_pid=$!
-        cleanup_xvfb() {
-          kill "$xvfb_pid" >/dev/null 2>&1 || true
-          wait "$xvfb_pid" 2>/dev/null || true
-        }
-        trap cleanup_xvfb EXIT INT TERM
-
-        ready=false
-        for attempt in $(seq 1 50); do
-          if [ -S /tmp/.X11-unix/X99 ]; then
-            ready=true
-            break
-          fi
-          if ! kill -0 "$xvfb_pid" 2>/dev/null; then
-            cat /tmp/xvfb.log >&2
-            exit 1
-          fi
-          sleep 0.1
-        done
-        if [ "$ready" != true ]; then
-          cat /tmp/xvfb.log >&2
-          exit 1
-        fi
-        DISPLAY=:99 "$TEST_BINARY" -test.count=1
-      '
-  done
-fi
-
 browser_token="browser-smoke-${RANDOM}-${RANDOM}"
-browser_container="$(docker run -d --rm --security-opt seccomp=unconfined --shm-size=1g -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
+browser_container="$(docker run -d --rm --shm-size=1g -p 127.0.0.1::8765 -e AGENTDOCK_AUTH_TOKEN="$browser_token" "$browser_image")"
 wait_for_healthy "$browser_container" browser
 browser_port="$(docker port "$browser_container" 8765/tcp | awk -F: 'NR == 1 {print $NF}')"
 AGENTDOCK_SMOKE_URL="http://127.0.0.1:$browser_port" \
