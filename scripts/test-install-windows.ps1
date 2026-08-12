@@ -259,7 +259,7 @@ foreach ($required in @('--task-admin', 'TaskAdminService.Run(e.Args)', '--run-c
         throw "$appSourcePath is missing AgentDock background helper behavior: $required"
     }
 }
-foreach ($required in @('RunElevatedCoreTaskAsync', 'CreateNoWindow = true', 'service', 'launch-core')) {
+foreach ($required in @('RunElevatedCoreTaskAsync', 'CreateNoWindow = true', 'WindowStyle = ProcessWindowStyle.Hidden', 'service', 'launch-core')) {
     if (-not $runtimeSource.Contains($required)) {
         throw "$runtimeSourcePath is missing no-console elevated core behavior: $required"
     }

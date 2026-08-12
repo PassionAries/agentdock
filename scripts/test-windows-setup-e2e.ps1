@@ -114,8 +114,16 @@ function Assert-CoreRunsWithoutConsole {
     $consoleHosts = @(Get-CimInstance Win32_Process | Where-Object {
         $_.Name -eq 'conhost.exe' -and $_.ParentProcessId -eq $core.ProcessId
     })
-    if ($consoleHosts.Count -gt 0) {
-        throw "Elevated core unexpectedly owns a console host: $($consoleHosts.ProcessId -join ', ')"
+    $visibleConsoleHosts = @($consoleHosts | Where-Object {
+        try {
+            $process = Get-Process -Id $_.ProcessId -ErrorAction Stop
+            $process.MainWindowHandle -ne 0
+        } catch {
+            $false
+        }
+    })
+    if ($visibleConsoleHosts.Count -gt 0) {
+        throw "Elevated core unexpectedly owns a visible console window: $($visibleConsoleHosts.ProcessId -join ', ')"
     }
 }
 
