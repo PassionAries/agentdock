@@ -375,6 +375,16 @@ func TestBrowserIntegrationInjectionProfilesTargetsAndCleanup(t *testing.T) {
 	if blank.URL != "about:blank" {
 		t.Fatalf("default URL after localStorage injection = %q, want about:blank", blank.URL)
 	}
+	var blankPageURL string
+	for _, page := range blank.Pages {
+		if page.PageID == blank.PageID {
+			blankPageURL = page.URL
+			break
+		}
+	}
+	if blankPageURL != "about:blank" {
+		t.Fatalf("active page URL after localStorage injection = %q, want about:blank", blankPageURL)
+	}
 	injected, err := service.Act(context.Background(), ActRequest{
 		SessionID: blank.SessionID,
 		Timeout:   10 * time.Second,
