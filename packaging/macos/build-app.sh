@@ -46,7 +46,7 @@ done
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
-  VERSION="$(sed -n 's/^[[:space:]]*const[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/internal/buildinfo/buildinfo.go" | head -n 1)"
+  VERSION="$(sed -n 's/^[[:space:]]*const[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/internal/buildinfo/buildinfo.go")"
 fi
 [[ "$VERSION" == <->.<->.<->* ]] || die "无法解析 App 版本：$VERSION"
 
@@ -208,9 +208,12 @@ for release_architecture in "${release_architectures[@]}"; do
     arm64) expected_file_architecture="arm64" ;;
     amd64) expected_file_architecture="x86_64" ;;
   esac
-  file "$payload_check_dir/bin/agentdock" | grep -q "$expected_file_architecture" || \
+  # pipefail 下避免让早退的匹配命令截断 file 输出，否则上游可能收到 SIGPIPE(141)。
+  agentdock_file_output="$(file "$payload_check_dir/bin/agentdock")"
+  [[ "$agentdock_file_output" == *"$expected_file_architecture"* ]] || \
     die "$agentdock_archive 架构不匹配，期望 $expected_file_architecture"
-  file "$OFFLINE_PAYLOAD_DIR/$cloudflared_binary" | grep -q "$expected_file_architecture" || \
+  cloudflared_file_output="$(file "$OFFLINE_PAYLOAD_DIR/$cloudflared_binary")"
+  [[ "$cloudflared_file_output" == *"$expected_file_architecture"* ]] || \
     die "$cloudflared_binary 架构不匹配，期望 $expected_file_architecture"
 
   helper_core_binaries+=("$payload_check_dir/bin/agentdock")

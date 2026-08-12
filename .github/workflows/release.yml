@@ -170,9 +170,11 @@ jobs:
             output="payload/cloudflared_darwin_$architecture"
             install -m 0755 "$extract_dir/cloudflared" "$output"
             case "$architecture" in
-              arm64) file "$output" | grep -q 'arm64' ;;
-              amd64) file "$output" | grep -q 'x86_64' ;;
+              arm64) expected_file_architecture='arm64' ;;
+              amd64) expected_file_architecture='x86_64' ;;
             esac
+            file_output="$(file "$output")"
+            [[ "$file_output" == *"$expected_file_architecture"* ]]
             codesign --verify --deep --strict --verbose=2 "$output"
             (
               cd payload
@@ -731,7 +733,8 @@ jobs:
           test "$(plutil -extract BundleProgram raw -o - "$tunnel_plist")" = "Contents/Helpers/agentdock"
           codesign --verify --strict --verbose=2 "$mount_dir/AgentDock.app/Contents/Helpers/agentdock"
           codesign --verify --strict --verbose=2 "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared"
-          "$mount_dir/AgentDock.app/Contents/Helpers/agentdock" --version | grep -q "AgentDock $tag"
+          mounted_core_version="$("$mount_dir/AgentDock.app/Contents/Helpers/agentdock" --version)"
+          [[ "$mounted_core_version" == *"AgentDock $tag"* ]]
           "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared" --version >/dev/null
           hdiutil detach "$mount_dir" >/dev/null
           dmg_mounted=false

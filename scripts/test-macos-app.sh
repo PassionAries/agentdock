@@ -141,8 +141,11 @@ test "$(plutil -extract BundleProgram raw -o - "$CORE_AGENT_PLIST")" = "Contents
 test "$(plutil -extract Label raw -o - "$TUNNEL_AGENT_PLIST")" = "com.uvwt.agentdock.tunnel"
 test "$(plutil -extract BundleProgram raw -o - "$TUNNEL_AGENT_PLIST")" = "Contents/Helpers/agentdock"
 ! grep -Eq '/Users/|\.local/bin|Library/LaunchAgents' "$CORE_AGENT_PLIST" "$TUNNEL_AGENT_PLIST"
-"$CORE_HELPER" --version | grep -q '^AgentDock v'
-"$CLOUDFLARED_HELPER" --version | grep -q '^cloudflared version test'
+# pipefail 下不要用 grep -q 提前关闭命令输出，避免上游偶发 SIGPIPE(141)。
+core_helper_version="$("$CORE_HELPER" --version)"
+[[ "$core_helper_version" == "AgentDock v"* ]]
+cloudflared_helper_version="$("$CLOUDFLARED_HELPER" --version)"
+[[ "$cloudflared_helper_version" == "cloudflared version test"* ]]
 codesign --verify --strict --verbose=2 "$CORE_HELPER"
 codesign --verify --strict --verbose=2 "$CLOUDFLARED_HELPER"
 core_signature="$(codesign -dv --verbose=4 "$CORE_HELPER" 2>&1)"
