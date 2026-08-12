@@ -21,6 +21,8 @@ const (
 	PathModel       = "host"
 	RecallTimeoutMS = 30000
 
+	maxInstructionsFileBytes = 64 << 10
+
 	defaultOAuthAccessTokenTTLSeconds = int64(time.Hour / time.Second)
 	maxOAuthAccessTokenTTLSeconds     = int64(999999 * 24 * 60 * 60)
 )
@@ -50,6 +52,8 @@ type Config struct {
 	ACPInteractionMS             int
 	Stdio                        bool
 	TrustedProxyCIDRs            []string
+	InstructionsFile             string
+	Instructions                 string
 }
 
 func FromEnv() (Config, error) {
@@ -130,6 +134,7 @@ func FromEnv() (Config, error) {
 		ACPInteractionMS:             acpInteractionMS,
 		Stdio:                        stdio,
 		TrustedProxyCIDRs:            splitCommaSeparated(os.Getenv("AGENTDOCK_TRUSTED_PROXY_CIDRS")),
+		InstructionsFile:             strings.TrimSpace(os.Getenv("AGENTDOCK_INSTRUCTIONS_FILE")),
 	}, nil
 }
 
@@ -180,6 +185,21 @@ func (c *Config) Normalize() error {
 		if !filepath.IsAbs(c.BrowserExecutablePath) {
 			return fmt.Errorf("BrowserExecutablePath must resolve to an absolute path: %s", c.BrowserExecutablePath)
 		}
+	}
+	c.InstructionsFile = strings.TrimSpace(c.InstructionsFile)
+	if c.InstructionsFile != "" {
+		c.InstructionsFile = filepath.Clean(c.InstructionsFile)
+		if !filepath.IsAbs(c.InstructionsFile) {
+			return fmt.Errorf("InstructionsFile must resolve to an absolute path: %s", c.InstructionsFile)
+		}
+		data, err := os.ReadFile(c.InstructionsFile)
+		if err != nil {
+			return fmt.Errorf("read InstructionsFile %s: %w", c.InstructionsFile, err)
+		}
+		if len(data) > maxInstructionsFileBytes {
+			return fmt.Errorf("InstructionsFile %s exceeds %d bytes", c.InstructionsFile, maxInstructionsFileBytes)
+		}
+		c.Instructions = strings.TrimSpace(string(data))
 	}
 	if err := c.normalizeACP(); err != nil {
 		return err
