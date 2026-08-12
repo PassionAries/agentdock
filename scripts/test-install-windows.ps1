@@ -10,11 +10,11 @@ $ErrorActionPreference = 'Stop'
 $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
 $tokens = $null
 $errors = $null
-[System.Management.Automation.Language.Parser]::ParseFile(
+$installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
     $resolvedInstaller,
     [ref] $tokens,
     [ref] $errors
-) | Out-Null
+)
 if ($errors.Count -gt 0) {
     $errors | ForEach-Object { Write-Error $_.Message }
     throw "$InstallerPath contains PowerShell syntax errors"
@@ -83,6 +83,11 @@ foreach ($required in @(
     'Set-AgentDockTaskSecurity',
     'Start-ElevatedAgentDockTaskAction',
     'Restore-AgentDockTaskBackup',
+    '$effectivePrivilegeMode -eq ''elevated'' -and -not $taskState.Exists',
+    '$installWarningCode = ''elevated-mode-fallback''',
+    'WarningCode=$WarningCode',
+    '-WarningCode $installWarningCode',
+    'Administrator approval for AgentDock rollback was not completed',
     'setup-elevated-context',
     'Start Setup normally under the signed-in account',
     'New-ItemProperty -Path $runKey -Name $runValueName',
@@ -112,6 +117,92 @@ foreach ($required in @(
 )) {
     if (-not $content.Contains($required)) {
         throw "$InstallerPath is missing current-user startup logic: $required"
+    }
+}
+
+$elevationFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Start-ElevatedAgentDockTaskAction'
+}, $true)
+if ($null -eq $elevationFunction) {
+    throw "$InstallerPath does not define Start-ElevatedAgentDockTaskAction"
+}
+
+$elevationProbePreamble = @'
+$script:mockStartProcessMode = 'reject'
+function Start-Process {
+    param(
+        [string] $FilePath,
+        [string] $ArgumentList,
+        [string] $Verb,
+        [string] $WindowStyle,
+        [switch] $Wait,
+        [switch] $PassThru
+    )
+
+    if ($script:mockStartProcessMode -eq 'reject') {
+        throw 'simulated RunAs rejection'
+    }
+    return [pscustomobject]@{ ExitCode = 23 }
+}
+'@
+$elevationProbeAssertions = @'
+$taskUser = [pscustomobject]@{
+    Sid = 'S-1-5-21-test'
+    Name = 'TEST\AgentDock'
+}
+$result = Start-ElevatedAgentDockTaskAction `
+    -Action prepare-elevated `
+    -BackupDirectory 'C:\Temp\AgentDockBackup' `
+    -LauncherPath 'C:\AgentDock\agentdock.exe' `
+    -RuntimeRoot 'C:\AgentDock' `
+    -TaskUser $taskUser
+if ($result.Started -ne $false -or $result.ErrorMessage -notlike '*simulated RunAs rejection*') {
+    throw "RunAs pre-start rejection was not returned as a recoverable result: $($result | Out-String)"
+}
+
+$script:mockStartProcessMode = 'helper-error'
+$helperError = ''
+try {
+    [void] (Start-ElevatedAgentDockTaskAction `
+        -Action prepare-elevated `
+        -BackupDirectory 'C:\Temp\AgentDockBackup' `
+        -LauncherPath 'C:\AgentDock\agentdock.exe' `
+        -RuntimeRoot 'C:\AgentDock' `
+        -TaskUser $taskUser)
+} catch {
+    $helperError = $_.Exception.Message
+}
+if ($helperError -notlike '*administrator task action failed with exit code 23*') {
+    throw "Elevated helper failure must remain fatal, actual error: $helperError"
+}
+'@
+$elevationProbe = [scriptblock]::Create(
+    $elevationProbePreamble + "`r`n" + $elevationFunction.Extent.Text + "`r`n" + $elevationProbeAssertions
+)
+& $elevationProbe
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$setupCodePath = Join-Path $repoRoot 'packaging\windows\includes\code.iss'
+$setupMessagesPath = Join-Path $repoRoot 'packaging\windows\includes\messages.iss'
+$setupCode = Get-Content -LiteralPath $setupCodePath -Raw
+$setupMessages = Get-Content -LiteralPath $setupMessagesPath -Raw
+foreach ($required in @(
+    "GetIniString('AgentDock', 'WarningCode', '', ResultFilePath)",
+    "InstallWarningCode = 'elevated-mode-fallback'",
+    "GetLocalizedMessage('ElevatedModeFallbackNotice')"
+)) {
+    if (-not $setupCode.Contains($required)) {
+        throw "$setupCodePath is missing elevation fallback presentation: $required"
+    }
+}
+foreach ($required in @(
+    'english.ElevatedModeFallbackNotice=',
+    'chinesesimplified.ElevatedModeFallbackNotice='
+)) {
+    if (-not $setupMessages.Contains($required)) {
+        throw "$setupMessagesPath is missing elevation fallback message: $required"
     }
 }
 

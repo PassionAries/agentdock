@@ -355,7 +355,9 @@ function Write-InstallResult {
         [string] $OAuthLoginPassword,
         [string] $HealthStatus,
         [string] $PrivilegeMode,
-        [string] $ErrorCode = ''
+        [string] $ErrorCode = '',
+        [string] $WarningCode = '',
+        [string] $WarningMessage = ''
     )
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -366,11 +368,14 @@ function Write-InstallResult {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
     $safeMessage = $Message.Replace("`r", ' ').Replace("`n", ' ')
+    $safeWarningMessage = $WarningMessage.Replace("`r", ' ').Replace("`n", ' ')
     $lines = @(
         '[AgentDock]',
         "Success=$($Success.ToString().ToLowerInvariant())",
         "Code=$ErrorCode",
         "Message=$safeMessage",
+        "WarningCode=$WarningCode",
+        "WarningMessage=$safeWarningMessage",
         "Version=$InstalledVersion",
         "LocalMCPUrl=$LocalMCPUrl",
         "PublicMCPUrl=$PublicMCPUrl",
@@ -728,10 +733,20 @@ function Start-ElevatedAgentDockTaskAction {
             -Wait `
             -PassThru
     } catch {
-        throw "Administrator approval for AgentDock was not completed: $($_.Exception.Message)"
+        # Windows or enterprise policy can reject RunAs before the UAC helper starts.
+        # The main install flow decides whether that pre-start failure is safe to downgrade.
+        return [pscustomobject]@{
+            Started = $false
+            ErrorMessage = $_.Exception.Message
+        }
     }
     if ($process.ExitCode -ne 0) {
         throw "AgentDock administrator task action failed with exit code $($process.ExitCode)."
+    }
+
+    return [pscustomobject]@{
+        Started = $true
+        ErrorMessage = ''
     }
 }
 
@@ -1088,8 +1103,12 @@ $previousTrayRunValue = $null
 $previousTunnelRunValue = $null
 $taskUser = Get-CurrentTaskUser
 $effectivePrivilegeMode = $CorePrivilegeMode
+$installWarningCode = ''
+$installWarningMessage = ''
 if ($effectivePrivilegeMode -eq 'elevated' -and -not $taskUser.CanElevate) {
-    Write-Warning 'The current Windows account is not a local administrator. AgentDock will use standard user mode.'
+    $installWarningCode = 'elevated-mode-fallback'
+    $installWarningMessage = 'Administrator-enhanced core mode is unavailable for the current account. AgentDock continued in standard user mode.'
+    Write-Warning $installWarningMessage
     $effectivePrivilegeMode = 'standard'
 }
 $taskState = Get-AgentDockTaskState `
@@ -1208,14 +1227,27 @@ try {
     $processWasRunning = @(Get-AgentDockProcesses -BinaryPath $destinationBinary).Count -gt 0
     if ($effectivePrivilegeMode -eq 'elevated' -or $taskState.Exists) {
         $taskAction = if ($effectivePrivilegeMode -eq 'elevated') { 'prepare-elevated' } else { 'prepare-standard' }
-        Start-ElevatedAgentDockTaskAction `
+        $taskActionResult = Start-ElevatedAgentDockTaskAction `
             -Action $taskAction `
             -BackupDirectory $taskBackupDirectory `
             -LauncherPath $destinationBinary `
             -RuntimeRoot $runtimeDir `
             -TaskUser $taskUser
-        $taskTransactionPrepared = $true
-        Write-Host "Prepared AgentDock scheduled task transaction: $taskAction"
+        if (-not $taskActionResult.Started) {
+            if ($effectivePrivilegeMode -eq 'elevated' -and -not $taskState.Exists) {
+                # No scheduled-task state changed because RunAs never started. A fresh install can
+                # therefore continue safely without administrator-enhanced core mode.
+                $effectivePrivilegeMode = 'standard'
+                $installWarningCode = 'elevated-mode-fallback'
+                $installWarningMessage = 'Windows did not start the administrator approval request. AgentDock continued in standard user mode.'
+                Write-Warning "$installWarningMessage Details: $($taskActionResult.ErrorMessage)"
+            } else {
+                throw "Administrator approval for AgentDock was not completed: $($taskActionResult.ErrorMessage)"
+            }
+        } else {
+            $taskTransactionPrepared = $true
+            Write-Host "Prepared AgentDock scheduled task transaction: $taskAction"
+        }
     }
     $agentDockStopAttempted = $true
     [void] (Stop-AgentDockForUpgrade -BinaryPath $destinationBinary)
@@ -1688,7 +1720,9 @@ exit `$process.ExitCode
         -BearerToken $AuthToken `
         -OAuthLoginPassword $OAuthPassword `
         -HealthStatus $healthStatus `
-        -PrivilegeMode $effectivePrivilegeMode
+        -PrivilegeMode $effectivePrivilegeMode `
+        -WarningCode $installWarningCode `
+        -WarningMessage $installWarningMessage
 
     $taskTransactionCommitted = $taskTransactionPrepared
 
@@ -1795,11 +1829,14 @@ exit `$process.ExitCode
         }
 
         if ($taskTransactionPrepared -and -not $taskTransactionCommitted) {
-            Start-ElevatedAgentDockTaskAction `
+            $restoreTaskActionResult = Start-ElevatedAgentDockTaskAction `
                 -Action restore `
                 -BackupDirectory $taskBackupDirectory `
                 -LauncherPath '' `
                 -TaskUser $taskUser
+            if (-not $restoreTaskActionResult.Started) {
+                throw "Administrator approval for AgentDock rollback was not completed: $($restoreTaskActionResult.ErrorMessage)"
+            }
             $taskRestored = $true
         }
 
