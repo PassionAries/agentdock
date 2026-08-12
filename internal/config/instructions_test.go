@@ -51,3 +51,92 @@ func TestNormalizeFailsWhenInstructionsFileMissing(t *testing.T) {
 		t.Fatal("Normalize() accepted a missing instructions file")
 	}
 }
+
+func TestNormalizeAcceptsInstructionsFileAtSizeLimit(t *testing.T) {
+	setTestUserHome(t, t.TempDir())
+	path := filepath.Join(t.TempDir(), "instructions.md")
+	content := strings.Repeat("a", maxInstructionsFileBytes)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("AGENTDOCK_INSTRUCTIONS_FILE", path)
+
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if cfg.Instructions != content {
+		t.Fatalf("Instructions length = %d, want %d", len(cfg.Instructions), len(content))
+	}
+}
+
+func TestNormalizeRejectsInstructionsFileOverSizeLimit(t *testing.T) {
+	setTestUserHome(t, t.TempDir())
+	path := filepath.Join(t.TempDir(), "instructions.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", maxInstructionsFileBytes+1)), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("AGENTDOCK_INSTRUCTIONS_FILE", path)
+
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("Normalize() error = %v, want size limit error", err)
+	}
+}
+
+func TestNormalizeRejectsEmptyInstructionsFile(t *testing.T) {
+	for _, content := range []string{"", " \n\t "} {
+		t.Run(strings.ReplaceAll(content, "\n", "\\n"), func(t *testing.T) {
+			setTestUserHome(t, t.TempDir())
+			path := filepath.Join(t.TempDir(), "instructions.md")
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			t.Setenv("AGENTDOCK_INSTRUCTIONS_FILE", path)
+
+			cfg, err := FromEnv()
+			if err != nil {
+				t.Fatalf("FromEnv() error = %v", err)
+			}
+			if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "non-empty") {
+				t.Fatalf("Normalize() error = %v, want non-empty instructions error", err)
+			}
+		})
+	}
+}
+
+func TestNormalizeRejectsInvalidUTF8InstructionsFile(t *testing.T) {
+	setTestUserHome(t, t.TempDir())
+	path := filepath.Join(t.TempDir(), "instructions.md")
+	if err := os.WriteFile(path, []byte{0xff, 0xfe}, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("AGENTDOCK_INSTRUCTIONS_FILE", path)
+
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("Normalize() error = %v, want UTF-8 error", err)
+	}
+}
+
+func TestNormalizeRejectsNonRegularInstructionsFile(t *testing.T) {
+	setTestUserHome(t, t.TempDir())
+	t.Setenv("AGENTDOCK_INSTRUCTIONS_FILE", t.TempDir())
+
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("Normalize() error = %v, want regular file error", err)
+	}
+}
