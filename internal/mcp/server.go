@@ -25,9 +25,14 @@ type Server struct {
 
 func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	server := &Server{runtime: runtime}
+	serverOptions := &mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}}
+	if cfg.Instructions != "" {
+		// 可选说明文字随 initialize 响应下发，由支持 MCP instructions 的客户端注入模型上下文。
+		serverOptions.Instructions = cfg.Instructions
+	}
 	server.sdk = mcpsdk.NewServer(
 		&mcpsdk.Implementation{Name: config.ServerName, Version: buildinfo.Version},
-		&mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}},
+		serverOptions,
 	)
 	if runtime != nil {
 		for _, name := range runtime.ToolNames() {
