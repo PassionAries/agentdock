@@ -46,7 +46,7 @@ done
 
 VERSION="${1:-}"
 if [[ -z "$VERSION" ]]; then
-  VERSION="$(sed -n 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/internal/config/config.go" | head -n 1)"
+  VERSION="$(sed -n 's/^[[:space:]]*const[[:space:]]*Version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT_DIR/internal/buildinfo/buildinfo.go" | head -n 1)"
 fi
 [[ "$VERSION" == <->.<->.<->* ]] || die "无法解析 App 版本：$VERSION"
 
