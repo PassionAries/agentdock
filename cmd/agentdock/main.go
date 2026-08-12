@@ -13,9 +13,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/cmd/agentdock/internal/logx"
 	"github.com/uvwt/agentdock/internal/app"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/desktopcontrol"
 	"github.com/uvwt/agentdock/internal/desktopruntime"
@@ -43,6 +43,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 1 && args[0] == "--version" {
 		printVersion(stdout)
 		return nil
+	}
+	if len(args) > 0 && args[0] == "version" {
+		switch {
+		case len(args) == 1:
+			printVersion(stdout)
+			return nil
+		case len(args) == 2 && args[1] == "--json":
+			return json.NewEncoder(stdout).Encode(buildinfo.Current())
+		default:
+			return errors.New("用法：agentdock version [--json]")
+		}
 	}
 	if len(args) > 0 && args[0] == "update" {
 		switch {
@@ -157,6 +168,7 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "用法：")
 		fmt.Fprintln(stderr, "  agentdock [服务参数]")
 		fmt.Fprintln(stderr, "  agentdock --version")
+		fmt.Fprintln(stderr, "  agentdock version [--json]")
 		fmt.Fprintln(stderr, "  agentdock update [--check]")
 		fmt.Fprintln(stderr, "  agentdock service <status|start|stop|restart|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock tunnel <status|start|stop|restart|regenerate|configure|autostart> --runtime-root <目录>")

@@ -172,6 +172,11 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, err
 		sess.stop()
 		return StartResult{}, browserError(ErrCDPFailed, "refresh browser pages", "cdp", nil, err)
 	}
+	var currentURL, currentTitle string
+	if err := runWithContext(launchCtx, pageCtx, chromedp.Location(&currentURL), chromedp.Title(&currentTitle)); err != nil {
+		sess.stop()
+		return StartResult{}, classifyOperationError(err, "browser_start")
+	}
 
 	s.mu.Lock()
 	if s.closed {
@@ -186,14 +191,15 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, err
 	s.mu.Unlock()
 	reserved = false
 
-	pages := sess.pageSummaries()
-	active, _ := sess.pageSummary(pageID)
+	// TargetInfo.URL 在部分 Chromium 上对 about:blank 会短暂保持空字符串。
+	// StartResult 以真实 document 状态为准，并只在输出副本中覆盖当前页，避免和异步 target 事件争写内部状态。
+	pages := sess.pageSummaries(pageID, currentURL, currentTitle)
 	return StartResult{
 		SessionID: sess.id,
 		PageID:    string(pageID),
 		Pages:     pages,
-		URL:       active.URL,
-		Title:     active.Title,
+		URL:       currentURL,
+		Title:     currentTitle,
 		ProfileID: profileID,
 	}, nil
 }
@@ -555,8 +561,7 @@ func (sess *session) mostRecentPageLocked() target.ID {
 	return selected
 }
 
-func (sess *session) pageSummaries() []PageSummary {
-	_ = sess.refreshPages()
+func (sess *session) pageSummaries(documentPage target.ID, documentURL, documentTitle string) []PageSummary {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	pages := make([]*pageState, 0, len(sess.pages))
@@ -566,19 +571,13 @@ func (sess *session) pageSummaries() []PageSummary {
 	sort.Slice(pages, func(i, j int) bool { return pages[i].Order < pages[j].Order })
 	result := make([]PageSummary, 0, len(pages))
 	for _, page := range pages {
-		result = append(result, PageSummary{PageID: string(page.ID), URL: page.URL, Title: page.Title, Active: page.ID == sess.activePage})
+		url, title := page.URL, page.Title
+		if page.ID == documentPage {
+			url, title = documentURL, documentTitle
+		}
+		result = append(result, PageSummary{PageID: string(page.ID), URL: url, Title: title, Active: page.ID == sess.activePage})
 	}
 	return result
-}
-
-func (sess *session) pageSummary(id target.ID) (PageSummary, bool) {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	page := sess.pages[id]
-	if page == nil {
-		return PageSummary{}, false
-	}
-	return PageSummary{PageID: string(page.ID), URL: page.URL, Title: page.Title, Active: page.ID == sess.activePage}, true
 }
 
 func normalizeProfileID(raw string) string {

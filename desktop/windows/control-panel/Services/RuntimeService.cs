@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -78,8 +79,14 @@ public sealed class RuntimeService : IDisposable
         publicOrigin = publicOrigin.TrimEnd('/');
         var publicMcpUrl = string.IsNullOrWhiteSpace(publicOrigin) ? "" : publicOrigin + "/mcp";
         var savedNamedOrigin = ReadText(Path.Combine(RuntimeRoot, "named-server-url.txt")).TrimEnd('/');
-        var healthy = await IsHealthyAsync(localOrigin, cancellationToken);
-        var coreRunning = healthy || IsProcessRunningAtPath("agentdock", manifest.BinaryPath);
+        var binaryPath = ResolveCoreBinaryPath(manifest);
+        var health = await ReadHealthAsync(localOrigin, cancellationToken);
+        var version = health.Version;
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            version = await ReadCoreVersionAsync(binaryPath, cancellationToken);
+        }
+        var coreRunning = health.Healthy || IsProcessRunningAtPath("agentdock", binaryPath);
         var cloudflaredRunning = IsProcessRunningAtPath("cloudflared", manifest.CloudflaredBinary);
         var tunnelMode = ReadText(Path.Combine(RuntimeRoot, "cloudflared-mode.txt"));
         if (string.IsNullOrWhiteSpace(tunnelMode))
@@ -90,8 +97,9 @@ public sealed class RuntimeService : IDisposable
         return new RuntimeSnapshot(
             manifest,
             settings,
+            version,
             coreRunning,
-            healthy,
+            health.Healthy,
             cloudflaredRunning,
             localMcpUrl,
             publicOrigin,
@@ -287,14 +295,20 @@ public sealed class RuntimeService : IDisposable
     private async Task<string> ResolveCoreBinaryAsync(CancellationToken cancellationToken)
     {
         var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken);
-        var binaryPath = string.IsNullOrWhiteSpace(manifest?.BinaryPath)
-            ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
-            : manifest.BinaryPath;
+        var binaryPath = ResolveCoreBinaryPath(manifest);
         if (!File.Exists(binaryPath))
         {
             throw new FileNotFoundException("找不到 AgentDock 核心程序，请运行 Setup.exe 修复安装。", binaryPath);
         }
         return binaryPath;
+    }
+
+    private string ResolveCoreBinaryPath(RuntimeManifest? manifest)
+    {
+        var binaryPath = manifest?.BinaryPath;
+        return string.IsNullOrWhiteSpace(binaryPath)
+            ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
+            : binaryPath;
     }
 
     internal Task RunCoreStartupAsync(CancellationToken cancellationToken = default) =>
@@ -521,16 +535,60 @@ public sealed class RuntimeService : IDisposable
         return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentDock");
     }
 
-    private async Task<bool> IsHealthyAsync(string origin, CancellationToken cancellationToken)
+    private async Task<(bool Healthy, string Version)> ReadHealthAsync(string origin, CancellationToken cancellationToken)
     {
         try
         {
             using var response = await _httpClient.GetAsync(origin.TrimEnd('/') + "/healthz", cancellationToken);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                return (false, "");
+            }
+
+            try
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                var health = JsonSerializer.Deserialize<CoreVersionInfo>(body, JsonOptions);
+                return (true, health?.Version?.Trim() ?? "");
+            }
+            catch (Exception ex) when (ex is IOException or JsonException)
+            {
+                // 健康端点已返回成功时，版本解析失败不应把服务误判为离线；随后再回退读取本地二进制 BuildInfo。
+                return (true, "");
+            }
         }
-        catch
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return false;
+            return (false, "");
+        }
+        catch (HttpRequestException)
+        {
+            return (false, "");
+        }
+    }
+
+    private async Task<string> ReadCoreVersionAsync(string binaryPath, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(binaryPath))
+        {
+            return "";
+        }
+
+        var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
+        startInfo.ArgumentList.Add("version");
+        startInfo.ArgumentList.Add("--json");
+        try
+        {
+            var output = await RunProcessAsync(startInfo, cancellationToken);
+            return JsonSerializer.Deserialize<CoreVersionInfo>(output, JsonOptions)?.Version?.Trim() ?? "";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or Win32Exception or JsonException)
+        {
+            return "";
         }
     }
 

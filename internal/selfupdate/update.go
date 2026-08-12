@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 )
 
 const (
@@ -126,7 +126,7 @@ func runtimeOptions(output io.Writer) (options, error) {
 	}
 	desktopTarget := detectDesktopUpdateTarget()
 	return options{
-		CurrentVersion:        config.Version,
+		CurrentVersion:        buildinfo.Version,
 		ExecutablePath:        executable,
 		DesktopTargetPath:     desktopTarget,
 		DesktopCurrentVersion: desktopUpdateVersion(desktopTarget),
@@ -409,7 +409,7 @@ func fetchLatestRelease(ctx context.Context, client *http.Client, endpoint strin
 		return release{}, fmt.Errorf("创建 Release 请求失败: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "agentdock/"+config.Version)
+	req.Header.Set("User-Agent", "agentdock/"+buildinfo.Version)
 	resp, err := client.Do(req)
 	if err != nil {
 		return release{}, fmt.Errorf("查询最新 Release 失败: %w", err)
@@ -439,7 +439,7 @@ func download(ctx context.Context, client *http.Client, rawURL string, limit int
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "agentdock/"+config.Version)
+	req.Header.Set("User-Agent", "agentdock/"+buildinfo.Version)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

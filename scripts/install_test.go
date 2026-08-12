@@ -276,6 +276,11 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 			t.Fatalf("install.ps1 missing %q", want)
 		}
 	}
+	for _, forbidden := range []string{"[string] $RuntimeVersion", "version = $RuntimeVersion"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("install.ps1 must not persist the AgentDock version in runtime.json: %q", forbidden)
+		}
+	}
 	stopCall := strings.Index(script, "Stop-AgentDockForUpgrade -BinaryPath $destinationBinary")
 	replaceCall := strings.Index(script, "Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary")
 	if stopCall < 0 || replaceCall < 0 || stopCall > replaceCall {
@@ -350,6 +355,7 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 		"Enable-ScheduledTask -TaskName $TaskName",
 		"Disable-ScheduledTask -TaskName $TaskName",
 		"Update-RuntimeManifest -RuntimePort $settings.port -RuntimeMode 'none' -PublicUrl ''",
+		"$Manifest.PSObject.Properties.Remove('version')",
 		"named-server-url.txt",
 		"quick-tunnel-url.txt",
 		"'regenerate-quick'",
@@ -409,6 +415,43 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 	} {
 		if strings.Contains(runtimeService, forbidden) {
 			t.Fatalf("Windows control panel still invokes PowerShell for Tunnel lifecycle %q", forbidden)
+		}
+	}
+}
+
+func TestWindowsControlPanelReadsVersionFromCoreBuildInfo(t *testing.T) {
+	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read App.xaml.cs: %v", err)
+	}
+	windowData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
+	if err != nil {
+		t.Fatalf("read MainWindow.xaml.cs: %v", err)
+	}
+	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	if err != nil {
+		t.Fatalf("read RuntimeService.cs: %v", err)
+	}
+
+	app := string(appData)
+	window := string(windowData)
+	runtimeService := string(runtimeData)
+	for _, want := range []string{
+		`ReadHealthAsync(localOrigin, cancellationToken)`,
+		`ReadCoreVersionAsync(binaryPath, cancellationToken)`,
+		`startInfo.ArgumentList.Add("version")`,
+		`startInfo.ArgumentList.Add("--json")`,
+	} {
+		if !strings.Contains(runtimeService, want) {
+			t.Fatalf("Windows control panel must read the version from the core binary BuildInfo: %q", want)
+		}
+	}
+	if !strings.Contains(app, "snapshot.Version") || !strings.Contains(window, "snapshot.Version") {
+		t.Fatal("Windows control panel surfaces must display RuntimeSnapshot.Version")
+	}
+	for _, source := range []string{app, window, runtimeService} {
+		if strings.Contains(source, "snapshot.Manifest.Version") || strings.Contains(source, "manifest.Version") {
+			t.Fatal("Windows control panel must not treat runtime.json as a version source")
 		}
 	}
 }
@@ -1235,10 +1278,14 @@ func TestMacOSReleasePublishesDesktopUpdateArchive(t *testing.T) {
 		`ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"`,
 		`unzip -tq "$ZIP_PATH"`,
 		`shasum -a 256 "${ZIP_PATH:t}" > "${ZIP_PATH:t}.sha256"`,
+		`$ROOT_DIR/internal/buildinfo/buildinfo.go`,
 	} {
 		if !strings.Contains(build, want) {
 			t.Fatalf("build-app.sh missing macOS desktop update archive behavior %q", want)
 		}
+	}
+	if strings.Contains(build, "internal/config/config.go") {
+		t.Fatal("build-app.sh must read the App version from shared buildinfo, not config.Version")
 	}
 }
 
@@ -1270,6 +1317,27 @@ func TestReleaseWorkflowChecksOutRequestedTag(t *testing.T) {
 		strings.Contains(workflow, "internal/buildinfo.Commit=$env:GITHUB_SHA") ||
 		strings.Contains(workflow, "BUILD_COMMIT=${{ github.sha }}") {
 		t.Fatal("release build metadata must describe the checked-out tag, not the workflow dispatch commit")
+	}
+}
+
+func TestReleaseWorkflowsReadVersionFromBuildInfo(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", ".github", "workflows", "release.yml"),
+		filepath.Join("..", ".github", "workflows", "windows-installer.yml"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		workflow := string(data)
+		hasBuildInfoPath := strings.Contains(workflow, "internal/buildinfo/buildinfo.go") ||
+			strings.Contains(workflow, `internal\buildinfo\buildinfo.go`)
+		if !hasBuildInfoPath || !strings.Contains(workflow, `const\s+Version\s*=`) {
+			t.Fatalf("%s must derive the release version from buildinfo.Version", path)
+		}
+		if strings.Contains(workflow, "internal/config/config.go") && strings.Contains(workflow, "config.Version") {
+			t.Fatalf("%s must not derive the release version from config.Version", path)
+		}
 	}
 }
 

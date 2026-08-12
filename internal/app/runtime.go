@@ -11,6 +11,7 @@ import (
 	"time"
 
 	acpruntime "github.com/uvwt/agentdock/internal/acp"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/envstore"
 	mcpclient "github.com/uvwt/agentdock/internal/mcp/client"
@@ -197,7 +198,7 @@ func (r *Runtime) serverInfo() Result {
 	return Result{
 		"server":           config.ServerName,
 		"title":            "AgentDock",
-		"version":          config.Version,
+		"version":          buildinfo.Version,
 		"protocol_version": config.ProtocolVersion,
 
 		"os":         runtime.GOOS,

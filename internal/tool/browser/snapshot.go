@@ -113,7 +113,8 @@ func (s *Service) snapshotLocked(ctx context.Context, sess *session, req Snapsho
 	if err := sess.refreshPages(); err != nil {
 		return Snapshot{}, browserError(ErrCDPFailed, "refresh browser pages for snapshot", "cdp", nil, err)
 	}
-	pages := sess.pageSummaries()
+	// Snapshot 已读取到真实 document 状态，当前页输出以它为准，避免 TargetInfo 元数据滞后造成 pages 与主字段不一致。
+	pages := sess.pageSummaries(pageID, state.URL, state.Title)
 	if viewportWidth <= 0 {
 		viewportWidth = state.Viewport.Width
 	}

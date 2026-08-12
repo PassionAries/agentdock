@@ -308,7 +308,7 @@ public partial class App : System.Windows.Application
     {
         if (snapshot.Healthy)
         {
-            var version = string.IsNullOrWhiteSpace(snapshot.Manifest.Version) ? "未知版本" : snapshot.Manifest.Version;
+            var version = string.IsNullOrWhiteSpace(snapshot.Version) ? "未知版本" : snapshot.Version;
             return $"运行正常 · {version}";
         }
         return snapshot.CoreRunning ? "服务异常" : "已停止";

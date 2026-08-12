@@ -234,9 +234,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $testTag = '${{ inputs.test_tag }}'
           if ([string]::IsNullOrWhiteSpace($testTag)) {
-            $config = Get-Content -LiteralPath '.\internal\config\config.go' -Raw
-            $match = [regex]::Match($config, 'Version\s*=\s*"([^"]+)"')
-            if (-not $match.Success) { throw 'Could not read config.Version.' }
+            $buildInfo = Get-Content -LiteralPath '.\internal\buildinfo\buildinfo.go' -Raw
+            $match = [regex]::Match($buildInfo, 'const\s+Version\s*=\s*"([^"]+)"')
+            if (-not $match.Success) { throw 'Could not read buildinfo.Version.' }
             $version = $match.Groups[1].Value
           } else {
             if (-not $testTag.StartsWith('v')) { throw 'The test tag must start with v.' }

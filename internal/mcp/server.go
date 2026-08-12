@@ -13,6 +13,7 @@ import (
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/uvwt/agentdock/internal/app"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 )
 
@@ -25,7 +26,7 @@ type Server struct {
 func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	server := &Server{runtime: runtime}
 	server.sdk = mcpsdk.NewServer(
-		&mcpsdk.Implementation{Name: config.ServerName, Version: config.Version},
+		&mcpsdk.Implementation{Name: config.ServerName, Version: buildinfo.Version},
 		&mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}},
 	)
 	if runtime != nil {

@@ -22,6 +22,7 @@ import (
 	oautherrors "github.com/go-oauth2/oauth2/v4/errors"
 	oauthserver "github.com/go-oauth2/oauth2/v4/server"
 	"github.com/uvwt/agentdock/internal/auth"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/httpx/requestmeta"
 	"github.com/uvwt/agentdock/internal/mcp"
@@ -56,7 +57,7 @@ func Serve(ctx context.Context, server *mcp.Server, cfg config.Config) error {
 	slog.Info("http server configured", "host", cfg.Host, "port", cfg.Port, "auth_required", authRequired, "endpoint", "/mcp")
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
-		writeJSON(w, map[string]any{"ok": true, "version": config.Version})
+		writeJSON(w, map[string]any{"ok": true, "version": buildinfo.Version})
 	})
 	mux.HandleFunc("/.well-known/mcp.json", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, serverCard(cfg, r))
@@ -923,7 +924,7 @@ func serverCard(cfg config.Config, r *http.Request) map[string]any {
 	if cfg.OAuthEnabled {
 		authInfo = map[string]any{"type": "oauth2", "scheme": "Bearer", "header": "Authorization", "authorizationUrl": issuer + "/oauth/authorize", "tokenUrl": issuer + "/oauth/token"}
 	}
-	return map[string]any{"name": config.ServerName, "title": "AgentDock", "version": config.Version, "description": "Local coding tools MCP server", "transport": map[string]any{"type": "streamable-http", "url": issuer + "/mcp"}, "auth": authInfo}
+	return map[string]any{"name": config.ServerName, "title": "AgentDock", "version": buildinfo.Version, "description": "Local coding tools MCP server", "transport": map[string]any{"type": "streamable-http", "url": issuer + "/mcp"}, "auth": authInfo}
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
