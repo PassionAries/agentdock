@@ -235,9 +235,11 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $taskAdminSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\TaskAdminService.cs'
 $appSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\App.xaml.cs'
 $runtimeSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\RuntimeService.cs'
+$jobSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\KillOnCloseJob.cs'
 $taskAdminSource = Get-Content -LiteralPath $taskAdminSourcePath -Raw
 $appSource = Get-Content -LiteralPath $appSourcePath -Raw
 $runtimeSource = Get-Content -LiteralPath $runtimeSourcePath -Raw
+$jobSource = Get-Content -LiteralPath $jobSourcePath -Raw
 foreach ($required in @(
     'Type.GetTypeFromProgID("Schedule.Service")',
     'EnsureSameWindowsUser(request.UserSid)',
@@ -248,7 +250,10 @@ foreach ($required in @(
     'prepare-standard',
     'restore',
     'remove',
-    'set-enabled'
+    'set-enabled',
+    'StopInstalledCore',
+    'Process.GetProcessesByName("agentdock")',
+    'process.Kill(entireProcessTree: true)'
 )) {
     if (-not $taskAdminSource.Contains($required)) {
         throw "$taskAdminSourcePath is missing native task administration behavior: $required"
@@ -259,9 +264,14 @@ foreach ($required in @('--task-admin', 'TaskAdminService.Run(e.Args)', '--run-c
         throw "$appSourcePath is missing AgentDock background helper behavior: $required"
     }
 }
-foreach ($required in @('RunElevatedCoreTaskAsync', 'CreateNoWindow = true', 'WindowStyle = ProcessWindowStyle.Hidden', 'service', 'launch-core')) {
+foreach ($required in @('RunElevatedCoreTaskAsync', 'CreateNoWindow = true', 'WindowStyle = ProcessWindowStyle.Hidden', 'KillOnCloseJob.Create()', 'job.Assign(process)', 'service', 'launch-core')) {
     if (-not $runtimeSource.Contains($required)) {
         throw "$runtimeSourcePath is missing no-console elevated core behavior: $required"
+    }
+}
+foreach ($required in @('CreateJobObject', 'JobObjectLimitKillOnJobClose', 'SetInformationJobObject', 'AssignProcessToJobObject')) {
+    if (-not $jobSource.Contains($required)) {
+        throw "$jobSourcePath is missing kill-on-close Job Object behavior: $required"
     }
 }
 foreach ($forbidden in @('--installer-admin-action', '--script', 'powershell.exe')) {

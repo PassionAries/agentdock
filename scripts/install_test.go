@@ -540,6 +540,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"Remove-AgentDockScheduledTask",
 		"-AdminLauncherPath $trayBinary",
 		"--task-admin remove",
+		"--runtime-root",
 		"-Verb RunAs",
 	} {
 		if !strings.Contains(script, want) {
@@ -566,6 +567,9 @@ func TestWindowsTaskAdminUsesNativeAgentDockHelper(t *testing.T) {
 		"restore",
 		"remove",
 		"set-enabled",
+		"StopInstalledCore",
+		"Process.GetProcessesByName(\"agentdock\")",
+		"process.Kill(entireProcessTree: true)",
 	} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("TaskAdminService.cs missing %q", want)
@@ -577,6 +581,40 @@ func TestWindowsTaskAdminUsesNativeAgentDockHelper(t *testing.T) {
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("TaskAdminService.cs must not depend on %q", forbidden)
+		}
+	}
+}
+
+func TestWindowsElevatedCoreHostUsesKillOnCloseJob(t *testing.T) {
+	jobData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "KillOnCloseJob.cs"))
+	if err != nil {
+		t.Fatalf("read KillOnCloseJob.cs: %v", err)
+	}
+	jobSource := string(jobData)
+	for _, want := range []string{
+		"CreateJobObject",
+		"JobObjectLimitKillOnJobClose",
+		"SetInformationJobObject",
+		"AssignProcessToJobObject",
+	} {
+		if !strings.Contains(jobSource, want) {
+			t.Fatalf("KillOnCloseJob.cs missing %q", want)
+		}
+	}
+
+	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	if err != nil {
+		t.Fatalf("read RuntimeService.cs: %v", err)
+	}
+	runtimeSource := string(runtimeData)
+	for _, want := range []string{
+		"KillOnCloseJob.Create()",
+		"job.Assign(process)",
+		"CreateNoWindow = true",
+		"WindowStyle = ProcessWindowStyle.Hidden",
+	} {
+		if !strings.Contains(runtimeSource, want) {
+			t.Fatalf("RuntimeService.cs missing elevated Core host behavior %q", want)
 		}
 	}
 }

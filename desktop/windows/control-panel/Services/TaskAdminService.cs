@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -32,10 +33,12 @@ internal static class TaskAdminService
             {
                 case "prepare-elevated":
                     RequireBackupDirectory(request);
+                    RequireRuntimeRoot(request);
                     SaveBackup(scheduler.Root, request.BackupDirectory);
-                    RemoveTask(scheduler.Root);
                     try
                     {
+                        RemoveTask(scheduler.Root);
+                        StopInstalledCore(request.RuntimeRoot);
                         CreateElevatedTask(scheduler.Service, scheduler.Root, request);
                     }
                     catch
@@ -46,15 +49,27 @@ internal static class TaskAdminService
                     break;
                 case "prepare-standard":
                     RequireBackupDirectory(request);
+                    RequireRuntimeRoot(request);
                     SaveBackup(scheduler.Root, request.BackupDirectory);
-                    RemoveTask(scheduler.Root);
+                    try
+                    {
+                        RemoveTask(scheduler.Root);
+                        StopInstalledCore(request.RuntimeRoot);
+                    }
+                    catch
+                    {
+                        RestoreBackup(scheduler.Root, request.BackupDirectory);
+                        throw;
+                    }
                     break;
                 case "restore":
                     RequireBackupDirectory(request);
                     RestoreBackup(scheduler.Root, request.BackupDirectory);
                     break;
                 case "remove":
+                    RequireRuntimeRoot(request);
                     RemoveTask(scheduler.Root);
+                    StopInstalledCore(request.RuntimeRoot);
                     break;
                 case "set-enabled":
                     SetTaskEnabled(scheduler.Root, request.Enabled);
@@ -165,6 +180,72 @@ internal static class TaskAdminService
         if (string.IsNullOrWhiteSpace(request.BackupDirectory))
         {
             throw new InvalidOperationException("AgentDock 计划任务备份目录不能为空。");
+        }
+    }
+
+    private static void RequireRuntimeRoot(TaskAdminRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RuntimeRoot))
+        {
+            throw new InvalidOperationException("AgentDock 运行目录不能为空。");
+        }
+    }
+
+    private static void StopInstalledCore(string runtimeRoot)
+    {
+        var expectedBinary = Path.GetFullPath(Path.Combine(runtimeRoot, "bin", "agentdock.exe"));
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+
+        // 升级 helper 已处于 High Integrity；这里按完整路径只终止当前安装的 Core，
+        // 兜底清理旧任务实现或异常退出 host 遗留的 elevated 孤儿进程。
+        while (true)
+        {
+            var foundTarget = false;
+            foreach (var process in Process.GetProcessesByName("agentdock"))
+            {
+                using (process)
+                {
+                    string? processPath;
+                    try
+                    {
+                        processPath = process.MainModule?.FileName;
+                    }
+                    catch (System.ComponentModel.Win32Exception)
+                    {
+                        continue;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(processPath) ||
+                        !string.Equals(Path.GetFullPath(processPath), expectedBinary, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    foundTarget = true;
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // 进程可能在枚举后自行退出，下一轮会重新确认。
+                    }
+                }
+            }
+
+            if (!foundTarget)
+            {
+                return;
+            }
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new InvalidOperationException($"无法停止正在运行的 AgentDock Core：{expectedBinary}");
+            }
+            Thread.Sleep(250);
         }
     }
 

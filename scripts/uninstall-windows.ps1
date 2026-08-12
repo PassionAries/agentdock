@@ -98,7 +98,10 @@ function Remove-DirectoryWithRetry {
 }
 
 function Remove-AgentDockScheduledTask {
-    param([string] $AdminLauncherPath)
+    param(
+        [string] $AdminLauncherPath,
+        [string] $RuntimeRoot
+    )
 
     $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
     if ($null -eq $task) {
@@ -119,7 +122,7 @@ function Remove-AgentDockScheduledTask {
     try {
         $process = Start-Process `
             -FilePath $AdminLauncherPath `
-            -ArgumentList '--task-admin remove' `
+            -ArgumentList "--task-admin remove --runtime-root `"$RuntimeRoot`"" `
             -Verb RunAs `
             -WindowStyle Hidden `
             -Wait `
@@ -143,7 +146,7 @@ $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 # grant the desktop user task control; older administrator-owned tasks use a
 # one-time UAC fallback through the installed helper.
 if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray') {
-    Remove-AgentDockScheduledTask -AdminLauncherPath $trayBinary
+    Remove-AgentDockScheduledTask -AdminLauncherPath $trayBinary -RuntimeRoot $runtimeDir
 }
 
 Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath $trayBinary

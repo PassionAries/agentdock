@@ -340,8 +340,18 @@ public sealed class RuntimeService : IDisposable
         startInfo.ArgumentList.Add(RuntimeRoot);
 
         // Highest 计划任务运行 WinExe 托管进程，再由它无控制台启动核心并持续等待。
-        // 这样 Task Scheduler 仍掌握整个进程树，/End 可以一次结束托管进程与核心进程。
+        // Core 加入 KILL_ON_JOB_CLOSE Job Object，确保 Task Scheduler 强制结束 host 时不会留下孤儿进程。
+        using var job = KillOnCloseJob.Create();
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 AgentDock 核心程序。");
+        try
+        {
+            job.Assign(process);
+        }
+        catch
+        {
+            process.Kill(entireProcessTree: true);
+            throw;
+        }
         await using var stdout = new FileStream(
             Path.Combine(LogsDirectory, "agentdock.out.log"),
             FileMode.Append,
