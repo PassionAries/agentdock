@@ -619,6 +619,44 @@ func TestWindowsElevatedCoreHostUsesKillOnCloseJob(t *testing.T) {
 	}
 }
 
+func TestWindowsControlPanelCanSwitchCorePrivilegeMode(t *testing.T) {
+	checks := map[string][]string{
+		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"): {
+			"ElevatedCoreCheckBox",
+			"以管理员权限运行 AgentDock 核心",
+			"ElevatedCoreCheckBox_Click",
+		},
+		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
+			"snapshot.Manifest.PrivilegeMode",
+			"_runtime.SetPrivilegeModeAsync(elevated)",
+			"await RefreshAsync()",
+		},
+		filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"): {
+			"SetPrivilegeModeAsync",
+			"prepare-elevated",
+			"prepare-standard",
+			"RunTaskAdminTransitionAsync(\"restore\"",
+			"WritePrivilegeModeAsync",
+			"SetStandardCoreStartup",
+			"snapshot.CoreStartupEnabled",
+			"snapshot.CoreRunning",
+		},
+	}
+
+	for path, required := range checks {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		content := string(data)
+		for _, want := range required {
+			if !strings.Contains(content, want) {
+				t.Fatalf("%s missing privilege mode switch behavior %q", path, want)
+			}
+		}
+	}
+}
+
 func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
 	checks := map[string][]string{
 		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
