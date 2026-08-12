@@ -491,11 +491,9 @@ function Get-AgentDockTaskState {
 
 function Get-CurrentTaskUser {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $groupSids = @($identity.Groups | ForEach-Object { $_.Value })
     return [pscustomobject]@{
         Sid = $identity.User.Value
         Name = $identity.Name
-        CanElevate = $groupSids -contains 'S-1-5-32-544'
     }
 }
 
@@ -521,6 +519,16 @@ function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-IsCurrentWindowsUser {
+    param([string] $UserSid)
+
+    if ([string]::IsNullOrWhiteSpace($UserSid)) {
+        return $false
+    }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return $identity.User.Value -eq $UserSid
 }
 
 function Save-AgentDockTaskBackup {
@@ -662,6 +670,9 @@ function Invoke-AgentDockTaskAdminAction {
 
     if (-not (Test-IsAdministrator)) {
         throw 'Administrator permission is required for AgentDock task configuration.'
+    }
+    if ($Action -eq 'prepare-elevated' -and -not (Test-IsCurrentWindowsUser -UserSid $UserSid)) {
+        throw 'Administrator-enhanced mode requires UAC approval by the signed-in Windows account.'
     }
     if ($Action -eq 'remove') {
         Remove-AgentDockScheduledTask
@@ -1103,12 +1114,6 @@ $taskUser = Get-CurrentTaskUser
 $effectivePrivilegeMode = $CorePrivilegeMode
 $installWarningCode = ''
 $installWarningMessage = ''
-if ($effectivePrivilegeMode -eq 'elevated' -and -not $taskUser.CanElevate) {
-    $installWarningCode = 'elevated-mode-fallback'
-    $installWarningMessage = 'Administrator-enhanced core mode is unavailable for the current account. AgentDock continued in standard user mode.'
-    Write-Warning $installWarningMessage
-    $effectivePrivilegeMode = 'standard'
-}
 $taskState = Get-AgentDockTaskState `
     -AgentDockValueName $runValueName `
     -CloudflaredValueName $cloudflaredRunValueName `

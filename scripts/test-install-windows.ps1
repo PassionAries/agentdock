@@ -1,11 +1,18 @@
 [CmdletBinding()]
 param(
-    [string] $InstallerPath = (Join-Path $PSScriptRoot 'install.ps1'),
-    [string] $ManagerPath = (Join-Path $PSScriptRoot 'manage-windows.ps1')
+    [string] $InstallerPath = '',
+    [string] $ManagerPath = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
+    $InstallerPath = Join-Path $PSScriptRoot 'install.ps1'
+}
+if ([string]::IsNullOrWhiteSpace($ManagerPath)) {
+    $ManagerPath = Join-Path $PSScriptRoot 'manage-windows.ps1'
+}
 
 $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
 $tokens = $null
@@ -63,7 +70,8 @@ foreach ($forbidden in @(
     'icacls.exe',
     '$icaclsArguments',
     '$AclSelfTest',
-    '$sddl'
+    '$sddl',
+    'CanElevate'
 )) {
     if ($content.Contains($forbidden)) {
         throw "$InstallerPath still contains removed privileged startup or ACL code: $forbidden"
@@ -82,6 +90,8 @@ foreach ($required in @(
     '-RunLevel Highest',
     'Set-AgentDockTaskSecurity',
     'Start-ElevatedAgentDockTaskAction',
+    'Test-IsCurrentWindowsUser',
+    'Administrator-enhanced mode requires UAC approval by the signed-in Windows account.',
     'Restore-AgentDockTaskBackup',
     '$effectivePrivilegeMode -eq ''elevated'' -and -not $taskState.Exists',
     '$installWarningCode = ''elevated-mode-fallback''',
@@ -118,6 +128,48 @@ foreach ($required in @(
     if (-not $content.Contains($required)) {
         throw "$InstallerPath is missing current-user startup logic: $required"
     }
+}
+
+$currentTaskUserFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-CurrentTaskUser'
+}, $true)
+$currentWindowsUserFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Test-IsCurrentWindowsUser'
+}, $true)
+if ($null -eq $currentTaskUserFunction -or $null -eq $currentWindowsUserFunction) {
+    throw "$InstallerPath does not define the Windows task-user identity helpers"
+}
+$identityProbeAssertions = @'
+$taskUser = Get-CurrentTaskUser
+if ($taskUser.PSObject.Properties.Name -contains 'CanElevate') {
+    throw 'Get-CurrentTaskUser must not pre-classify a filtered UAC token as unable to elevate'
+}
+if (-not (Test-IsCurrentWindowsUser -UserSid $taskUser.Sid)) {
+    throw 'Current Windows user SID did not match itself'
+}
+if (Test-IsCurrentWindowsUser -UserSid 'not-the-current-user') {
+    throw 'Different Windows user SID was accepted as the current user'
+}
+'@
+$identityProbe = [scriptblock]::Create(
+    $currentTaskUserFunction.Extent.Text + "`r`n" +
+    $currentWindowsUserFunction.Extent.Text + "`r`n" +
+    $identityProbeAssertions
+)
+& $identityProbe
+
+$adminActionFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Invoke-AgentDockTaskAdminAction'
+}, $true)
+if ($null -eq $adminActionFunction -or
+    -not $adminActionFunction.Extent.Text.Contains('Test-IsCurrentWindowsUser -UserSid $UserSid')) {
+    throw "$InstallerPath must verify that elevated setup still runs as the signed-in Windows user"
 }
 
 $elevationFunction = $installerAst.Find({
