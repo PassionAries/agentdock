@@ -13,6 +13,7 @@ import (
 
 	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/envstore"
 	processcontrol "github.com/uvwt/agentdock/internal/process"
@@ -49,7 +50,7 @@ func (c *sdkProtocolClient) initialize(ctx context.Context) error {
 		return err
 	}
 	client := mcpsdk.NewClient(
-		&mcpsdk.Implementation{Name: config.ServerName, Version: config.Version},
+		&mcpsdk.Implementation{Name: config.ServerName, Version: buildinfo.Version},
 		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
 	)
 	session, err := client.Connect(ctx, transport, nil)
@@ -275,7 +276,7 @@ func stdioEnvironment(cfg ServerConfig) ([]string, error) {
 
 func resolveHTTPHeaders(cfg ServerConfig) (http.Header, error) {
 	headers := make(http.Header, len(cfg.HeaderEnv)+1)
-	headers.Set("User-Agent", config.ServerName+"/"+config.Version)
+	headers.Set("User-Agent", config.ServerName+"/"+buildinfo.Version)
 	for header, envName := range cfg.HeaderEnv {
 		value, ok := cfg.RuntimeEnv[envName]
 		if !ok {

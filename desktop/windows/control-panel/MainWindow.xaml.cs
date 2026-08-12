@@ -75,7 +75,7 @@ public partial class MainWindow : Window
                 : snapshot.CoreRunning ? Color.FromRgb(247, 144, 9) : Color.FromRgb(152, 162, 179));
             ServiceStatusText.Text = snapshot.CoreRunning ? "正在运行" : "已停止";
             HealthStatusText.Text = snapshot.Healthy ? "正常" : "不可用";
-            VersionText.Text = string.IsNullOrWhiteSpace(snapshot.Manifest.Version) ? "未知" : snapshot.Manifest.Version;
+            VersionText.Text = string.IsNullOrWhiteSpace(snapshot.Version) ? "未知" : snapshot.Version;
             LocalMcpTextBox.Text = snapshot.LocalMcpUrl;
             PublicMcpTextBox.Text = snapshot.PublicMcpUrl;
             UpdateCredentialText();

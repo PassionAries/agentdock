@@ -4,9 +4,9 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
-
-	"github.com/uvwt/agentdock/internal/config"
 )
+
+const Version = "0.7.3"
 
 var (
 	Commit    string
@@ -14,16 +14,16 @@ var (
 )
 
 type Info struct {
-	Version   string
-	Commit    string
-	BuildDate string
-	GoVersion string
-	Platform  string
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildDate string `json:"build_date"`
+	GoVersion string `json:"go_version"`
+	Platform  string `json:"platform"`
 }
 
 func Current() Info {
 	info := Info{
-		Version:   config.Version,
+		Version:   strings.TrimSpace(Version),
 		Commit:    strings.TrimSpace(Commit),
 		BuildDate: strings.TrimSpace(BuildDate),
 		GoVersion: runtime.Version(),

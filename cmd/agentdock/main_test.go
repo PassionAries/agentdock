@@ -3,11 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/uvwt/agentdock/internal/config"
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/desktopruntime"
 )
 
@@ -17,11 +18,25 @@ func TestRunPrintsVersionWithoutLoadingServerConfiguration(t *testing.T) {
 	if err := run(context.Background(), []string{"--version"}, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "AgentDock v"+strings.TrimPrefix(config.Version, "v")) || !strings.Contains(stdout.String(), "platform:") {
+	if !strings.Contains(stdout.String(), "AgentDock v"+strings.TrimPrefix(buildinfo.Version, "v")) || !strings.Contains(stdout.String(), "platform:") {
 		t.Fatalf("unexpected version output: %s", stdout.String())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr: %s", stderr.String())
+	}
+}
+
+func TestRunPrintsMachineReadableBuildInfo(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := run(context.Background(), []string{"version", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var info buildinfo.Info
+	if err := json.Unmarshal(stdout.Bytes(), &info); err != nil {
+		t.Fatalf("version --json returned invalid JSON: %v", err)
+	}
+	if info.Version != buildinfo.Version || info.Platform == "" || info.GoVersion == "" {
+		t.Fatalf("unexpected build info: %#v", info)
 	}
 }
 

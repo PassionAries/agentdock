@@ -301,7 +301,6 @@ function Initialize-OAuthCredentials {
 function Write-RuntimeManifest {
     param(
         [string] $Path,
-        [string] $RuntimeVersion,
         [string] $InstallRoot,
         [string] $AgentDockBinary,
         [string] $TrayBinary,
@@ -321,7 +320,6 @@ function Write-RuntimeManifest {
 
     $manifest = [ordered]@{
         schema_version = 1
-        version = $RuntimeVersion
         install_root = $InstallRoot
         agentdock_binary = $AgentDockBinary
         tray_binary = $TrayBinary
@@ -1357,7 +1355,6 @@ exit `$LASTEXITCODE
         $localMCPUrl = "http://127.0.0.1:$Port/mcp"
         Write-RuntimeManifest `
             -Path $runtimeManifestPath `
-            -RuntimeVersion $Version `
             -InstallRoot $runtimeDir `
             -AgentDockBinary $destinationBinary `
             -TrayBinary $destinationTrayBinary `
@@ -1634,7 +1631,6 @@ exit `$process.ExitCode
     if (-not $RegisterStartup) {
         Write-RuntimeManifest `
             -Path $runtimeManifestPath `
-            -RuntimeVersion $Version `
             -InstallRoot $runtimeDir `
             -AgentDockBinary $destinationBinary `
             -TrayBinary $destinationTrayBinary `

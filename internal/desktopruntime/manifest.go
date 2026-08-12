@@ -16,7 +16,6 @@ const SchemaVersion = 1
 
 type Manifest struct {
 	SchemaVersion               int    `json:"schema_version"`
-	Version                     string `json:"version,omitempty"`
 	InstallRoot                 string `json:"install_root,omitempty"`
 	AgentDockBinary             string `json:"agentdock_binary"`
 	TrayBinary                  string `json:"tray_binary,omitempty"`

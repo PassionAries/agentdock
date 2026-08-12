@@ -272,6 +272,8 @@ function Update-RuntimeManifest {
         [string] $PublicUrl
     )
 
+    # 版本由 agentdock.exe BuildInfo 唯一提供；清理旧清单残留，避免再次形成第二版本真值。
+    $Manifest.PSObject.Properties.Remove('version')
     Set-ObjectProperty -Object $Manifest -Name 'schema_version' -Value 1
     Set-ObjectProperty -Object $Manifest -Name 'agentdock_binary' -Value $AgentDockBinary
     Set-ObjectProperty -Object $Manifest -Name 'tray_binary' -Value $TrayBinary

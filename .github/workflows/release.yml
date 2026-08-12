@@ -55,7 +55,7 @@ jobs:
           source_commit="$(git rev-parse HEAD)"
           mkdir -p dist/bin
           go build -trimpath \
-            -ldflags="-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=${build_date}" \
+            -ldflags="-s -w -X github.com/uvwt/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/internal/buildinfo.BuildDate=${build_date}" \
             -o dist/bin/agentdock ./cmd/agentdock
           python3 scripts/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
           tar -C dist -czf "$asset" bin/agentdock share/agentdock/core-skills
@@ -113,7 +113,7 @@ jobs:
           source_commit="$(git rev-parse HEAD)"
           mkdir -p dist/bin
           go build -trimpath \
-            -ldflags="-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=${build_date}" \
+            -ldflags="-s -w -X github.com/uvwt/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/internal/buildinfo.BuildDate=${build_date}" \
             -o dist/bin/agentdock ./cmd/agentdock
           python3 scripts/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
           tar -C dist -czf "$asset" bin/agentdock share/agentdock/core-skills
@@ -284,7 +284,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $buildDate = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
           $sourceCommit = (git rev-parse HEAD).Trim()
-          $ldflags = "-s -w -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.Commit=$sourceCommit -X github.com/uvwt/agentdock/cmd/agentdock/internal/buildinfo.BuildDate=$buildDate"
+          $ldflags = "-s -w -X github.com/uvwt/agentdock/internal/buildinfo.Commit=$sourceCommit -X github.com/uvwt/agentdock/internal/buildinfo.BuildDate=$buildDate"
           $runtimeIdentifier = if ($env:GOARCH -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           go build -trimpath -ldflags $ldflags -o dist/agentdock.exe ./cmd/agentdock
@@ -448,13 +448,13 @@ jobs:
           tag = os.environ["RELEASE_TAG"]
           repository = os.environ["RELEASE_REPOSITORY"].lower()
           expected_version = tag.removeprefix("v")
-          config_source = Path("internal/config/config.go").read_text()
-          version_match = re.search(r'^\s*Version\s*=\s*"([^"]+)"', config_source, re.MULTILINE)
+          buildinfo_source = Path("internal/buildinfo/buildinfo.go").read_text()
+          version_match = re.search(r'^\s*const\s+Version\s*=\s*"([^"]+)"', buildinfo_source, re.MULTILINE)
           if version_match is None:
-              raise SystemExit("could not read config.Version from internal/config/config.go")
+              raise SystemExit("could not read buildinfo.Version from internal/buildinfo/buildinfo.go")
           actual_version = version_match.group(1)
           if actual_version != expected_version:
-              raise SystemExit(f"release tag {tag} does not match config.Version {actual_version}")
+              raise SystemExit(f"release tag {tag} does not match buildinfo.Version {actual_version}")
 
           # Docker Compose / .env.example 不作为 Release 资产发布；
           # 文档直接引用仓库 main 或对应 git tag 上的源文件。

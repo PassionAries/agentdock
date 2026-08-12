@@ -4,9 +4,6 @@ namespace AgentDock.ControlPanel;
 
 public sealed class RuntimeManifest
 {
-    [JsonPropertyName("version")]
-    public string Version { get; set; } = "";
-
     [JsonPropertyName("install_root")]
     public string InstallRoot { get; set; } = "";
 
@@ -86,9 +83,16 @@ public sealed class ControlPanelSettings
     public List<string> AcpAllowedRoots { get; set; } = [];
 }
 
+public sealed class CoreVersionInfo
+{
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = "";
+}
+
 public sealed record RuntimeSnapshot(
     RuntimeManifest Manifest,
     ControlPanelSettings Settings,
+    string Version,
     bool CoreRunning,
     bool Healthy,
     bool CloudflaredRunning,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 )
 
@@ -15,7 +16,7 @@ func (r *Runtime) RuntimeStatus() Result {
 		"ok":                    true,
 		"source":                runtimeAPISource,
 		"service":               config.ServerName,
-		"version":               config.Version,
+		"version":               buildinfo.Version,
 		"agentdock_home":        r.cfg.AgentDockHome,
 		"agentdock_default_dir": r.cfg.AgentDockDefaultDir,
 		"path_model":            config.PathModel,

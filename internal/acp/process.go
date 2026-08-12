@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/envstore"
 	processcontrol "github.com/uvwt/agentdock/internal/process"
@@ -71,7 +72,7 @@ func startAgentProcess(ctx context.Context, spec AgentSpec, requestHandler Reque
 		"protocolVersion":    ProtocolVersion,
 		"clientCapabilities": map[string]any{},
 		"clientInfo": map[string]any{
-			"name": config.ServerName, "title": "AgentDock", "version": config.Version,
+			"name": config.ServerName, "title": "AgentDock", "version": buildinfo.Version,
 		},
 	}, &initialized)
 	if err != nil {
