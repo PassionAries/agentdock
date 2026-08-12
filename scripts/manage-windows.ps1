@@ -355,18 +355,16 @@ function Test-IsAdministrator {
 }
 
 function Invoke-ElevatedManagerAction {
-    param(
-        [string] $InternalAction,
-        [string] $InternalEnabled = 'false'
-    )
+    param([string] $InternalEnabled = 'false')
 
-    $escapedManager = Escape-SingleQuoted -Value $ManagerPath
-    $escapedRoot = Escape-SingleQuoted -Value $RuntimeRoot
-    $command = "& '$escapedManager' -Action '$InternalAction' -RuntimeRoot '$escapedRoot' -Enabled '$InternalEnabled'"
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    if (-not (Test-Path -LiteralPath $TrayBinary -PathType Leaf)) {
+        throw "找不到 AgentDock 管理程序：$TrayBinary"
+    }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $arguments = "--task-admin set-enabled --enabled $InternalEnabled --user-sid `"$currentSid`""
     $process = Start-Process `
-        -FilePath 'powershell.exe' `
-        -ArgumentList "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded" `
+        -FilePath $TrayBinary `
+        -ArgumentList $arguments `
         -Verb RunAs `
         -Wait `
         -PassThru
@@ -423,7 +421,7 @@ function Set-TaskStartupState {
     param([bool] $ShouldEnable)
 
     if (-not (Test-IsAdministrator)) {
-        Invoke-ElevatedManagerAction -InternalAction 'set-task-startup' -InternalEnabled $ShouldEnable.ToString().ToLowerInvariant()
+        Invoke-ElevatedManagerAction -InternalEnabled $ShouldEnable.ToString().ToLowerInvariant()
         return
     }
     if ($ShouldEnable) {

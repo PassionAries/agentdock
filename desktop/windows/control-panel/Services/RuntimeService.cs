@@ -311,6 +311,57 @@ public sealed class RuntimeService : IDisposable
             : binaryPath;
     }
 
+    internal async Task<int> RunElevatedCoreTaskAsync(CancellationToken cancellationToken = default)
+    {
+        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
+        var binaryPath = ResolveCoreBinaryPath(manifest);
+        if (!File.Exists(binaryPath))
+        {
+            throw new FileNotFoundException("找不到 AgentDock 核心程序。", binaryPath);
+        }
+
+        Directory.CreateDirectory(LogsDirectory);
+        var workingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AgentDock");
+        Directory.CreateDirectory(workingDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = binaryPath,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add("service");
+        startInfo.ArgumentList.Add("launch-core");
+        startInfo.ArgumentList.Add("--runtime-root");
+        startInfo.ArgumentList.Add(RuntimeRoot);
+
+        // Highest 计划任务运行 WinExe 托管进程，再由它无控制台启动核心并持续等待。
+        // 这样 Task Scheduler 仍掌握整个进程树，/End 可以一次结束托管进程与核心进程。
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 AgentDock 核心程序。");
+        await using var stdout = new FileStream(
+            Path.Combine(LogsDirectory, "agentdock.out.log"),
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            4096,
+            useAsync: true);
+        await using var stderr = new FileStream(
+            Path.Combine(LogsDirectory, "agentdock.err.log"),
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            4096,
+            useAsync: true);
+
+        var stdoutCopy = process.StandardOutput.BaseStream.CopyToAsync(stdout, cancellationToken);
+        var stderrCopy = process.StandardError.BaseStream.CopyToAsync(stderr, cancellationToken);
+        await Task.WhenAll(process.WaitForExitAsync(cancellationToken), stdoutCopy, stderrCopy);
+        return process.ExitCode;
+    }
+
     internal Task RunCoreStartupAsync(CancellationToken cancellationToken = default) =>
         RunNativeAgentDockAsync("service", ["start"], cancellationToken, allowElevation: false);
 

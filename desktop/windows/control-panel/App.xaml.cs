@@ -41,6 +41,25 @@ public partial class App : System.Windows.Application
         _ = SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
         base.OnStartup(e);
 
+        if (e.Args.Any(argument => string.Equals(argument, "--task-admin", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Environment.Exit(TaskAdminService.Run(e.Args));
+            return;
+        }
+        if (e.Args.Any(argument => string.Equals(argument, "--run-core-task", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            if (TryGetStartupRuntimeRoot(e.Args, "--run-core-task", out var taskRuntimeRoot))
+            {
+                _ = RunCoreTaskAndExitAsync(taskRuntimeRoot);
+            }
+            else
+            {
+                Environment.Exit(2);
+            }
+            return;
+        }
         if (TryGetStartupRuntimeRoot(e.Args, "--start-core", out var coreRuntimeRoot))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -96,6 +115,24 @@ public partial class App : System.Windows.Application
             }
         }
         return !string.IsNullOrWhiteSpace(runtimeRoot);
+    }
+
+    private async Task RunCoreTaskAndExitAsync(string runtimeRoot)
+    {
+        var exitCode = 1;
+        try
+        {
+            using var runtime = new RuntimeService(runtimeRoot);
+            exitCode = await runtime.RunElevatedCoreTaskAsync();
+        }
+        catch (Exception ex)
+        {
+            RecordBackgroundStartupFailure(runtimeRoot, "elevated-core", ex);
+        }
+        finally
+        {
+            Environment.Exit(exitCode);
+        }
     }
 
     private async Task StartRuntimeComponentAndExitAsync(string runtimeRoot, string component)

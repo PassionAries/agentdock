@@ -24,14 +24,7 @@ param(
     [string] $CloudflaredStartupValueName = 'AgentDockCloudflared',
     [string] $TrayStartupValueName = 'AgentDockTray',
     [ValidateSet('standard', 'elevated')]
-    [string] $CorePrivilegeMode = 'standard',
-    [ValidateSet('none', 'prepare-elevated', 'prepare-standard', 'restore', 'remove')]
-    [string] $TaskAdminAction = 'none',
-    [string] $TaskBackupDirectory = '',
-    [string] $TaskLauncherPath = '',
-    [string] $TaskRuntimeRoot = '',
-    [string] $TaskUserSid = '',
-    [string] $TaskUserName = ''
+    [string] $CorePrivilegeMode = 'standard'
 )
 
 Set-StrictMode -Version Latest
@@ -515,227 +508,34 @@ function Get-InteractiveDesktopUser {
     }
 }
 
-function Test-IsAdministrator {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-function Test-IsCurrentWindowsUser {
-    param([string] $UserSid)
-
-    if ([string]::IsNullOrWhiteSpace($UserSid)) {
-        return $false
-    }
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return $identity.User.Value -eq $UserSid
-}
-
-function Save-AgentDockTaskBackup {
-    param([string] $BackupDirectory)
-
-    New-Item -ItemType Directory -Path $BackupDirectory -Force | Out-Null
-    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
-    $state = [ordered]@{
-        Exists = $null -ne $task
-        WasEnabled = $false
-        WasRunning = $false
-    }
-    if ($null -ne $task) {
-        $state.WasEnabled = $task.State -ne 'Disabled'
-        $state.WasRunning = $task.State -eq 'Running'
-        [IO.File]::WriteAllText(
-            (Join-Path $BackupDirectory 'task.xml'),
-            (Export-ScheduledTask -TaskName 'AgentDock' -TaskPath '\'),
-            [Text.Encoding]::Unicode
-        )
-    }
-    [IO.File]::WriteAllText(
-        (Join-Path $BackupDirectory 'state.json'),
-        ($state | ConvertTo-Json),
-        $Utf8NoBom
-    )
-}
-
-function Remove-AgentDockScheduledTask {
-    $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
-    if ($null -eq $task) {
-        return
-    }
-    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
-    Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue | Out-Null
-    Unregister-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -Confirm:$false -ErrorAction Stop
-}
-
-function Restore-AgentDockTaskBackup {
-    param([string] $BackupDirectory)
-
-    $statePath = Join-Path $BackupDirectory 'state.json'
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
-        throw "AgentDock task backup state was not found: $statePath"
-    }
-    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-    Remove-AgentDockScheduledTask
-    if (-not $state.Exists) {
-        return
-    }
-
-    $xmlPath = Join-Path $BackupDirectory 'task.xml'
-    if (-not (Test-Path -LiteralPath $xmlPath -PathType Leaf)) {
-        throw "AgentDock task backup XML was not found: $xmlPath"
-    }
-    Register-ScheduledTask `
-        -TaskName 'AgentDock' `
-        -TaskPath '\' `
-        -Xml (Get-Content -LiteralPath $xmlPath -Raw) `
-        -Force | Out-Null
-    if ($state.WasEnabled) {
-        Enable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
-    } else {
-        Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
-    }
-    if ($state.WasRunning) {
-        Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
-    }
-}
-
-function Set-AgentDockTaskSecurity {
-    param([string] $UserSid)
-
-    # The task is created by an elevated helper, but it belongs to the current
-    # desktop user. Grant that user full control so the normal tray can start,
-    # stop and update its own task without remaining elevated.
-    $scheduler = New-Object -ComObject 'Schedule.Service'
-    $scheduler.Connect()
-    $registeredTask = $scheduler.GetFolder('\').GetTask('AgentDock')
-    $taskSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;$UserSid)"
-    $registeredTask.SetSecurityDescriptor($taskSecurityDescriptor, 0)
-}
-
-function New-ElevatedAgentDockScheduledTask {
-    param(
-        [string] $LauncherPath,
-        [string] $RuntimeRoot,
-        [string] $UserSid,
-        [string] $UserName
-    )
-
-    if ([string]::IsNullOrWhiteSpace($LauncherPath) -or
-        [string]::IsNullOrWhiteSpace($RuntimeRoot) -or
-        [string]::IsNullOrWhiteSpace($UserSid) -or
-        [string]::IsNullOrWhiteSpace($UserName)) {
-        throw 'Elevated AgentDock task configuration is incomplete.'
-    }
-
-    $taskArguments = "service launch-core --runtime-root `"$RuntimeRoot`""
-    $action = New-ScheduledTaskAction -Execute $LauncherPath -Argument $taskArguments
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserName
-    $principal = New-ScheduledTaskPrincipal `
-        -UserId $UserSid `
-        -LogonType Interactive `
-        -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries `
-        -StartWhenAvailable `
-        -RestartCount 3 `
-        -RestartInterval (New-TimeSpan -Minutes 1) `
-        -ExecutionTimeLimit ([TimeSpan]::Zero) `
-        -MultipleInstances IgnoreNew
-    $definition = New-ScheduledTask `
-        -Action $action `
-        -Trigger $trigger `
-        -Principal $principal `
-        -Settings $settings `
-        -Description 'AgentDock privileged core service for the current desktop user.'
-    Register-ScheduledTask `
-        -TaskName 'AgentDock' `
-        -TaskPath '\' `
-        -InputObject $definition `
-        -Force | Out-Null
-    Disable-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop | Out-Null
-    Set-AgentDockTaskSecurity -UserSid $UserSid
-}
-
-function Invoke-AgentDockTaskAdminAction {
-    param(
-        [ValidateSet('prepare-elevated', 'prepare-standard', 'restore', 'remove')]
-        [string] $Action,
-        [string] $BackupDirectory,
-        [string] $LauncherPath,
-        [string] $RuntimeRoot,
-        [string] $UserSid,
-        [string] $UserName
-    )
-
-    if (-not (Test-IsAdministrator)) {
-        throw 'Administrator permission is required for AgentDock task configuration.'
-    }
-    if ($Action -eq 'prepare-elevated' -and -not (Test-IsCurrentWindowsUser -UserSid $UserSid)) {
-        throw 'Administrator-enhanced mode requires UAC approval by the signed-in Windows account.'
-    }
-    if ($Action -eq 'remove') {
-        Remove-AgentDockScheduledTask
-        return
-    }
-    if ([string]::IsNullOrWhiteSpace($BackupDirectory)) {
-        throw 'AgentDock task backup directory is required.'
-    }
-    if ($Action -eq 'restore') {
-        Restore-AgentDockTaskBackup -BackupDirectory $BackupDirectory
-        return
-    }
-
-    Save-AgentDockTaskBackup -BackupDirectory $BackupDirectory
-    Remove-AgentDockScheduledTask
-    if ($Action -eq 'prepare-elevated') {
-        try {
-            New-ElevatedAgentDockScheduledTask `
-                -LauncherPath $LauncherPath `
-                -RuntimeRoot $RuntimeRoot `
-                -UserSid $UserSid `
-                -UserName $UserName
-        } catch {
-            try {
-                Restore-AgentDockTaskBackup -BackupDirectory $BackupDirectory
-            } catch {
-                Write-Warning "Unable to restore the previous AgentDock task: $($_.Exception.Message)"
-            }
-            throw
-        }
-    }
-}
-
 function Start-ElevatedAgentDockTaskAction {
     param(
         [ValidateSet('prepare-elevated', 'prepare-standard', 'restore', 'remove')]
         [string] $Action,
         [string] $BackupDirectory,
+        [string] $AdminLauncherPath,
         [string] $LauncherPath,
         [string] $RuntimeRoot,
         [pscustomobject] $TaskUser
     )
 
-    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
-    $arguments =
-        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$PSCommandPath`"" +
-        " -TaskAdminAction $Action"
+    $arguments = "--task-admin $Action"
     if (-not [string]::IsNullOrWhiteSpace($BackupDirectory)) {
-        $arguments += " -TaskBackupDirectory `"$BackupDirectory`""
+        $arguments += " --backup-directory `"$BackupDirectory`""
     }
     if (-not [string]::IsNullOrWhiteSpace($LauncherPath)) {
-        $arguments += " -TaskLauncherPath `"$LauncherPath`""
+        $arguments += " --launcher-path `"$LauncherPath`""
     }
     if (-not [string]::IsNullOrWhiteSpace($RuntimeRoot)) {
-        $arguments += " -TaskRuntimeRoot `"$RuntimeRoot`""
+        $arguments += " --runtime-root `"$RuntimeRoot`""
     }
     if ($null -ne $TaskUser) {
-        $arguments += " -TaskUserSid `"$($TaskUser.Sid)`" -TaskUserName `"$($TaskUser.Name)`""
+        $arguments += " --user-sid `"$($TaskUser.Sid)`" --user-name `"$($TaskUser.Name)`""
     }
 
     try {
         $process = Start-Process `
-            -FilePath $powerShellPath `
+            -FilePath $AdminLauncherPath `
             -ArgumentList $arguments `
             -Verb RunAs `
             -WindowStyle Hidden `
@@ -1036,17 +836,6 @@ function Get-RunValue {
     }
 }
 
-if ($TaskAdminAction -ne 'none') {
-    Invoke-AgentDockTaskAdminAction `
-        -Action $TaskAdminAction `
-        -BackupDirectory $TaskBackupDirectory `
-        -LauncherPath $TaskLauncherPath `
-        -RuntimeRoot $TaskRuntimeRoot `
-        -UserSid $TaskUserSid `
-        -UserName $TaskUserName
-    return
-}
-
 if ($Port -lt 1 -or $Port -gt 65535) {
     throw 'Port must be between 1 and 65535.'
 }
@@ -1233,7 +1022,8 @@ try {
         $taskActionResult = Start-ElevatedAgentDockTaskAction `
             -Action $taskAction `
             -BackupDirectory $taskBackupDirectory `
-            -LauncherPath $destinationBinary `
+            -AdminLauncherPath $sourceTrayBinary `
+            -LauncherPath $destinationTrayBinary `
             -RuntimeRoot $runtimeDir `
             -TaskUser $taskUser
         if (-not $taskActionResult.Started) {
@@ -1833,6 +1623,7 @@ exit `$process.ExitCode
             $restoreTaskActionResult = Start-ElevatedAgentDockTaskAction `
                 -Action restore `
                 -BackupDirectory $taskBackupDirectory `
+                -AdminLauncherPath $sourceTrayBinary `
                 -LauncherPath '' `
                 -TaskUser $taskUser
             if (-not $restoreTaskActionResult.Started) {

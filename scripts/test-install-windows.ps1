@@ -71,7 +71,11 @@ foreach ($forbidden in @(
     '$icaclsArguments',
     '$AclSelfTest',
     '$sddl',
-    'CanElevate'
+    'CanElevate',
+    'Invoke-AgentDockTaskAdminAction',
+    'New-ElevatedAgentDockScheduledTask',
+    '--installer-admin-action',
+    '-TaskAdminAction'
 )) {
     if ($content.Contains($forbidden)) {
         throw "$InstallerPath still contains removed privileged startup or ACL code: $forbidden"
@@ -85,14 +89,15 @@ foreach ($required in @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     'Get-AgentDockTaskState',
     'Get-InteractiveDesktopUser',
-    'New-ElevatedAgentDockScheduledTask',
-    'New-ScheduledTaskPrincipal',
-    '-RunLevel Highest',
-    'Set-AgentDockTaskSecurity',
     'Start-ElevatedAgentDockTaskAction',
-    'Test-IsCurrentWindowsUser',
-    'Administrator-enhanced mode requires UAC approval by the signed-in Windows account.',
-    'Restore-AgentDockTaskBackup',
+    '--task-admin $Action',
+    '--backup-directory',
+    '--launcher-path',
+    '--runtime-root',
+    '--user-sid',
+    '--user-name',
+    '-AdminLauncherPath $sourceTrayBinary',
+    '-LauncherPath $destinationTrayBinary',
     '$effectivePrivilegeMode -eq ''elevated'' -and -not $taskState.Exists',
     '$installWarningCode = ''elevated-mode-fallback''',
     'WarningCode=$WarningCode',
@@ -135,42 +140,22 @@ $currentTaskUserFunction = $installerAst.Find({
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -eq 'Get-CurrentTaskUser'
 }, $true)
-$currentWindowsUserFunction = $installerAst.Find({
-    param($node)
-    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-        $node.Name -eq 'Test-IsCurrentWindowsUser'
-}, $true)
-if ($null -eq $currentTaskUserFunction -or $null -eq $currentWindowsUserFunction) {
-    throw "$InstallerPath does not define the Windows task-user identity helpers"
+if ($null -eq $currentTaskUserFunction) {
+    throw "$InstallerPath does not define Get-CurrentTaskUser"
 }
 $identityProbeAssertions = @'
 $taskUser = Get-CurrentTaskUser
 if ($taskUser.PSObject.Properties.Name -contains 'CanElevate') {
     throw 'Get-CurrentTaskUser must not pre-classify a filtered UAC token as unable to elevate'
 }
-if (-not (Test-IsCurrentWindowsUser -UserSid $taskUser.Sid)) {
-    throw 'Current Windows user SID did not match itself'
-}
-if (Test-IsCurrentWindowsUser -UserSid 'not-the-current-user') {
-    throw 'Different Windows user SID was accepted as the current user'
+if ([string]::IsNullOrWhiteSpace($taskUser.Sid) -or [string]::IsNullOrWhiteSpace($taskUser.Name)) {
+    throw 'Get-CurrentTaskUser must return the signed-in Windows SID and name'
 }
 '@
 $identityProbe = [scriptblock]::Create(
-    $currentTaskUserFunction.Extent.Text + "`r`n" +
-    $currentWindowsUserFunction.Extent.Text + "`r`n" +
-    $identityProbeAssertions
+    $currentTaskUserFunction.Extent.Text + "`r`n" + $identityProbeAssertions
 )
 & $identityProbe
-
-$adminActionFunction = $installerAst.Find({
-    param($node)
-    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-        $node.Name -eq 'Invoke-AgentDockTaskAdminAction'
-}, $true)
-if ($null -eq $adminActionFunction -or
-    -not $adminActionFunction.Extent.Text.Contains('Test-IsCurrentWindowsUser -UserSid $UserSid')) {
-    throw "$InstallerPath must verify that elevated setup still runs as the signed-in Windows user"
-}
 
 $elevationFunction = $installerAst.Find({
     param($node)
@@ -183,6 +168,8 @@ if ($null -eq $elevationFunction) {
 
 $elevationProbePreamble = @'
 $script:mockStartProcessMode = 'reject'
+$script:mockStartProcessFilePath = ''
+$script:mockStartProcessArguments = ''
 function Start-Process {
     param(
         [string] $FilePath,
@@ -193,6 +180,8 @@ function Start-Process {
         [switch] $PassThru
     )
 
+    $script:mockStartProcessFilePath = $FilePath
+    $script:mockStartProcessArguments = $ArgumentList
     if ($script:mockStartProcessMode -eq 'reject') {
         throw 'simulated RunAs rejection'
     }
@@ -207,11 +196,17 @@ $taskUser = [pscustomobject]@{
 $result = Start-ElevatedAgentDockTaskAction `
     -Action prepare-elevated `
     -BackupDirectory 'C:\Temp\AgentDockBackup' `
-    -LauncherPath 'C:\AgentDock\agentdock.exe' `
+    -AdminLauncherPath 'C:\AgentDock\agentdock-tray.exe' `
+    -LauncherPath 'C:\AgentDock\agentdock-tray.exe' `
     -RuntimeRoot 'C:\AgentDock' `
     -TaskUser $taskUser
 if ($result.Started -ne $false -or $result.ErrorMessage -notlike '*simulated RunAs rejection*') {
     throw "RunAs pre-start rejection was not returned as a recoverable result: $($result | Out-String)"
+}
+if ($script:mockStartProcessFilePath -notlike '*agentdock-tray.exe' -or
+    $script:mockStartProcessArguments -notlike '*--task-admin prepare-elevated*' -or
+    $script:mockStartProcessArguments -like '*--script*') {
+    throw "UAC must elevate the fixed AgentDock task helper instead of PowerShell: $script:mockStartProcessFilePath $script:mockStartProcessArguments"
 }
 
 $script:mockStartProcessMode = 'helper-error'
@@ -220,7 +215,8 @@ try {
     [void] (Start-ElevatedAgentDockTaskAction `
         -Action prepare-elevated `
         -BackupDirectory 'C:\Temp\AgentDockBackup' `
-        -LauncherPath 'C:\AgentDock\agentdock.exe' `
+        -AdminLauncherPath 'C:\AgentDock\agentdock-tray.exe' `
+        -LauncherPath 'C:\AgentDock\agentdock-tray.exe' `
         -RuntimeRoot 'C:\AgentDock' `
         -TaskUser $taskUser)
 } catch {
@@ -236,6 +232,44 @@ $elevationProbe = [scriptblock]::Create(
 & $elevationProbe
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$taskAdminSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\TaskAdminService.cs'
+$appSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\App.xaml.cs'
+$runtimeSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\RuntimeService.cs'
+$taskAdminSource = Get-Content -LiteralPath $taskAdminSourcePath -Raw
+$appSource = Get-Content -LiteralPath $appSourcePath -Raw
+$runtimeSource = Get-Content -LiteralPath $runtimeSourcePath -Raw
+foreach ($required in @(
+    'Type.GetTypeFromProgID("Schedule.Service")',
+    'EnsureSameWindowsUser(request.UserSid)',
+    'RegisterTaskDefinition(',
+    'SetSecurityDescriptor(',
+    '--run-core-task --runtime-root',
+    'prepare-elevated',
+    'prepare-standard',
+    'restore',
+    'remove',
+    'set-enabled'
+)) {
+    if (-not $taskAdminSource.Contains($required)) {
+        throw "$taskAdminSourcePath is missing native task administration behavior: $required"
+    }
+}
+foreach ($required in @('--task-admin', 'TaskAdminService.Run(e.Args)', '--run-core-task')) {
+    if (-not $appSource.Contains($required)) {
+        throw "$appSourcePath is missing AgentDock background helper behavior: $required"
+    }
+}
+foreach ($required in @('RunElevatedCoreTaskAsync', 'CreateNoWindow = true', 'service', 'launch-core')) {
+    if (-not $runtimeSource.Contains($required)) {
+        throw "$runtimeSourcePath is missing no-console elevated core behavior: $required"
+    }
+}
+foreach ($forbidden in @('--installer-admin-action', '--script', 'powershell.exe')) {
+    if ($taskAdminSource.Contains($forbidden) -or $appSource.Contains($forbidden)) {
+        throw "AgentDock elevated helper must not expose arbitrary PowerShell execution: $forbidden"
+    }
+}
+
 $setupCodePath = Join-Path $repoRoot 'packaging\windows\includes\code.iss'
 $setupMessagesPath = Join-Path $repoRoot 'packaging\windows\includes\messages.iss'
 $setupCode = Get-Content -LiteralPath $setupCodePath -Raw

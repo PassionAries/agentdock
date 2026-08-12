@@ -227,12 +227,13 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Get-AgentDockTaskState",
 		"Get-InteractiveDesktopUser",
 		"Start-ElevatedAgentDockTaskAction",
-		"New-ElevatedAgentDockScheduledTask",
-		"New-ScheduledTaskPrincipal",
-		"-RunLevel Highest",
-		"Set-AgentDockTaskSecurity",
+		"--task-admin $Action",
+		"--backup-directory",
+		"--launcher-path",
+		"--runtime-root",
+		"--user-sid",
+		"--user-name",
 		"prepare-elevated",
-		"Restore-AgentDockTaskBackup",
 		"setup-elevated-context",
 		"Start Setup normally under the signed-in account",
 		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
@@ -252,10 +253,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"& $destinationBinary service start --runtime-root $runtimeDir",
 		"& $destinationBinary tunnel start --runtime-root $runtimeDir",
 		"--start-tunnel --runtime-root",
-		"$taskArguments = \"service launch-core --runtime-root",
-		"New-ScheduledTaskAction -Execute $LauncherPath",
-		"-LauncherPath $destinationBinary",
-		"[string] $TaskRuntimeRoot = ''",
+		"-AdminLauncherPath $sourceTrayBinary",
+		"-LauncherPath $destinationTrayBinary",
+		"-FilePath $AdminLauncherPath",
 		"Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath",
 		"Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)",
 		"Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl",
@@ -303,6 +303,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 	if !strings.Contains(script, "-Verb RunAs") {
 		t.Fatal("Windows installer must elevate only the scheduled-task helper")
+	}
+	if strings.Contains(script, "-FilePath $powerShellPath") {
+		t.Fatal("Windows installer UAC must elevate AgentDock instead of powershell.exe")
 	}
 	if !strings.Contains(script, "DataProtectionScope]::CurrentUser") {
 		t.Fatal("Windows secrets must remain bound to the interactive user")
@@ -360,6 +363,8 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 		"quick-tunnel-url.txt",
 		"'regenerate-quick'",
 		"'set-startup'",
+		"--task-admin set-enabled",
+		"-FilePath $TrayBinary",
 		"'start-tunnel'",
 		"'stop-tunnel'",
 	} {
@@ -533,11 +538,45 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'quick-tunnel-url.txt'",
 		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray'",
 		"Remove-AgentDockScheduledTask",
-		"-TaskAdminAction remove",
+		"-AdminLauncherPath $trayBinary",
+		"--task-admin remove",
 		"-Verb RunAs",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("uninstall-windows.ps1 missing %q", want)
+		}
+	}
+}
+
+func TestWindowsTaskAdminUsesNativeAgentDockHelper(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "TaskAdminService.cs"))
+	if err != nil {
+		t.Fatalf("read TaskAdminService.cs: %v", err)
+	}
+	source := string(data)
+	for _, want := range []string{
+		"WindowsPrincipal",
+		"Schedule.Service",
+		"TaskRunLevelHighest",
+		"TaskLogonInteractiveToken",
+		"--run-core-task --runtime-root",
+		"SetSecurityDescriptor",
+		"prepare-elevated",
+		"prepare-standard",
+		"restore",
+		"remove",
+		"set-enabled",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("TaskAdminService.cs missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"powershell.exe",
+		"File.Exists(request.LauncherPath)",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("TaskAdminService.cs must not depend on %q", forbidden)
 		}
 	}
 }
