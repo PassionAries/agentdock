@@ -155,18 +155,44 @@ struct InstallerConfigurationTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let bin = root.appendingPathComponent(".local/bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let grokTarget = root.appendingPathComponent("downloads/grok-1.0.0")
+        try FileManager.default.createDirectory(at: grokTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: grokTarget)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: grokTarget.path)
         let grok = bin.appendingPathComponent("grok")
-        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: grok)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: grok.path)
+        try FileManager.default.createSymbolicLink(at: grok, withDestinationURL: grokTarget)
 
         let direct = ACPAgentPreset.grok.resolveAdapter(home: root, environment: [:])
         precondition(direct.available)
-        precondition(direct.command == grok.resolvingSymlinksInPath().path)
+        precondition(direct.command == grok.path)
         precondition(direct.arguments == ["agent", "stdio"])
 
+        let legacyGrok = ACPAgentPreset.grok.resolveAdapter(
+            configuredCommand: grokTarget.path,
+            configuredArguments: ["agent", "stdio"],
+            home: root,
+            environment: [:]
+        )
+        precondition(legacyGrok.command == grok.path)
+
+        let customGrok = root.appendingPathComponent("custom/grok")
+        try FileManager.default.createDirectory(at: customGrok.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: customGrok)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: customGrok.path)
+        let configuredGrok = ACPAgentPreset.grok.resolveAdapter(
+            configuredCommand: customGrok.path,
+            configuredArguments: ["agent", "stdio"],
+            home: root,
+            environment: [:]
+        )
+        precondition(configuredGrok.command == customGrok.path)
+
+        let nodeTarget = root.appendingPathComponent("runtime/node-24.0.0")
+        try FileManager.default.createDirectory(at: nodeTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: nodeTarget)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: nodeTarget.path)
         let node = bin.appendingPathComponent("node")
-        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: node)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+        try FileManager.default.createSymbolicLink(at: node, withDestinationURL: nodeTarget)
         let packageRoot = root
             .appendingPathComponent(".local/lib/node_modules/@agentclientprotocol/codex-acp", isDirectory: true)
         let entry = packageRoot.appendingPathComponent("dist/index.js")
@@ -177,16 +203,36 @@ struct InstallerConfigurationTests {
 
         let npm = ACPAgentPreset.codex.resolveAdapter(home: root, environment: [:])
         precondition(npm.available)
-        precondition(npm.command == node.resolvingSymlinksInPath().path)
-        precondition(npm.arguments == [entry.resolvingSymlinksInPath().path])
+        precondition(npm.command == node.path)
+        precondition(npm.arguments == [entry.path])
 
+        let legacyNode = ACPAgentPreset.codex.resolveAdapter(
+            configuredCommand: nodeTarget.path,
+            configuredArguments: [entry.path],
+            home: root,
+            environment: [:]
+        )
+        precondition(legacyNode.command == node.path)
+        precondition(legacyNode.arguments == [entry.path])
+
+        let codexScriptTarget = root.appendingPathComponent("downloads/codex-acp-1.0.0.js")
+        try Data("#!/usr/bin/env node\nconsole.log('codex direct')\n".utf8).write(to: codexScriptTarget)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexScriptTarget.path)
         let codexScript = bin.appendingPathComponent("codex-acp")
-        try Data("#!/usr/bin/env node\nconsole.log('codex direct')\n".utf8).write(to: codexScript)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codexScript.path)
+        try FileManager.default.createSymbolicLink(at: codexScript, withDestinationURL: codexScriptTarget)
         let directNodeScript = ACPAgentPreset.codex.resolveAdapter(home: root, environment: [:])
         precondition(directNodeScript.available)
-        precondition(directNodeScript.command == node.resolvingSymlinksInPath().path)
-        precondition(directNodeScript.arguments == [codexScript.resolvingSymlinksInPath().path])
+        precondition(directNodeScript.command == node.path)
+        precondition(directNodeScript.arguments == [codexScript.path])
+
+        let revalidatedNodeScript = ACPAgentPreset.codex.resolveAdapter(
+            configuredCommand: directNodeScript.command,
+            configuredArguments: directNodeScript.arguments,
+            home: root,
+            environment: [:]
+        )
+        precondition(revalidatedNodeScript.command == node.path)
+        precondition(revalidatedNodeScript.arguments == [codexScript.path])
 
         let claudePackageRoot = root
             .appendingPathComponent(".local/lib/node_modules/@agentclientprotocol/claude-agent-acp", isDirectory: true)
@@ -197,8 +243,8 @@ struct InstallerConfigurationTests {
             .write(to: claudePackageRoot.appendingPathComponent("package.json"))
         let claude = ACPAgentPreset.claude.resolveAdapter(home: root, environment: [:])
         precondition(claude.available)
-        precondition(claude.command == node.resolvingSymlinksInPath().path)
-        precondition(claude.arguments == [claudeEntry.resolvingSymlinksInPath().path])
+        precondition(claude.command == node.path)
+        precondition(claude.arguments == [claudeEntry.path])
 
         let configured = ACPAgentPreset.codex.resolveAdapter(
             configuredCommand: node.path,
@@ -207,8 +253,8 @@ struct InstallerConfigurationTests {
             environment: [:]
         )
         precondition(configured.available)
-        precondition(configured.command == node.resolvingSymlinksInPath().path)
-        precondition(configured.arguments == [entry.resolvingSymlinksInPath().path])
+        precondition(configured.command == node.path)
+        precondition(configured.arguments == [entry.path])
 
         let workspace = root.appendingPathComponent("Project", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)

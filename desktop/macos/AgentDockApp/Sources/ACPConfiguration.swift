@@ -69,13 +69,13 @@ enum ACPAgentPreset: String, CaseIterable {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> ACPAdapterResolution {
         let directories = searchDirectories(home: home, environment: environment)
-        if let configured = resolveConfiguredAdapter(
+        let configured = resolveConfiguredAdapter(
             command: configuredCommand,
             arguments: configuredArguments,
             directories: directories
-        ) {
-            return configured
-        }
+        )
+
+        var discovered: ACPAdapterResolution?
         for directory in directories {
             for executableName in executableNames {
                 let candidate = directory.appendingPathComponent(executableName)
@@ -85,12 +85,15 @@ enum ACPAgentPreset: String, CaseIterable {
                        arguments: arguments,
                        directories: directories
                    ) {
-                    return resolution
+                    discovered = resolution
+                    break
                 }
             }
+            if discovered != nil { break }
         }
 
-        if let nodePackage,
+        if discovered == nil,
+           let nodePackage,
            let node = resolveNodeExecutable(directories: directories) {
             for packageRoot in npmPackageRoots(nodePackage, directories: directories) {
                 guard let entry = readNPMBinEntry(
@@ -100,13 +103,26 @@ enum ACPAgentPreset: String, CaseIterable {
                     continue
                 }
                 let resolvedArguments = [entry.path] + arguments
-                return ACPAdapterResolution(
+                discovered = ACPAdapterResolution(
                     available: true,
                     command: node.path,
                     arguments: resolvedArguments,
                     message: "已检测到 · \(node.path) · \(entry.path)"
                 )
+                break
             }
+        }
+
+        if let configured {
+            // 旧版曾把 ~/.local/bin/grok、Homebrew Node 等稳定 symlink 保存成版本化 target。
+            // 只有重新发现的入口与既有配置实际指向同一组文件时才换回稳定路径，避免覆盖手工配置。
+            if let discovered, equivalentAdapterFiles(configured, discovered) {
+                return discovered
+            }
+            return configured
+        }
+        if let discovered {
+            return discovered
         }
 
         return ACPAdapterResolution(
@@ -115,6 +131,27 @@ enum ACPAgentPreset: String, CaseIterable {
             arguments: [],
             message: "未安装 · \(missingAdapterMessage)"
         )
+    }
+
+    private func equivalentAdapterFiles(_ lhs: ACPAdapterResolution, _ rhs: ACPAdapterResolution) -> Bool {
+        guard sameResolvedPath(lhs.command, rhs.command), lhs.arguments.count == rhs.arguments.count else {
+            return false
+        }
+        for (leftArgument, rightArgument) in zip(lhs.arguments, rhs.arguments) {
+            if leftArgument == rightArgument {
+                continue
+            }
+            guard leftArgument.hasPrefix("/"), rightArgument.hasPrefix("/"),
+                  sameResolvedPath(leftArgument, rightArgument) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func sameResolvedPath(_ lhs: String, _ rhs: String) -> Bool {
+        URL(fileURLWithPath: lhs).resolvingSymlinksInPath().standardizedFileURL.path ==
+            URL(fileURLWithPath: rhs).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     private func resolveConfiguredAdapter(
@@ -245,7 +282,7 @@ enum ACPAgentPreset: String, CaseIterable {
         let normalizedRoot = packageRoot.standardizedFileURL
         let candidate = normalizedRoot.appendingPathComponent(relativeEntry).standardizedFileURL
         guard isDescendant(candidate, of: normalizedRoot),
-              let resolved = regularFile(candidate) else {
+              let resolved = resolvedRegularFile(candidate) else {
             return nil
         }
 
@@ -254,7 +291,7 @@ enum ACPAgentPreset: String, CaseIterable {
         guard isDescendant(resolved, of: resolvedRoot) else {
             return nil
         }
-        return resolved
+        return candidate
     }
 
     private func executableFile(_ candidate: URL) -> URL? {
@@ -266,6 +303,16 @@ enum ACPAgentPreset: String, CaseIterable {
     }
 
     private func regularFile(_ candidate: URL) -> URL? {
+        let normalized = candidate.standardizedFileURL
+        guard resolvedRegularFile(normalized) != nil else {
+            return nil
+        }
+        // 保留用户安装器提供的稳定符号链接路径。Grok、Homebrew Node 和 npm bin
+        // 都可能把稳定入口指向版本化文件；保存真实 target 会在升级清理旧版本后失效。
+        return normalized
+    }
+
+    private func resolvedRegularFile(_ candidate: URL) -> URL? {
         let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
         guard let values = try? resolved.resourceValues(forKeys: [.isRegularFileKey]),
               values.isRegularFile == true else {
