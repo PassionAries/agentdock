@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/uvwt/agentdock/internal/fs/securepath"
 )
@@ -192,14 +194,40 @@ func (c *Config) Normalize() error {
 		if !filepath.IsAbs(c.InstructionsFile) {
 			return fmt.Errorf("InstructionsFile must resolve to an absolute path: %s", c.InstructionsFile)
 		}
-		data, err := os.ReadFile(c.InstructionsFile)
+
+		// 先检查文件类型再打开，避免误配设备或命名管道时在 Open 阶段阻塞。
+		info, err := os.Stat(c.InstructionsFile)
+		if err != nil {
+			return fmt.Errorf("stat InstructionsFile %s: %w", c.InstructionsFile, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("InstructionsFile must be a regular file: %s", c.InstructionsFile)
+		}
+		if info.Size() > maxInstructionsFileBytes {
+			return fmt.Errorf("InstructionsFile %s exceeds %d bytes", c.InstructionsFile, maxInstructionsFileBytes)
+		}
+
+		file, err := os.Open(c.InstructionsFile)
+		if err != nil {
+			return fmt.Errorf("open InstructionsFile %s: %w", c.InstructionsFile, err)
+		}
+		defer file.Close()
+
+		// Stat 只能约束检查瞬间的文件大小；读取仍限制为 max+1，避免文件并发增长时突破边界。
+		data, err := io.ReadAll(io.LimitReader(file, int64(maxInstructionsFileBytes)+1))
 		if err != nil {
 			return fmt.Errorf("read InstructionsFile %s: %w", c.InstructionsFile, err)
 		}
 		if len(data) > maxInstructionsFileBytes {
 			return fmt.Errorf("InstructionsFile %s exceeds %d bytes", c.InstructionsFile, maxInstructionsFileBytes)
 		}
+		if !utf8.Valid(data) {
+			return fmt.Errorf("InstructionsFile must contain valid UTF-8: %s", c.InstructionsFile)
+		}
 		c.Instructions = strings.TrimSpace(string(data))
+		if c.Instructions == "" {
+			return fmt.Errorf("InstructionsFile must contain non-empty instructions: %s", c.InstructionsFile)
+		}
 	}
 	if err := c.normalizeACP(); err != nil {
 		return err
