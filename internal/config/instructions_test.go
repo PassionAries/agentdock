@@ -91,11 +91,17 @@ func TestNormalizeRejectsInstructionsFileOverSizeLimit(t *testing.T) {
 }
 
 func TestNormalizeRejectsEmptyInstructionsFile(t *testing.T) {
-	for _, content := range []string{"", " \n\t "} {
-		t.Run(strings.ReplaceAll(content, "\n", "\\n"), func(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "whitespace only", content: " \n\t "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			setTestUserHome(t, t.TempDir())
 			path := filepath.Join(t.TempDir(), "instructions.md")
-			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
 			t.Setenv("AGENTDOCK_INSTRUCTIONS_FILE", path)
