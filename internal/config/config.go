@@ -195,13 +195,8 @@ func (c *Config) Normalize() error {
 			return fmt.Errorf("InstructionsFile must resolve to an absolute path: %s", c.InstructionsFile)
 		}
 
-		file, err := os.Open(c.InstructionsFile)
-		if err != nil {
-			return fmt.Errorf("open InstructionsFile %s: %w", c.InstructionsFile, err)
-		}
-		defer file.Close()
-
-		info, err := file.Stat()
+		// 先检查文件类型再打开，避免误配设备或命名管道时在 Open 阶段阻塞。
+		info, err := os.Stat(c.InstructionsFile)
 		if err != nil {
 			return fmt.Errorf("stat InstructionsFile %s: %w", c.InstructionsFile, err)
 		}
@@ -212,7 +207,13 @@ func (c *Config) Normalize() error {
 			return fmt.Errorf("InstructionsFile %s exceeds %d bytes", c.InstructionsFile, maxInstructionsFileBytes)
 		}
 
-		// Stat 只能约束打开瞬间的文件大小；读取仍限制为 max+1，避免文件并发增长时突破边界。
+		file, err := os.Open(c.InstructionsFile)
+		if err != nil {
+			return fmt.Errorf("open InstructionsFile %s: %w", c.InstructionsFile, err)
+		}
+		defer file.Close()
+
+		// Stat 只能约束检查瞬间的文件大小；读取仍限制为 max+1，避免文件并发增长时突破边界。
 		data, err := io.ReadAll(io.LimitReader(file, int64(maxInstructionsFileBytes)+1))
 		if err != nil {
 			return fmt.Errorf("read InstructionsFile %s: %w", c.InstructionsFile, err)
