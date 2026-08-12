@@ -14,6 +14,7 @@ var
   ExistingInstallSource: String;
   ResolvedInstallRoot: String;
   InstallProgressPage: TOutputProgressWizardPage;
+  InstallWarningCode: String;
 
 function GetLocalizedMessage(Key: String): String;
 begin
@@ -470,6 +471,9 @@ begin
       Result := GetLocalizedMessage('InstallFailed') + ' ' + ErrorMessage;
       Exit;
     end;
+    InstallWarningCode := GetIniString('AgentDock', 'WarningCode', '', ResultFilePath);
+    if InstallWarningCode <> '' then
+      Log('AgentDock installation warning: ' + InstallWarningCode);
     InstallProgressPage.SetText(GetLocalizedMessage('OfflineProgressFinishing'), '');
     InstallProgressPage.SetProgress(4, 4);
   finally
@@ -482,7 +486,12 @@ begin
   if (CurPageID = wpReady) and ExistingInstallDetected then
     WizardForm.ReadyLabel.Caption := GetLocalizedMessage('ReadyUpgrade');
   if CurPageID = wpFinished then
+  begin
     WizardForm.FinishedLabel.Caption := GetLocalizedMessage('FinishedControlPanel');
+    if InstallWarningCode = 'elevated-mode-fallback' then
+      WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
+        GetLocalizedMessage('ElevatedModeFallbackNotice');
+  end;
 end;
 
 function InitializeUninstall(): Boolean;

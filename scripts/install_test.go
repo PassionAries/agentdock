@@ -227,12 +227,13 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Get-AgentDockTaskState",
 		"Get-InteractiveDesktopUser",
 		"Start-ElevatedAgentDockTaskAction",
-		"New-ElevatedAgentDockScheduledTask",
-		"New-ScheduledTaskPrincipal",
-		"-RunLevel Highest",
-		"Set-AgentDockTaskSecurity",
+		"--task-admin $Action",
+		"--backup-directory",
+		"--launcher-path",
+		"--runtime-root",
+		"--user-sid",
+		"--user-name",
 		"prepare-elevated",
-		"Restore-AgentDockTaskBackup",
 		"setup-elevated-context",
 		"Start Setup normally under the signed-in account",
 		"Stop-CloudflaredForUpgrade -BinaryPath $cloudflaredBinary",
@@ -252,10 +253,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"& $destinationBinary service start --runtime-root $runtimeDir",
 		"& $destinationBinary tunnel start --runtime-root $runtimeDir",
 		"--start-tunnel --runtime-root",
-		"$taskArguments = \"service launch-core --runtime-root",
-		"New-ScheduledTaskAction -Execute $LauncherPath",
-		"-LauncherPath $destinationBinary",
-		"[string] $TaskRuntimeRoot = ''",
+		"-AdminLauncherPath $sourceTrayBinary",
+		"-LauncherPath $destinationTrayBinary",
+		"-FilePath $AdminLauncherPath",
 		"Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath",
 		"Wait-QuickTunnelUrl -LogPaths @($cloudflaredStdoutLogPath, $cloudflaredStderrLogPath)",
 		"Wait-QuickTunnelReady -Path $quickTunnelUrlPath -ExpectedUrl $publicUrl",
@@ -303,6 +303,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 	if !strings.Contains(script, "-Verb RunAs") {
 		t.Fatal("Windows installer must elevate only the scheduled-task helper")
+	}
+	if strings.Contains(script, "-FilePath $powerShellPath") {
+		t.Fatal("Windows installer UAC must elevate AgentDock instead of powershell.exe")
 	}
 	if !strings.Contains(script, "DataProtectionScope]::CurrentUser") {
 		t.Fatal("Windows secrets must remain bound to the interactive user")
@@ -360,6 +363,8 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 		"quick-tunnel-url.txt",
 		"'regenerate-quick'",
 		"'set-startup'",
+		"--task-admin set-enabled",
+		"-FilePath $TrayBinary",
 		"'start-tunnel'",
 		"'stop-tunnel'",
 	} {
@@ -446,8 +451,11 @@ func TestWindowsControlPanelReadsVersionFromCoreBuildInfo(t *testing.T) {
 			t.Fatalf("Windows control panel must read the version from the core binary BuildInfo: %q", want)
 		}
 	}
-	if !strings.Contains(app, "snapshot.Version") || !strings.Contains(window, "snapshot.Version") {
-		t.Fatal("Windows control panel surfaces must display RuntimeSnapshot.Version")
+	if !strings.Contains(window, "snapshot.Version") {
+		t.Fatal("Windows control panel must display RuntimeSnapshot.Version in the main window")
+	}
+	if strings.Contains(app, `return $"运行正常 · {version}"`) || strings.Contains(app, "未知版本") {
+		t.Fatal("Windows tray status must not include the AgentDock version")
 	}
 	for _, source := range []string{app, window, runtimeService} {
 		if strings.Contains(source, "snapshot.Manifest.Version") || strings.Contains(source, "manifest.Version") {
@@ -533,11 +541,121 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'quick-tunnel-url.txt'",
 		"$StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray'",
 		"Remove-AgentDockScheduledTask",
-		"-TaskAdminAction remove",
+		"-AdminLauncherPath $trayBinary",
+		"--task-admin remove",
+		"--runtime-root",
 		"-Verb RunAs",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("uninstall-windows.ps1 missing %q", want)
+		}
+	}
+}
+
+func TestWindowsTaskAdminUsesNativeAgentDockHelper(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "TaskAdminService.cs"))
+	if err != nil {
+		t.Fatalf("read TaskAdminService.cs: %v", err)
+	}
+	source := string(data)
+	for _, want := range []string{
+		"WindowsPrincipal",
+		"Schedule.Service",
+		"TaskRunLevelHighest",
+		"TaskLogonInteractiveToken",
+		"--run-core-task --runtime-root",
+		"SetSecurityDescriptor",
+		"prepare-elevated",
+		"prepare-standard",
+		"restore",
+		"remove",
+		"set-enabled",
+		"StopInstalledCore",
+		"Process.GetProcessesByName(\"agentdock\")",
+		"process.Kill(entireProcessTree: true)",
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("TaskAdminService.cs missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"powershell.exe",
+		"File.Exists(request.LauncherPath)",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("TaskAdminService.cs must not depend on %q", forbidden)
+		}
+	}
+}
+
+func TestWindowsElevatedCoreHostUsesKillOnCloseJob(t *testing.T) {
+	jobData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "KillOnCloseJob.cs"))
+	if err != nil {
+		t.Fatalf("read KillOnCloseJob.cs: %v", err)
+	}
+	jobSource := string(jobData)
+	for _, want := range []string{
+		"CreateJobObject",
+		"JobObjectLimitKillOnJobClose",
+		"SetInformationJobObject",
+		"AssignProcessToJobObject",
+	} {
+		if !strings.Contains(jobSource, want) {
+			t.Fatalf("KillOnCloseJob.cs missing %q", want)
+		}
+	}
+
+	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	if err != nil {
+		t.Fatalf("read RuntimeService.cs: %v", err)
+	}
+	runtimeSource := string(runtimeData)
+	for _, want := range []string{
+		"KillOnCloseJob.Create()",
+		"job.Assign(process)",
+		"CreateNoWindow = true",
+		"WindowStyle = ProcessWindowStyle.Hidden",
+	} {
+		if !strings.Contains(runtimeSource, want) {
+			t.Fatalf("RuntimeService.cs missing elevated Core host behavior %q", want)
+		}
+	}
+}
+
+func TestWindowsControlPanelCanSwitchCorePrivilegeMode(t *testing.T) {
+	checks := map[string][]string{
+		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"): {
+			"ElevatedCoreCheckBox",
+			"以管理员权限运行 AgentDock 核心",
+			"ElevatedCoreCheckBox_Click",
+		},
+		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
+			"snapshot.Manifest.PrivilegeMode",
+			"_runtime.SetPrivilegeModeAsync(elevated)",
+			"await RefreshAsync()",
+		},
+		filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"): {
+			"SetPrivilegeModeAsync",
+			"prepare-elevated",
+			"prepare-standard",
+			"RunTaskAdminTransitionAsync(\"restore\"",
+			"WritePrivilegeModeAsync",
+			"SetStandardCoreStartup",
+			"snapshot.CoreStartupEnabled",
+			"snapshot.CoreRunning",
+		},
+	}
+
+	for path, required := range checks {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		content := string(data)
+		for _, want := range required {
+			if !strings.Contains(content, want) {
+				t.Fatalf("%s missing privilege mode switch behavior %q", path, want)
+			}
 		}
 	}
 }

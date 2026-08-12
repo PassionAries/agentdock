@@ -7,6 +7,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>agentdock-tray</AssemblyName>
+    <AssemblyTitle>AgentDock</AssemblyTitle>
+    <Product>AgentDock</Product>
+    <Description>AgentDock Control Panel</Description>
     <RootNamespace>AgentDock.ControlPanel</RootNamespace>
     <ApplicationIcon>..\..\..\packaging\windows\assets\agentdock.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>

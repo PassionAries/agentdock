@@ -70,26 +70,130 @@ function Assert-ElevatedAgentDockTask {
     $nativeActionMatch = @($task.Actions | Where-Object {
         $executeMatches = [string]::Equals(
             [IO.Path]::GetFullPath($_.Execute),
-            [IO.Path]::GetFullPath($binaryPath),
+            [IO.Path]::GetFullPath($trayPath),
             [StringComparison]::OrdinalIgnoreCase
         )
         $argumentsMatch = $_.Arguments -and
-            $_.Arguments.Contains('service launch-core') -and
+            $_.Arguments.Contains('--run-core-task') -and
             $_.Arguments.Contains('--runtime-root') -and
             $_.Arguments.Contains($InstallRoot)
         $executeMatches -and $argumentsMatch
     }).Count -eq 1
     if (-not $nativeActionMatch) {
         $actions = ($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join '; '
-        throw "AgentDock task does not launch the native core directly: $actions"
+        throw "AgentDock task does not launch the elevated background host: $actions"
     }
     if (@($task.Actions | Where-Object {
         $_.Execute.Contains('powershell.exe') -or
-        $_.Execute.Contains('agentdock-tray.exe') -or
+        [string]::Equals($_.Execute, $binaryPath, [StringComparison]::OrdinalIgnoreCase) -or
         ($_.Arguments -and $_.Arguments.Contains('--start-core'))
     }).Count -gt 0) {
-        throw 'AgentDock elevated task must not invoke PowerShell or the tray startup proxy.'
+        throw 'AgentDock elevated task must use the tray background host without PowerShell or a console core action.'
     }
+}
+
+function Assert-CoreRunsWithoutConsole {
+    $normalizedBinary = [IO.Path]::GetFullPath($binaryPath)
+    $coreProcesses = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'agentdock.exe' -and
+        -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+        [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $normalizedBinary, [StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($coreProcesses.Count -ne 1) {
+        throw "Expected one AgentDock core process, got $($coreProcesses.Count)."
+    }
+
+    $core = $coreProcesses[0]
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($core.ParentProcessId)" -ErrorAction Stop
+    if ($parent.Name -ne 'agentdock-tray.exe' -or
+        [string]::IsNullOrWhiteSpace($parent.ExecutablePath) -or
+        -not [string]::Equals([IO.Path]::GetFullPath($parent.ExecutablePath), [IO.Path]::GetFullPath($trayPath), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Elevated core is not supervised by the AgentDock background host: $($parent.Name) $($parent.ExecutablePath)"
+    }
+
+    $consoleHosts = @(Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'conhost.exe' -and $_.ParentProcessId -eq $core.ProcessId
+    })
+    $visibleConsoleHosts = @($consoleHosts | Where-Object {
+        try {
+            $process = Get-Process -Id $_.ProcessId -ErrorAction Stop
+            $process.MainWindowHandle -ne 0
+        } catch {
+            $false
+        }
+    })
+    if ($visibleConsoleHosts.Count -gt 0) {
+        throw "Elevated core unexpectedly owns a visible console window: $($visibleConsoleHosts.ProcessId -join ', ')"
+    }
+}
+
+function Assert-TaskStopKillsCore {
+    Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $remainingCore = @(Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -eq 'agentdock.exe' -and
+            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+            [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), [IO.Path]::GetFullPath($binaryPath), [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($remainingCore.Count -eq 0) {
+            break
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw "Task Scheduler stopped the host but left AgentDock Core running: $($remainingCore.ProcessId -join ', ')"
+        }
+        Start-Sleep -Milliseconds 250
+    } while ($true)
+
+    Start-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction Stop
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        Start-Sleep -Milliseconds 250
+        try {
+            $health = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 2
+            if ($health.StatusCode -eq 200) {
+                break
+            }
+        } catch {
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw 'AgentDock Core did not become healthy after restarting the elevated task.'
+        }
+    } while ($true)
+    Assert-CoreRunsWithoutConsole
+}
+
+function Assert-ElevatedCoreLifecycle {
+    $stopOutput = @(& $binaryPath service stop --runtime-root $InstallRoot 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Elevated core stop failed: $($stopOutput -join [Environment]::NewLine)"
+    }
+    $stopDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $remainingCore = @(Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -eq 'agentdock.exe' -and
+            -not [string]::IsNullOrWhiteSpace($_.ExecutablePath) -and
+            [string]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), [IO.Path]::GetFullPath($binaryPath), [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($remainingCore.Count -eq 0) {
+            break
+        }
+        if ([DateTime]::UtcNow -ge $stopDeadline) {
+            throw "Elevated core remained running after task stop: $($remainingCore.ProcessId -join ', ')"
+        }
+        Start-Sleep -Milliseconds 250
+    } while ($true)
+
+    $startOutput = @(& $binaryPath service start --runtime-root $InstallRoot 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Elevated core start failed: $($startOutput -join [Environment]::NewLine)"
+    }
+    $health = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 5
+    if ($health.StatusCode -ne 200) {
+        throw "Elevated core restart returned unexpected health status: $($health.StatusCode)"
+    }
+    Assert-ElevatedAgentDockTask
+    Assert-CoreRunsWithoutConsole
 }
 
 function Stop-ProcessByPath {
@@ -125,9 +229,11 @@ $stateRoot = Join-Path $userHome '.agentdock'
 $stateMarker = Join-Path $stateRoot ('setup-e2e-preserve-' + [Guid]::NewGuid().ToString('N') + '.txt')
 $healthUrl = 'http://127.0.0.1:8765/healthz'
 $setupProcess = $null
+$repeatProcess = $null
 $repairProcess = $null
 $uninstallProcess = $null
 $setupLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-install.log'
+$repeatLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-repeat.log'
 $repairLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-repair.log'
 $uninstallLogPath = Join-Path $env:RUNNER_TEMP 'agentdock-setup-e2e-uninstall.log'
 $oldReleaseBaseUrl = $env:AGENTDOCK_RELEASE_BASE_URL
@@ -146,7 +252,7 @@ try {
     # 指向必然失败的地址，确保 Setup 的核心载荷不会偷偷退回在线下载。
     $env:AGENTDOCK_RELEASE_BASE_URL = 'http://127.0.0.1:1/agentdock-offline-e2e'
     $env:AGENTDOCK_CLOUDFLARED_RELEASE_BASE_URL = 'http://127.0.0.1:1/cloudflared-offline-e2e'
-    Remove-Item -LiteralPath $setupLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $setupLogPath, $repeatLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
     Write-Host "Starting AgentDockSetup.exe: $resolvedSetup"
     $setupProcess = Start-Process `
         -FilePath $resolvedSetup `
@@ -206,6 +312,34 @@ try {
         throw 'Setup did not register the normal user tray in HKCU Run.'
     }
     Assert-ElevatedAgentDockTask
+    Assert-CoreRunsWithoutConsole
+    Assert-ElevatedCoreLifecycle
+    Assert-TaskStopKillsCore
+
+    Write-Host 'Starting AgentDockSetup.exe a second time without changing task state.'
+    $repeatProcess = Start-Process `
+        -FilePath $resolvedSetup `
+        -ArgumentList @(
+            '/VERYSILENT',
+            '/SUPPRESSMSGBOXES',
+            '/LANG=chinesesimplified',
+            '/NORESTART',
+            "/DIR=$InstallRoot",
+            "/LOG=$repeatLogPath",
+            '/ADMINMODE=elevated'
+        ) `
+        -PassThru
+    Wait-ProcessOrThrow `
+        -Process $repeatProcess `
+        -TimeoutSeconds 180 `
+        -Description 'AgentDock Setup repeated in-place upgrade' `
+        -LogPath $repeatLogPath
+    $repeatLog = Get-Content -LiteralPath $repeatLogPath -Raw
+    if ($repeatLog -notmatch 'existing installation detected: source=setup') {
+        throw 'Repeated Setup did not recognize the existing Setup-managed installation.'
+    }
+    Assert-ElevatedAgentDockTask
+    Assert-CoreRunsWithoutConsole
 
     Write-Host 'Creating a running legacy AgentDock scheduled task for migration testing.'
     Stop-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
@@ -268,6 +402,7 @@ try {
         throw 'Setup did not detect the legacy AgentDock scheduled task.'
     }
     Assert-ElevatedAgentDockTask
+    Assert-CoreRunsWithoutConsole
     if ($null -ne (Get-RunValue -Name 'AgentDock')) {
         throw 'Setup repair incorrectly registered the elevated core in HKCU Run.'
     }
@@ -314,7 +449,7 @@ try {
 
     Write-Host 'AgentDock Setup install, health check, and uninstall passed.'
 } catch {
-    foreach ($log in @($setupLogPath, $repairLogPath, $uninstallLogPath)) {
+    foreach ($log in @($setupLogPath, $repeatLogPath, $repairLogPath, $uninstallLogPath)) {
         if (Test-Path -LiteralPath $log -PathType Leaf) {
             Write-Host "----- failure log: $log -----"
             Get-Content -LiteralPath $log | Write-Host
@@ -339,5 +474,5 @@ try {
     }
     Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stateMarker -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $setupLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $setupLogPath, $repeatLogPath, $repairLogPath, $uninstallLogPath -Force -ErrorAction SilentlyContinue
 }

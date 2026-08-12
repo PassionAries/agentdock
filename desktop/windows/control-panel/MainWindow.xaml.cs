@@ -91,6 +91,7 @@ public partial class MainWindow : Window
                     : snapshot.SavedNamedOrigin;
             }
             TunnelTokenStoredText.Text = snapshot.TunnelTokenStored ? "已使用当前 Windows 用户 DPAPI 保存" : "未保存";
+            ElevatedCoreCheckBox.IsChecked = string.Equals(snapshot.Manifest.PrivilegeMode, "elevated", StringComparison.OrdinalIgnoreCase);
             CoreStartupCheckBox.IsChecked = snapshot.CoreStartupEnabled;
             TrayStartupCheckBox.IsChecked = snapshot.TrayStartupEnabled;
 
@@ -354,6 +355,33 @@ public partial class MainWindow : Window
             () => _runtime.SaveSettingsAsync(settings, NexusTokenPasswordBox.Password),
             SettingsStatusText);
         NexusTokenPasswordBox.Clear();
+    }
+
+    private async void ElevatedCoreCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updatingUi)
+        {
+            return;
+        }
+
+        var elevated = ElevatedCoreCheckBox.IsChecked == true;
+        ElevatedCoreCheckBox.IsEnabled = false;
+        SettingsStatusText.Text = elevated ? "正在切换到管理员模式…" : "正在切换到普通用户模式…";
+        try
+        {
+            await _runtime.SetPrivilegeModeAsync(elevated);
+            SettingsStatusText.Text = elevated ? "已切换到管理员模式" : "已切换到普通用户模式";
+        }
+        catch (Exception ex)
+        {
+            SettingsStatusText.Text = ex.Message;
+            MessageBox.Show(this, ex.Message, "AgentDock", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            ElevatedCoreCheckBox.IsEnabled = true;
+            await RefreshAsync();
+        }
     }
 
     private async void CoreStartupCheckBox_Click(object sender, RoutedEventArgs e)

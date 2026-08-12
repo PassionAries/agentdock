@@ -3,8 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using Microsoft.Win32;
 
@@ -260,6 +262,95 @@ public sealed class RuntimeService : IDisposable
             cancellationToken);
     }
 
+    public async Task SetPrivilegeModeAsync(bool elevated, CancellationToken cancellationToken = default)
+    {
+        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken)
+            ?? throw new InvalidOperationException("找不到 AgentDock runtime.json。");
+        var wasElevated = string.Equals(manifest.PrivilegeMode, "elevated", StringComparison.OrdinalIgnoreCase);
+        if (wasElevated == elevated)
+        {
+            return;
+        }
+
+        var snapshot = await GetSnapshotAsync(cancellationToken);
+        var backupDirectory = Path.Combine(Path.GetTempPath(), $"agentdock-privilege-{Guid.NewGuid():N}");
+        var taskTransitionPrepared = false;
+        Directory.CreateDirectory(backupDirectory);
+
+        try
+        {
+            await RunTaskAdminTransitionAsync(
+                elevated ? "prepare-elevated" : "prepare-standard",
+                manifest,
+                backupDirectory,
+                cancellationToken);
+            taskTransitionPrepared = true;
+
+            // 任务迁移完成后再切换 manifest，避免普通控制链提前把半完成状态当成新模式。
+            await WritePrivilegeModeAsync(elevated, cancellationToken);
+            if (elevated)
+            {
+                SetStandardCoreStartup(manifest, enabled: false);
+
+                // 任务创建时默认禁用。若 Core 当前正在运行，则临时启用任务用于启动；
+                // 最后再恢复原本的开机启动选择，从而让“当前运行”和“开机启动”保持彼此独立。
+                if (snapshot.CoreStartupEnabled || snapshot.CoreRunning)
+                {
+                    await SetStartupAsync("core", true, cancellationToken);
+                }
+                if (snapshot.CoreRunning)
+                {
+                    await RunCoreActionAsync("start", cancellationToken);
+                }
+                if (!snapshot.CoreStartupEnabled)
+                {
+                    await SetStartupAsync("core", false, cancellationToken);
+                }
+            }
+            else
+            {
+                SetStandardCoreStartup(manifest, snapshot.CoreStartupEnabled);
+                if (snapshot.CoreRunning)
+                {
+                    await RunCoreActionAsync("start", cancellationToken);
+                }
+            }
+        }
+        catch (Exception transitionError)
+        {
+            if (!taskTransitionPrepared)
+            {
+                throw;
+            }
+
+            try
+            {
+                await RunTaskAdminTransitionAsync("restore", manifest, backupDirectory, cancellationToken);
+                await WritePrivilegeModeAsync(wasElevated, cancellationToken);
+                SetStandardCoreStartup(manifest, !wasElevated && snapshot.CoreStartupEnabled);
+                if (!wasElevated && snapshot.CoreRunning)
+                {
+                    await RunCoreActionAsync("start", cancellationToken);
+                }
+            }
+            catch (Exception rollbackError)
+            {
+                throw new AggregateException("切换 AgentDock 管理员模式失败，且回滚未完成。", transitionError, rollbackError);
+            }
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(backupDirectory, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
     public async Task<UrlTestResult> TestUrlAsync(string value, CancellationToken cancellationToken = default)
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
@@ -309,6 +400,165 @@ public sealed class RuntimeService : IDisposable
         return string.IsNullOrWhiteSpace(binaryPath)
             ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
             : binaryPath;
+    }
+
+    private async Task RunTaskAdminTransitionAsync(
+        string action,
+        RuntimeManifest manifest,
+        string backupDirectory,
+        CancellationToken cancellationToken)
+    {
+        var trayBinary = string.IsNullOrWhiteSpace(manifest.TrayBinaryPath)
+            ? Path.Combine(RuntimeRoot, "bin", "agentdock-tray.exe")
+            : manifest.TrayBinaryPath;
+        if (!File.Exists(trayBinary))
+        {
+            throw new FileNotFoundException("找不到 AgentDock 管理程序。", trayBinary);
+        }
+
+        var arguments = new List<string>
+        {
+            "--task-admin", action,
+            "--backup-directory", backupDirectory,
+            "--runtime-root", RuntimeRoot
+        };
+        if (action == "prepare-elevated")
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var userSid = identity.User?.Value;
+            if (string.IsNullOrWhiteSpace(userSid) || string.IsNullOrWhiteSpace(identity.Name))
+            {
+                throw new InvalidOperationException("无法读取当前 Windows 用户身份。");
+            }
+            arguments.AddRange([
+                "--launcher-path", trayBinary,
+                "--user-sid", userSid,
+                "--user-name", identity.Name
+            ]);
+        }
+
+        try
+        {
+            await RunElevatedProcessAsync(trayBinary, arguments, cancellationToken);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            throw new InvalidOperationException("已取消 AgentDock 管理员权限切换。", ex);
+        }
+    }
+
+    private async Task WritePrivilegeModeAsync(bool elevated, CancellationToken cancellationToken)
+    {
+        var text = await File.ReadAllTextAsync(ManifestPath, cancellationToken);
+        var manifest = JsonNode.Parse(text) as JsonObject
+            ?? throw new InvalidOperationException("AgentDock runtime.json 格式无效。");
+        manifest["privilege_mode"] = elevated ? "elevated" : "standard";
+        manifest["agentdock_task_name"] = elevated ? "AgentDock" : "";
+
+        var temporaryPath = ManifestPath + $".tmp.{Guid.NewGuid():N}";
+        try
+        {
+            await File.WriteAllTextAsync(
+                temporaryPath,
+                manifest.ToJsonString(JsonOptions),
+                new UTF8Encoding(false),
+                cancellationToken);
+            File.Move(temporaryPath, ManifestPath, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private void SetStandardCoreStartup(RuntimeManifest manifest, bool enabled)
+    {
+        var valueName = string.IsNullOrWhiteSpace(manifest.StartupValueName) ? "AgentDock" : manifest.StartupValueName;
+        using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true)
+            ?? throw new InvalidOperationException("无法打开 Windows 开机启动注册表。");
+        if (!enabled)
+        {
+            key.DeleteValue(valueName, throwOnMissingValue: false);
+            return;
+        }
+
+        var trayBinary = string.IsNullOrWhiteSpace(manifest.TrayBinaryPath)
+            ? Path.Combine(RuntimeRoot, "bin", "agentdock-tray.exe")
+            : manifest.TrayBinaryPath;
+        if (!File.Exists(trayBinary))
+        {
+            throw new FileNotFoundException("找不到 AgentDock 托盘程序。", trayBinary);
+        }
+        var command = $"\"{trayBinary}\" --start-core --runtime-root \"{RuntimeRoot}\"";
+        key.SetValue(valueName, command, RegistryValueKind.String);
+    }
+
+    internal async Task<int> RunElevatedCoreTaskAsync(CancellationToken cancellationToken = default)
+    {
+        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
+        var binaryPath = ResolveCoreBinaryPath(manifest);
+        if (!File.Exists(binaryPath))
+        {
+            throw new FileNotFoundException("找不到 AgentDock 核心程序。", binaryPath);
+        }
+
+        Directory.CreateDirectory(LogsDirectory);
+        var workingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "AgentDock");
+        Directory.CreateDirectory(workingDirectory);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = binaryPath,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.ArgumentList.Add("service");
+        startInfo.ArgumentList.Add("launch-core");
+        startInfo.ArgumentList.Add("--runtime-root");
+        startInfo.ArgumentList.Add(RuntimeRoot);
+
+        // Highest 计划任务运行 WinExe 托管进程，再由它无控制台启动核心并持续等待。
+        // Core 加入 KILL_ON_JOB_CLOSE Job Object，确保 Task Scheduler 强制结束 host 时不会留下孤儿进程。
+        using var job = KillOnCloseJob.Create();
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 AgentDock 核心程序。");
+        try
+        {
+            job.Assign(process);
+        }
+        catch
+        {
+            process.Kill(entireProcessTree: true);
+            throw;
+        }
+        await using var stdout = new FileStream(
+            Path.Combine(LogsDirectory, "agentdock.out.log"),
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            4096,
+            useAsync: true);
+        await using var stderr = new FileStream(
+            Path.Combine(LogsDirectory, "agentdock.err.log"),
+            FileMode.Append,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            4096,
+            useAsync: true);
+
+        var stdoutCopy = process.StandardOutput.BaseStream.CopyToAsync(stdout, cancellationToken);
+        var stderrCopy = process.StandardError.BaseStream.CopyToAsync(stderr, cancellationToken);
+        await Task.WhenAll(process.WaitForExitAsync(cancellationToken), stdoutCopy, stderrCopy);
+        return process.ExitCode;
     }
 
     internal Task RunCoreStartupAsync(CancellationToken cancellationToken = default) =>

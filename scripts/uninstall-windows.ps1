@@ -98,6 +98,11 @@ function Remove-DirectoryWithRetry {
 }
 
 function Remove-AgentDockScheduledTask {
+    param(
+        [string] $AdminLauncherPath,
+        [string] $RuntimeRoot
+    )
+
     $task = Get-ScheduledTask -TaskName 'AgentDock' -TaskPath '\' -ErrorAction SilentlyContinue
     if ($null -eq $task) {
         return
@@ -110,18 +115,14 @@ function Remove-AgentDockScheduledTask {
         $directError = $_
     }
 
-    $installerHelper = Join-Path $PSScriptRoot 'install.ps1'
-    if (-not (Test-Path -LiteralPath $installerHelper -PathType Leaf)) {
-        throw "AgentDock scheduled task requires administrator cleanup, but the installer helper is missing: $($directError.Exception.Message)"
+    if ([string]::IsNullOrWhiteSpace($AdminLauncherPath) -or
+        -not (Test-Path -LiteralPath $AdminLauncherPath -PathType Leaf)) {
+        throw "AgentDock scheduled task requires administrator cleanup, but the AgentDock helper is missing: $($directError.Exception.Message)"
     }
-    $powerShellPath = Join-Path $PSHOME 'powershell.exe'
-    $arguments =
-        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$installerHelper`"" +
-        ' -TaskAdminAction remove'
     try {
         $process = Start-Process `
-            -FilePath $powerShellPath `
-            -ArgumentList $arguments `
+            -FilePath $AdminLauncherPath `
+            -ArgumentList "--task-admin remove --runtime-root `"$RuntimeRoot`"" `
             -Verb RunAs `
             -WindowStyle Hidden `
             -Wait `
@@ -145,7 +146,7 @@ $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 # grant the desktop user task control; older administrator-owned tasks use a
 # one-time UAC fallback through the installed helper.
 if ($StartupValueName -eq 'AgentDock' -and $CloudflaredStartupValueName -eq 'AgentDockCloudflared' -and $TrayStartupValueName -eq 'AgentDockTray') {
-    Remove-AgentDockScheduledTask
+    Remove-AgentDockScheduledTask -AdminLauncherPath $trayBinary -RuntimeRoot $runtimeDir
 }
 
 Stop-ProcessByPath -ProcessName 'agentdock-tray' -BinaryPath $trayBinary
