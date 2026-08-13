@@ -51,7 +51,8 @@ func TestManagerScopesPersistentSessionsToConfiguredAgent(t *testing.T) {
 func newStoreOnlyManager(t *testing.T, home, agent string) *Manager {
 	t.Helper()
 	manager, err := NewManager(Options{
-		Home: home,
+		Home:       home,
+		DefaultCWD: home,
 		Agent: AgentSpec{
 			Name:    agent,
 			Command: "unused-in-store-only-test",

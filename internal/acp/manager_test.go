@@ -309,45 +309,50 @@ func TestManagerCloseMarksActivePromptInterrupted(t *testing.T) {
 	}
 }
 
-func TestResolveCWDEnforcesAllowedRootsAndSymlinks(t *testing.T) {
-	root := t.TempDir()
-	inside := filepath.Join(root, "inside")
+func TestResolveCWDAllowsAccessibleDirectoriesAndCanonicalizesSymlinks(t *testing.T) {
+	defaultCWD := t.TempDir()
+	inside := filepath.Join(defaultCWD, "inside")
 	if err := os.MkdirAll(inside, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
-	manager, err := newTestManager(t.TempDir(), root)
+	manager, err := newTestManager(t.TempDir(), defaultCWD)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = manager.Close() }()
+
 	resolved, err := manager.resolveCWD("inside")
 	expectedInside := canonicalTestPath(t, inside)
 	if err != nil || resolved != expectedInside {
-		t.Fatalf("inside resolve = %q, %v", resolved, err)
+		t.Fatalf("relative cwd = %q, %v", resolved, err)
 	}
-	if _, err := manager.resolveCWD(outside); err == nil {
-		t.Fatal("outside cwd was accepted")
+	resolved, err = manager.resolveCWD(outside)
+	if err != nil || resolved != canonicalTestPath(t, outside) {
+		t.Fatalf("absolute cwd outside default directory = %q, %v", resolved, err)
 	}
-	alias := filepath.Join(root, "inside-link")
+
+	alias := filepath.Join(defaultCWD, "inside-link")
 	if err := os.Symlink(inside, alias); err != nil {
 		t.Logf("symlink tests skipped on this host: %v", err)
 		return
 	}
-	additional, err := manager.resolveAdditionalDirectories([]string{inside, alias}, root)
+	additional, err := manager.resolveAdditionalDirectories([]string{inside, alias}, defaultCWD)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(additional) != 1 || additional[0] != expectedInside {
 		t.Fatalf("same-file additional directories were not deduplicated: %#v", additional)
 	}
-	link := filepath.Join(root, "escape-link")
-	if err := os.Symlink(outside, link); err != nil {
+
+	outsideLink := filepath.Join(defaultCWD, "outside-link")
+	if err := os.Symlink(outside, outsideLink); err != nil {
 		t.Logf("symlink test skipped on this host: %v", err)
 		return
 	}
-	if _, err := manager.resolveCWD(link); err == nil {
-		t.Fatal("symlink escape was accepted")
+	resolved, err = manager.resolveCWD(outsideLink)
+	if err != nil || resolved != canonicalTestPath(t, outside) {
+		t.Fatalf("symlink to accessible directory = %q, %v", resolved, err)
 	}
 }
 
@@ -571,10 +576,10 @@ func newTestManagerWithPromptMode(home, workspace, agentInfoName, promptMode str
 
 func newTestManagerWithAgent(home, workspace, agentInfoName, agentVersion, promptMode string) (*Manager, error) {
 	return NewManager(Options{
-		Home: home,
+		Home:       home,
+		DefaultCWD: workspace,
 		Agent: AgentSpec{
-			Name: "helper", Command: os.Args[0], Args: []string{"-test.run=TestACPHelperProcess"},
-			AllowedRoots: []string{workspace}, Environment: map[string]string{
+			Name: "helper", Command: os.Args[0], Args: []string{"-test.run=TestACPHelperProcess"}, Environment: map[string]string{
 				"GO_WANT_ACP_HELPER": "1", "GO_ACP_HELPER_AGENT_INFO_NAME": agentInfoName,
 				"GO_ACP_HELPER_AGENT_VERSION": agentVersion, "GO_ACP_HELPER_PROMPT_MODE": promptMode,
 			},

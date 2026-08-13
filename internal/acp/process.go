@@ -28,15 +28,13 @@ type agentProcess struct {
 	closeErr  error
 }
 
-func startAgentProcess(ctx context.Context, spec AgentSpec, requestHandler RequestHandler, notificationHandler NotificationHandler) (*agentProcess, error) {
+func startAgentProcess(ctx context.Context, spec AgentSpec, defaultCWD string, requestHandler RequestHandler, notificationHandler NotificationHandler) (*agentProcess, error) {
 	environment := envstore.Merge(envstore.MinimalSystemEnv(), spec.Environment)
 	// The adapter must outlive ctx, which only bounds startup and initialize.
 	// agentProcess.Close owns termination through processcontrol.Controller.
 	command := exec.Command(spec.Command, spec.Args...) //nolint:noctx // adapter lifetime exceeds the startup context
 	command.Env = envstore.Format(environment)
-	if len(spec.AllowedRoots) > 0 {
-		command.Dir = spec.AllowedRoots[0]
-	}
+	command.Dir = defaultCWD
 	stderr := newTailBuffer(64 << 10)
 	command.Stderr = stderr
 	stdout, err := command.StdoutPipe()

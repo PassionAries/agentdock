@@ -261,7 +261,6 @@ function Get-ControlPanelSettings {
         acp_agent = $storedACPAgent
         acp_command = [string] (Get-ObjectProperty -Object $stored -Name 'acp_command' -Default '')
         acp_args = @((Get-ObjectProperty -Object $stored -Name 'acp_args' -Default @()))
-        acp_allowed_roots = @((Get-ObjectProperty -Object $stored -Name 'acp_allowed_roots' -Default @()))
     }
 }
 
@@ -473,13 +472,9 @@ function Invoke-LaunchCore {
         if (-not (Test-Path -LiteralPath ([string] $settings.acp_command) -PathType Leaf)) {
             throw "找不到 Coding Agent 命令：$($settings.acp_command)"
         }
-        if (@($settings.acp_allowed_roots).Count -eq 0) {
-            throw 'Coding Agent 允许目录不能为空。'
-        }
         $env:AGENTDOCK_ACP_AGENT = [string] $settings.acp_agent
         $env:AGENTDOCK_ACP_COMMAND = [string] $settings.acp_command
         $env:AGENTDOCK_ACP_ARGS_JSON = ConvertTo-Json -InputObject @($settings.acp_args) -Compress
-        $env:AGENTDOCK_ACP_ALLOWED_ROOTS = [string]::Join(',', @($settings.acp_allowed_roots))
     }
 
     $activeServerUrl = Read-TextFile -Path $ServerUrlPath

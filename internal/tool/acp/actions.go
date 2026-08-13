@@ -22,7 +22,6 @@ func (s *Service) Session(ctx context.Context, args map[string]any) (Result, err
 		return Result{
 			"action": action, "agent": info.AgentInfo, "capabilities": info.AgentCapabilities,
 			"protocol_version": info.ProtocolVersion, "auth_methods": info.AuthMethods,
-			"allowed_roots":  s.manager.AllowedRoots(),
 			"context_policy": policies.Context, "event_policy": policies.Events,
 			"interaction_policy": policies.Interactions, "steering_policy": policies.Steering,
 		}, nil

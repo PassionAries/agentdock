@@ -15,7 +15,7 @@ ACP support is disabled by default and is configured only by the AgentDock host 
 3. Keep long agent turns outside the lifetime of one MCP tool request.
 4. Preserve ACP's bidirectional protocol: session updates and agent-to-client requests share one managed JSON-RPC connection.
 5. Own the adapter process tree through AgentDock's existing cross-platform process controller.
-6. Restrict every ACP workspace path to host-configured allowed roots.
+6. Resolve ACP workspace paths with native filesystem semantics and rely on the AgentDock process OS permissions as the filesystem boundary.
 7. Persist only recovery metadata; do not duplicate full model transcripts or tool output on disk.
 8. Keep the protocol core adapter-neutral. Claude and Codex are host-selected adapters, not protocol special cases.
 
@@ -23,7 +23,7 @@ ACP support is disabled by default and is configured only by the AgentDock host 
 
 - AgentDock does not implement an ACP agent.
 - AgentDock does not translate ACP into a dynamically registered MCP server.
-- Remote MCP callers cannot change the ACP executable, arguments, environment mappings, or allowed roots.
+- Remote MCP callers cannot change the ACP executable, arguments, or environment mappings.
 - The first version does not advertise ACP client filesystem or terminal capabilities. An adapter therefore cannot ask AgentDock to perform arbitrary client-side filesystem or terminal operations through ACP.
 - AgentDock does not automatically replay an interrupted prompt after restart.
 - AgentDock does not persist complete ACP event streams or model transcripts.
@@ -107,13 +107,12 @@ AgentDock rejects a negotiated wire version other than `1`.
 | Variable | Required | Meaning |
 | --- | --- | --- |
 | `AGENTDOCK_HOME` | for isolated instances | Absolute AgentDock state directory. Defaults to the current user's `.agentdock` directory. Use a distinct value for every concurrently running AgentDock instance. |
-| `AGENTDOCK_DEFAULT_DIR` | for isolated instances | Absolute default workspace directory. Defaults to the current user's `AgentDock` directory. It should normally match the instance's primary ACP allowed root. |
+| `AGENTDOCK_DEFAULT_DIR` | for isolated instances | Absolute default workspace directory. Defaults to the current user's `AgentDock` directory. ACP uses it when `cwd` is omitted and as the base for relative workspace paths. |
 | `AGENTDOCK_ACP_ENABLED` | no | Enables the built-in ACP runtime. Defaults to `false`. |
 | `AGENTDOCK_ACP_AGENT` | no | Stable 1-64 character local profile name using letters, numbers, dot, underscore, or hyphen. Defaults to `claude`. |
 | `AGENTDOCK_ACP_COMMAND` | when enabled | Absolute executable path. On Unix it must be executable. |
 | `AGENTDOCK_ACP_ARGS_JSON` | no | JSON string array passed directly to the executable, without a shell. |
 | `AGENTDOCK_ACP_ENV_FROM_ENV_JSON` | no | JSON object mapping child variable names to host variable names. Secret values are not stored in AgentDock state. |
-| `AGENTDOCK_ACP_ALLOWED_ROOTS` | when enabled | Comma-separated absolute directories that may become ACP workspace roots. |
 | `AGENTDOCK_ACP_MAX_CONCURRENT_PROMPTS` | no | Global prompt concurrency, from 1 to 8. Defaults to 2. |
 | `AGENTDOCK_ACP_INTERACTION_TIMEOUT_MS` | no | Permission interaction timeout, from 1 second to 1 hour. Defaults to 300000 ms. |
 
@@ -126,11 +125,10 @@ AGENTDOCK_ACP_ENABLED=true
 AGENTDOCK_ACP_AGENT=claude
 AGENTDOCK_ACP_COMMAND=/absolute/path/to/node
 AGENTDOCK_ACP_ARGS_JSON='["/absolute/path/to/claude-agent-acp/dist/index.js"]'
-AGENTDOCK_ACP_ALLOWED_ROOTS=/srv/code,/srv/worktrees
 AGENTDOCK_ACP_ENV_FROM_ENV_JSON='{"ANTHROPIC_API_KEY":"HOST_ANTHROPIC_API_KEY"}'
 ```
 
-On Windows, `AGENTDOCK_ACP_ALLOWED_ROOTS` uses comma-separated Windows paths and the JSON arguments contain escaped backslashes when needed.
+On Windows, JSON arguments contain escaped backslashes when needed.
 
 `AGENTDOCK_HOME` and `AGENTDOCK_DEFAULT_DIR` are first-class host configuration, not adapter environment mappings. They isolate AgentDock's own state and default workspace before the ACP manager is created. Running multiple ACP adapters at the same time therefore requires distinct values for both variables in addition to distinct ports and authentication credentials.
 
@@ -144,7 +142,7 @@ AgentDock deliberately does not bundle or fork an adapter. Install and pin the a
 - Codex: [`agentclientprotocol/codex-acp`](https://github.com/agentclientprotocol/codex-acp) starts the Codex App Server and maps Codex sessions, events, approvals, tools, plans, and subagents into ACP.
 - Grok Build: the native `grok` executable exposes ACP over `grok agent stdio`. AgentDock passes `agent` and `stdio` directly without a shell and does not enable `--always-approve` by default.
 
-One AgentDock process owns one configured adapter. To expose multiple agents simultaneously, run isolated AgentDock service instances with different homes, loopback ports, authentication credentials, adapter commands, and allowed roots. This keeps session stores and process ownership single-purpose and prevents cross-agent state ambiguity while reusing the same adapter-neutral runtime.
+One AgentDock process owns one configured adapter. To expose multiple agents simultaneously, run isolated AgentDock service instances with different homes, loopback ports, authentication credentials, adapter commands, and default directories. This keeps session stores and process ownership single-purpose and prevents cross-agent state ambiguity while reusing the same adapter-neutral runtime.
 
 Never put API keys in `AGENTDOCK_ACP_ARGS_JSON`, a systemd `ExecStart`, shell history, or the process command line. Keep secrets in the service manager's protected environment file and map only the required names with `AGENTDOCK_ACP_ENV_FROM_ENV_JSON`.
 
@@ -152,15 +150,14 @@ Never put API keys in `AGENTDOCK_ACP_ARGS_JSON`, a systemd `ExecStart`, shell hi
 
 All `cwd` and `additional_directories` values are resolved through native `filepath` semantics:
 
-1. Relative paths resolve from the first configured allowed root.
-2. Existing symlinks are evaluated.
-3. The final path must be a directory.
-4. `filepath.Rel` verifies that the final path remains under at least one allowed root.
-5. Duplicate directories are removed with `os.SameFile`, preserving filesystem identity and platform case semantics.
+1. An omitted `cwd` resolves to `AGENTDOCK_DEFAULT_DIR`; relative paths resolve from the same directory.
+2. Absolute paths may point to any directory accessible to the AgentDock process.
+3. Existing symlinks are evaluated and the final path must exist and be a directory.
+4. Duplicate additional directories are removed with `os.SameFile`, preserving filesystem identity and platform case semantics.
 
-The policy is enforced before the adapter receives a session lifecycle request. Additional directories are sent only when the agent advertises `sessionCapabilities.additionalDirectories`.
+Validation happens before the adapter receives a session lifecycle request. Additional directories are sent only when the agent advertises `sessionCapabilities.additionalDirectories`.
 
-Allowed roots are a protocol policy, not an operating-system sandbox. The adapter and its child tools still run with the AgentDock service account's OS permissions. Operators should use a dedicated account, filesystem ACLs, container mounts, and network policy as the actual security boundary.
+AgentDock does not add an ACP-specific filesystem whitelist. The adapter and its child tools run with the AgentDock service account's OS permissions, so operators that require isolation should use a dedicated account, filesystem ACLs, container mounts, and network policy as the actual security boundary.
 
 ## Public tool surface
 
@@ -259,7 +256,7 @@ Records are written atomically with private permissions and contain only:
 
 - local and remote session identifiers;
 - profile name;
-- canonical workspace roots;
+- canonical workspace directory and additional directories;
 - lifecycle status and stop reason;
 - timestamps.
 

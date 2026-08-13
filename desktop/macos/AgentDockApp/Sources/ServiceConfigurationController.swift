@@ -11,7 +11,6 @@ struct EditableServiceSettings {
     let acpAgent: ACPAgentPreset
     let acpCommand: String
     let acpArgs: [String]
-    let acpAllowedRoots: [String]
 
     func validated() throws -> EditableServiceSettings {
         try ServicePortValidation.validate(port)
@@ -32,7 +31,6 @@ struct EditableServiceSettings {
 
         var command = ""
         var arguments: [String] = []
-        var allowedRoots: [String] = []
         if acpEnabled {
             let resolution = acpAgent.resolveAdapter(
                 configuredCommand: acpCommand,
@@ -43,7 +41,6 @@ struct EditableServiceSettings {
             }
             command = resolution.command
             arguments = resolution.arguments
-            allowedRoots = try ACPDesktopConfiguration.validateAllowedRoots(acpAllowedRoots)
         }
 
         return EditableServiceSettings(
@@ -55,8 +52,7 @@ struct EditableServiceSettings {
             acpEnabled: acpEnabled,
             acpAgent: acpAgent,
             acpCommand: command,
-            acpArgs: arguments,
-            acpAllowedRoots: allowedRoots
+            acpArgs: arguments
         )
     }
 
@@ -106,7 +102,6 @@ final class ServiceConfigurationController {
             "AGENTDOCK_ACP_AGENT": settings.acpAgent.rawValue,
             "AGENTDOCK_ACP_COMMAND": settings.acpCommand,
             "AGENTDOCK_ACP_ARGS_JSON": try ACPDesktopConfiguration.encodeArguments(settings.acpArgs),
-            "AGENTDOCK_ACP_ALLOWED_ROOTS": settings.acpAllowedRoots.joined(separator: ","),
         ]
         if settings.acpEnabled {
             // 桌面预设依赖各 Agent 自己的登录状态，不继承上一个 Agent 的密钥映射。
@@ -115,7 +110,7 @@ final class ServiceConfigurationController {
         if let replacement = settings.nexusTokenReplacement {
             replacements["AGENTDOCK_NEXUS_TOKEN"] = replacement
         }
-        let updatedData = try environment.dataByUpdating(replacements)
+        let updatedData = try environment.dataByUpdating(replacements, removing: ServiceConfiguration.removableLegacyKeys)
         let wasLoaded = service.isLoaded()
 
         try await service.runInBackground {

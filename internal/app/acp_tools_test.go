@@ -35,7 +35,7 @@ func TestACPToolsAreFeatureGatedAndUseStrictSchemas(t *testing.T) {
 	root := t.TempDir()
 	enabled := config.Config{
 		AgentDockHome: t.TempDir(), AgentDockDefaultDir: root,
-		ACPEnabled: true, ACPAgentName: "helper", ACPCommand: executable, ACPAllowedRoots: []string{root},
+		ACPEnabled: true, ACPAgentName: "helper", ACPCommand: executable,
 	}
 	if err := enabled.Normalize(); err != nil {
 		t.Fatal(err)

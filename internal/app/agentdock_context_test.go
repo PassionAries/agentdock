@@ -101,7 +101,6 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 		ACPEnabled:          true,
 		ACPAgentName:        "helper",
 		ACPCommand:          executable,
-		ACPAllowedRoots:     []string{root},
 	}
 	if err := enabled.Normalize(); err != nil {
 		t.Fatal(err)
@@ -123,7 +122,6 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 		"不是动态 MCP",
 		"mcp_tool_*",
 		"- agent: helper",
-		"allowed_roots",
 		"acp_session 管理会话",
 		"acp_prompt action=start",
 		"action=events",

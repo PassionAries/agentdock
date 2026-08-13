@@ -13,7 +13,7 @@ Use separate AgentDock service instances when validating Claude and Codex simult
 - loopback listen port;
 - AgentDock authentication secret;
 - ACP adapter command and environment mapping;
-- allowed workspace root;
+- isolated default workspace directory;
 - external hostname or tunnel route, when remote MCP testing is required.
 
 Do not share session stores between adapters.
@@ -67,13 +67,12 @@ AGENTDOCK_ACP_ARGS_JSON=["/absolute/path/to/adapter-entry.js"]
 # Option B: a directly executable adapter. Do not also pass its entry point.
 # AGENTDOCK_ACP_COMMAND=/absolute/path/to/adapter
 # AGENTDOCK_ACP_ARGS_JSON=[]
-AGENTDOCK_ACP_ALLOWED_ROOTS=/srv/agentdock-acp-workspaces/<adapter>
 AGENTDOCK_ACP_ENV_FROM_ENV_JSON={"CHILD_PROVIDER_KEY":"HOST_PROVIDER_KEY"}
 AGENTDOCK_ACP_MAX_CONCURRENT_PROMPTS=2
 AGENTDOCK_ACP_INTERACTION_TIMEOUT_MS=300000
 ```
 
-The service must run without root privileges. The service account should own only its AgentDock home and test workspace. Allowed roots are not an OS sandbox; filesystem permissions, container mounts, service users, and network policy remain the real security boundary.
+The service must run without root privileges. The service account should own only its AgentDock home and test workspace. ACP has no AgentDock-specific workspace whitelist; filesystem permissions, container mounts, service users, and network policy are the real security boundary.
 
 ## Phase 1: static and protocol checks
 
@@ -93,17 +92,17 @@ Acceptance requires:
 
 Through the authenticated MCP endpoint:
 
-1. Confirm `server_info` reports ACP enabled, the expected local adapter name, and only the intended allowed root.
+1. Confirm `server_info` reports ACP enabled and the expected local adapter name.
 2. Confirm `acp_session`, `acp_prompt`, and `acp_interaction` are present.
 3. Inspect all three schemas.
-4. Confirm callers cannot provide adapter commands, arguments, environment mappings, provider credentials, or new allowed roots.
+4. Confirm callers cannot provide adapter commands, arguments, environment mappings, or provider credentials.
 5. Call `acp_session` with `action=info` and save the redacted initialize result.
 
-Do not continue if the endpoint is unauthenticated, binds directly to a public interface, or reports an unexpected root.
+Do not continue if the endpoint is unauthenticated or binds directly to a public interface.
 
 ## Phase 3: session lifecycle
 
-Use an empty disposable Git repository inside the allowed root.
+Use an empty disposable Git repository owned by the test service account.
 
 1. `acp_session info`.
 2. If authentication methods are advertised, select only the intended advertised method with `acp_session authenticate`.
@@ -168,13 +167,12 @@ Never approve unrestricted shell or filesystem access merely to make the test pa
 
 ## Phase 8: path and state hardening
 
-Verify all failures are explicit and do not reach the adapter:
+Verify workspace validation and state failures are explicit:
 
-- relative or nonexistent allowed root in host configuration;
-- filesystem root as an allowed root;
-- session `cwd` outside allowed roots;
-- `additional_directories` outside allowed roots;
-- symlink escape from an allowed root;
+- nonexistent session `cwd`;
+- `cwd` that resolves to a regular file instead of a directory;
+- an absolute `cwd` outside `AGENTDOCK_DEFAULT_DIR` succeeds when the service account can access it;
+- symlinked workspace paths resolve to their canonical target;
 - too many additional directories;
 - malformed, oversized, schema-incompatible, ID-mismatched, or symlink session-state file in a disposable AgentDock home.
 

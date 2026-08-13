@@ -21,15 +21,15 @@ const (
 )
 
 type AgentSpec struct {
-	Name         string
-	Command      string
-	Args         []string
-	AllowedRoots []string
-	Environment  map[string]string
+	Name        string
+	Command     string
+	Args        []string
+	Environment map[string]string
 }
 
 type Options struct {
 	Home               string
+	DefaultCWD         string
 	Agent              AgentSpec
 	MaxConcurrentRuns  int
 	InteractionTimeout time.Duration

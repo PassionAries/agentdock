@@ -10,12 +10,12 @@ import (
 func TestInitializeAcceptsOmittedAgentInfo(t *testing.T) {
 	workspace := t.TempDir()
 	manager, err := NewManager(Options{
-		Home: t.TempDir(),
+		Home:       t.TempDir(),
+		DefaultCWD: workspace,
 		Agent: AgentSpec{
-			Name:         "helper",
-			Command:      os.Args[0],
-			Args:         []string{"-test.run=TestACPHelperProcess"},
-			AllowedRoots: []string{workspace},
+			Name:    "helper",
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestACPHelperProcess"},
 			Environment: map[string]string{
 				"GO_WANT_ACP_HELPER":            "1",
 				"GO_ACP_HELPER_OMIT_AGENT_INFO": "1",

@@ -41,8 +41,8 @@ struct ServiceConfiguration: Equatable {
         "AGENTDOCK_ACP_COMMAND",
         "AGENTDOCK_ACP_ARGS_JSON",
         "AGENTDOCK_ACP_ENV_FROM_ENV_JSON",
-        "AGENTDOCK_ACP_ALLOWED_ROOTS",
     ]
+    static let removableLegacyKeys: Set<String> = ["AGENTDOCK_ACP_ALLOWED_ROOTS"]
 
     let host: String
     let port: Int
@@ -57,7 +57,6 @@ struct ServiceConfiguration: Equatable {
     let acpAgent: ACPAgentPreset
     let acpCommand: String
     let acpArgs: [String]
-    let acpAllowedRoots: [String]
 
     var healthHost: String {
         switch host {
@@ -105,8 +104,7 @@ struct ServiceConfiguration: Equatable {
             acpEnabled: parseBool(values["AGENTDOCK_ACP_ENABLED"]),
             acpAgent: ACPAgentPreset.parse(values["AGENTDOCK_ACP_AGENT"] ?? "codex"),
             acpCommand: values["AGENTDOCK_ACP_COMMAND"] ?? "",
-            acpArgs: decodeStringArray(values["AGENTDOCK_ACP_ARGS_JSON"]),
-            acpAllowedRoots: ACPDesktopConfiguration.parseAllowedRoots(values["AGENTDOCK_ACP_ALLOWED_ROOTS"] ?? "")
+            acpArgs: decodeStringArray(values["AGENTDOCK_ACP_ARGS_JSON"])
         )
     }
 

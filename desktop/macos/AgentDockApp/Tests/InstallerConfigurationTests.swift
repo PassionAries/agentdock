@@ -58,14 +58,13 @@ struct InstallerConfigurationTests {
             "AGENTDOCK_ACP_AGENT": "grok",
             "AGENTDOCK_ACP_COMMAND": "/Users/test/.local/bin/grok",
             "AGENTDOCK_ACP_ARGS_JSON": "[\"agent\",\"stdio\"]",
-            "AGENTDOCK_ACP_ALLOWED_ROOTS": "/Users/test/Project",
-        ])
+        ], removing: ServiceConfiguration.removableLegacyKeys)
         let acpValues = ManagedEnvironment.parseValues(String(decoding: acpEnvironmentData, as: UTF8.self))
         precondition(acpValues["AGENTDOCK_ACP_AGENT"] == "grok")
         precondition(acpValues["AGENTDOCK_ACP_ARGS_JSON"] == "[\"agent\",\"stdio\"]")
+        precondition(acpValues["AGENTDOCK_ACP_ALLOWED_ROOTS"] == nil)
         precondition(ACPAgentPreset.grok.arguments == ["agent", "stdio"])
         precondition(ACPAgentPreset.parse("GROK") == .grok)
-        precondition(ACPDesktopConfiguration.parseAllowedRoots("/one, /two") == ["/one", "/two"])
         let encodedGrokArguments = try ACPDesktopConfiguration.encodeArguments(ACPAgentPreset.grok.arguments)
         precondition(encodedGrokArguments == "[\"agent\",\"stdio\"]")
         try testACPAdapterResolution()
@@ -276,14 +275,6 @@ struct InstallerConfigurationTests {
         precondition(configured.command == node.path)
         precondition(configured.arguments == [entry.path])
 
-        let workspace = root.appendingPathComponent("Project", isDirectory: true)
-        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-        let roots = try ACPDesktopConfiguration.validateAllowedRoots([workspace.path, workspace.path])
-        precondition(roots == [workspace.resolvingSymlinksInPath().path])
-
-        expectFailure("整个文件系统") {
-            _ = try ACPDesktopConfiguration.validateAllowedRoots(["/"])
-        }
     }
 
     private static func testTunnelTokenStore() throws {

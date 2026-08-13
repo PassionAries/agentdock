@@ -16,8 +16,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private let browserStatus = NSTextField(wrappingLabelWithString: "")
     private let acpEnabled = NSButton(checkboxWithTitle: "启用 Coding Agent", target: nil, action: nil)
     private let acpAgent = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let acpAllowedRoots = NSTextField(string: "")
-    private let acpChooseDirectory = NSButton(title: "选择目录", target: nil, action: nil)
     private let acpStatus = NSTextField(wrappingLabelWithString: "")
     private let nexusEndpoint = NSTextField(string: "")
     private let nexusToken = NSSecureTextField(string: "")
@@ -36,7 +34,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private var initialBrowserEnabled = false
     private var initialACPEnabled = false
     private var initialACPAgent = ACPAgentPreset.codex
-    private var initialACPAllowedRoots: [String] = []
     private var isBusy = false
 
     init(
@@ -49,7 +46,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         self.menuLoginAgent = menuLoginAgent
         self.onChanged = onChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 590, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: 590, height: 710),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -76,7 +73,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         initialBrowserEnabled = configuration.browserEnabled
         initialACPEnabled = configuration.acpEnabled
         initialACPAgent = configuration.acpAgent
-        initialACPAllowedRoots = configuration.acpAllowedRoots
 
         serviceAutostart.state = status.autostartEnabled ? .on : .off
         menuAutostart.state = initialMenuAutostart ? .on : .off
@@ -85,9 +81,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         browserEnabled.state = initialBrowserEnabled ? .on : .off
         acpEnabled.state = initialACPEnabled ? .on : .off
         acpAgent.selectItem(withTitle: initialACPAgent.title)
-        acpAllowedRoots.stringValue = (initialACPAllowedRoots.isEmpty
-            ? [service.paths.workDirectory.path]
-            : initialACPAllowedRoots).joined(separator: ", ")
         nexusEndpoint.stringValue = initialNexusEndpoint
         nexusToken.stringValue = ""
         nexusToken.placeholderString = configuration.nexusTokenConfigured
@@ -142,13 +135,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         acpAgent.widthAnchor.constraint(equalToConstant: 180).isActive = true
         acpAgent.target = self
         acpAgent.action = #selector(acpChanged)
-        acpAllowedRoots.placeholderString = "/Users/name/Project"
-        acpAllowedRoots.target = self
-        acpAllowedRoots.action = #selector(markChanged)
-        acpAllowedRoots.delegate = self
-        acpAllowedRoots.widthAnchor.constraint(equalToConstant: 335).isActive = true
-        acpChooseDirectory.target = self
-        acpChooseDirectory.action = #selector(chooseACPDirectory)
         acpStatus.textColor = .secondaryLabelColor
         acpStatus.font = .systemFont(ofSize: 12)
         acpStatus.widthAnchor.constraint(equalToConstant: 500).isActive = true
@@ -201,14 +187,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         browserStack.spacing = 5
         browserStatus.widthAnchor.constraint(equalToConstant: 500).isActive = true
 
-        let acpDirectoryRow = NSStackView(views: [acpAllowedRoots, acpChooseDirectory])
-        acpDirectoryRow.orientation = .horizontal
-        acpDirectoryRow.alignment = .centerY
-        acpDirectoryRow.spacing = 8
         let acpStack = NSStackView(views: [
             acpEnabled,
             formRow(title: "Agent", control: acpAgent),
-            formRow(title: "允许目录", control: acpDirectoryRow),
             acpStatus,
         ])
         acpStack.orientation = .vertical
@@ -307,18 +288,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         refreshApplyState()
     }
 
-    @objc private func chooseACPDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        if panel.runModal() == .OK, let url = panel.url {
-            acpAllowedRoots.stringValue = url.path
-            refreshApplyState()
-        }
-    }
-
     @objc private func browserToggled() {
         if browserEnabled.state == .on, BrowserSupportController.detectExecutable() == nil {
             browserEnabled.state = .off
@@ -342,8 +311,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             acpEnabled: acpEnabled.state == .on,
             acpAgent: selectedAgent,
             acpCommand: sameAgent ? configuration.acpCommand : "",
-            acpArgs: sameAgent ? configuration.acpArgs : [],
-            acpAllowedRoots: ACPDesktopConfiguration.parseAllowedRoots(acpAllowedRoots.stringValue)
+            acpArgs: sameAgent ? configuration.acpArgs : []
         )
         setBusy(true)
         showStatus("正在保存配置并验证 AgentDock…", isError: false)
@@ -367,12 +335,10 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 initialBrowserEnabled = validatedSettings.browserEnabled
                 initialACPEnabled = validatedSettings.acpEnabled
                 initialACPAgent = validatedSettings.acpAgent
-                initialACPAllowedRoots = validatedSettings.acpAllowedRoots
                 portField.integerValue = initialPort
                 logLevel.selectItem(withTitle: initialLogLevel)
                 nexusEndpoint.stringValue = initialNexusEndpoint
                 nexusToken.stringValue = ""
-                acpAllowedRoots.stringValue = initialACPAllowedRoots.joined(separator: ", ")
                 if let updatedConfiguration = ServiceConfiguration.load(from: service.paths.environment) {
                     currentConfiguration = updatedConfiguration
                 }
@@ -411,8 +377,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         )
         let enabled = acpEnabled.state == .on
         acpAgent.isEnabled = enabled && !isBusy
-        acpAllowedRoots.isEnabled = enabled && !isBusy
-        acpChooseDirectory.isEnabled = enabled && !isBusy
         if resolution.available {
             acpStatus.stringValue = enabled
                 ? resolution.message
@@ -443,9 +407,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         }
         let acpIsEnabled = acpEnabled.state == .on
         let acpSettingsChanged = acpIsEnabled != initialACPEnabled
-            || ((acpIsEnabled || initialACPEnabled)
-                && (selectedACPAgent() != initialACPAgent
-                    || ACPDesktopConfiguration.parseAllowedRoots(acpAllowedRoots.stringValue) != initialACPAllowedRoots))
+            || ((acpIsEnabled || initialACPEnabled) && selectedACPAgent() != initialACPAgent)
         let changed = (serviceAutostart.state == .on) != initialServiceAutostart
             || (menuAutostart.state == .on) != initialMenuAutostart
             || portField.integerValue != initialPort

@@ -62,7 +62,6 @@ public sealed class RuntimeService : IDisposable
         settings.AcpAgent = NormalizeAcpAgent(settings.AcpAgent);
         settings.AcpCommand ??= "";
         settings.AcpArgs ??= [];
-        settings.AcpAllowedRoots ??= [];
 
         var localOrigin = $"http://127.0.0.1:{settings.Port}";
         var localMcpUrl = localOrigin + "/mcp";
@@ -230,8 +229,7 @@ public sealed class RuntimeService : IDisposable
             "--nexus-endpoint", settings.NexusEndpoint ?? "",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
             $"--acp-enabled={settings.AcpEnabled.ToString().ToLowerInvariant()}",
-            "--acp-agent", NormalizeAcpAgent(settings.AcpAgent),
-            "--acp-allowed-roots-json", JsonSerializer.Serialize(settings.AcpAllowedRoots ?? [], JsonOptions)
+            "--acp-agent", NormalizeAcpAgent(settings.AcpAgent)
         };
         string? secretFile = null;
         try

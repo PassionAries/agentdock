@@ -29,7 +29,8 @@ func TestRealAdapterInitialize(t *testing.T) {
 	}
 	manager, err := NewManager(Options{
 		Home:              t.TempDir(),
-		Agent:             AgentSpec{Name: "real-smoke", Command: command, Args: args, AllowedRoots: []string{root}},
+		DefaultCWD:        root,
+		Agent:             AgentSpec{Name: "real-smoke", Command: command, Args: args},
 		MaxConcurrentRuns: 1, InteractionTimeout: time.Second,
 	})
 	if err != nil {

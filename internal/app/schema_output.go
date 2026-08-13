@@ -31,7 +31,6 @@ func OutputSchema(name string) map[string]any {
 		props["sandbox"] = objectProp("Sandbox status metadata.")
 		props["acp_enabled"] = boolProp("Whether the built-in ACP runtime is enabled by host configuration.")
 		props["acp_agent"] = stringProp("Configured local ACP agent profile name.")
-		props["acp_allowed_roots"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	case "agentdock_context":
 		required = []string{"context"}
 		props["context"] = stringProp("Rendered AgentDock bootstrap context text for clients that cannot inject system prompt context.")
@@ -107,7 +106,6 @@ func OutputSchema(name string) map[string]any {
 		props["agent"] = objectProp("Configured ACP agent identity.")
 		props["capabilities"] = objectProp("Capabilities reported by the ACP agent during initialize.")
 		props["auth_methods"] = arrayProp("Authentication methods advertised by the ACP agent during initialize.")
-		props["allowed_roots"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 		props["context_policy"] = objectProp("Transcript ownership and restart policy used to avoid duplicated or replay-corrupted context.")
 		props["event_policy"] = objectProp("Bounded incremental event delivery policy.")
 		props["interaction_policy"] = objectProp("In-memory permission interaction bounds and local authorization policy.")

@@ -12,19 +12,34 @@ struct ManagedEnvironment {
         return ManagedEnvironment(originalText: text, values: parseValues(text))
     }
 
-    func dataByUpdating(_ replacements: [String: String]) throws -> Data {
-        let allowed = Set(ServiceConfiguration.editableKeys)
+    func dataByUpdating(_ replacements: [String: String], removing removals: Set<String> = []) throws -> Data {
+        let editable = Set(ServiceConfiguration.editableKeys)
         let requested = Set(replacements.keys)
-        guard requested.isSubset(of: allowed) else {
-            let rejected = requested.subtracting(allowed).sorted().joined(separator: ", ")
+        guard requested.isSubset(of: editable) else {
+            let rejected = requested.subtracting(editable).sorted().joined(separator: ", ")
             throw ValidationError("包含不允许由图形界面修改的配置项：\(rejected)")
+        }
+        let removable = editable.union(ServiceConfiguration.removableLegacyKeys)
+        guard removals.isSubset(of: removable) else {
+            let rejected = removals.subtracting(removable).sorted().joined(separator: ", ")
+            throw ValidationError("包含不允许由图形界面删除的配置项：\(rejected)")
+        }
+        guard requested.isDisjoint(with: removals) else {
+            throw ValidationError("同一配置项不能同时更新和删除。")
         }
 
         var pending = replacements
         var output: [String] = []
         let lines = originalText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         for line in lines {
-            guard let key = Self.assignmentKey(line), replacements.keys.contains(key) else {
+            guard let key = Self.assignmentKey(line) else {
+                output.append(line)
+                continue
+            }
+            if removals.contains(key) {
+                continue
+            }
+            guard replacements.keys.contains(key) else {
                 output.append(line)
                 continue
             }

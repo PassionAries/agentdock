@@ -128,8 +128,8 @@ func InputSchema(name string) map[string]any {
 		props["action"] = map[string]any{"type": "string", "description": "ACP session action.", "enum": []string{"info", "authenticate", "new", "load", "resume", "fork", "set_mode", "set_config", "list", "inspect", "close", "delete"}}
 		props["auth_method_id"] = stringProp("Authentication method id advertised by initialize, required for authenticate.")
 		props["session_id"] = stringProp("AgentDock ACP session id for load, resume, fork, set_mode, set_config, inspect, close, or delete.")
-		props["cwd"] = stringProp("Working directory for new or fork. Relative paths resolve from the first host-configured ACP allowed root; the resolved path must remain within an allowed root.")
-		props["additional_directories"] = map[string]any{"type": "array", "maxItems": 16, "uniqueItems": true, "items": map[string]any{"type": "string"}, "description": "Additional workspace roots for new or fork. Every resolved directory must remain within host-configured ACP allowed roots."}
+		props["cwd"] = stringProp("Working directory for new or fork. Relative paths resolve from AgentDock's default directory; absolute paths may use any host-accessible directory.")
+		props["additional_directories"] = map[string]any{"type": "array", "maxItems": 16, "uniqueItems": true, "items": map[string]any{"type": "string"}, "description": "Additional workspace directories for new or fork. Each path must resolve to a host-accessible directory."}
 		props["mode_id"] = stringProp("Agent-advertised session mode id for set_mode.")
 		props["config_id"] = stringProp("Agent-advertised session configuration option id for set_config.")
 		props["config_value"] = map[string]any{"description": "String value id or boolean value for set_config.", "oneOf": []map[string]any{{"type": "string"}, {"type": "boolean"}}}

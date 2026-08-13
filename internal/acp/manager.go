@@ -38,6 +38,9 @@ func NewManager(opts Options) (*Manager, error) {
 	if strings.TrimSpace(opts.Home) == "" {
 		return nil, errors.New("ACP manager home is required")
 	}
+	if strings.TrimSpace(opts.DefaultCWD) == "" {
+		return nil, errors.New("ACP default cwd is required")
+	}
 	if strings.TrimSpace(opts.Agent.Name) == "" || strings.TrimSpace(opts.Agent.Command) == "" {
 		return nil, errors.New("ACP agent name and command are required")
 	}
@@ -81,10 +84,6 @@ func NewManager(opts Options) (*Manager, error) {
 }
 
 func (m *Manager) AgentName() string { return m.opts.Agent.Name }
-
-func (m *Manager) AllowedRoots() []string {
-	return append([]string(nil), m.opts.Agent.AllowedRoots...)
-}
 
 func (m *Manager) AgentInfo(ctx context.Context) (InitializeResult, error) {
 	process, err := m.ensureProcess(ctx)
@@ -173,7 +172,7 @@ func (m *Manager) ensureProcess(ctx context.Context) (*agentProcess, error) {
 		}
 	}
 
-	started, err := startAgentProcess(ctx, m.opts.Agent, m.handleRequest, m.handleNotification)
+	started, err := startAgentProcess(ctx, m.opts.Agent, m.opts.DefaultCWD, m.handleRequest, m.handleNotification)
 	if err != nil {
 		return nil, err
 	}

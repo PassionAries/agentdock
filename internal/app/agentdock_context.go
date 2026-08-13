@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -25,11 +24,10 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 		{Title: "动态 MCP 索引", Lines: splitNonEmptyLines(dynamicMCPSummary)},
 	}
 	if requiresACP(r.cfg) {
-		// 只给选型与边界：是什么、何时用、不是 MCP、当前 agent/roots。操作细节留给 acp_* 工具 description。
+		// 只给选型与边界：是什么、何时用、不是 MCP、当前 agent。操作细节留给 acp_* 工具 description。
 		sections = append(sections, capabilitySection{Title: "ACP 运行时", Lines: []string{
 			"内置本地 Coding Agent 通道（Agent Client Protocol）：把多轮编码/排障交给主机配置的 adapter；不是动态 MCP，勿用 mcp_tool_*。",
 			"- agent: " + r.cfg.ACPAgentName,
-			"- allowed_roots: " + jsonStringArray(r.cfg.ACPAllowedRoots),
 		}})
 		// 只保留工具 description 不易单独压住的契约：异步观察、权限 option 白名单。
 		rules = append(rules,
@@ -58,14 +56,6 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 	)
 
 	return Result{"context": renderAgentDockContext(sections)}, nil
-}
-
-func jsonStringArray(values []string) string {
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		return "[]"
-	}
-	return string(encoded)
 }
 
 func (r *Runtime) agentDockContextTool(ctx context.Context, _ map[string]any) (Result, error) {

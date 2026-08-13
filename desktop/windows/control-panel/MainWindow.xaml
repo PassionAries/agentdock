@@ -194,7 +194,6 @@
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <CheckBox x:Name="AcpEnabledCheckBox" Grid.ColumnSpan="3" Content="启用 Coding Agent" Margin="0,4,0,12" Checked="AcpSetting_Changed" Unchecked="AcpSetting_Changed" />
                 <TextBlock Grid.Row="1" Text="Agent" VerticalAlignment="Center" Margin="0,0,0,10" />
@@ -203,11 +202,8 @@
                   <ComboBoxItem Content="Claude" Tag="claude" />
                   <ComboBoxItem Content="Grok Build" Tag="grok" />
                 </ComboBox>
-                <TextBlock Grid.Row="2" Text="允许目录" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBox x:Name="AcpAllowedRootTextBox" Grid.Row="2" Grid.Column="1" Margin="0,0,8,10" TextChanged="AcpSetting_Changed" />
-                <Button x:Name="AcpBrowseButton" Grid.Row="2" Grid.Column="2" Content="选择目录" Margin="0,0,0,10" Click="AcpBrowseButton_Click" />
-                <TextBlock Grid.Row="3" Text="状态" VerticalAlignment="Top" />
-                <TextBlock x:Name="AcpStatusText" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Foreground="#667085" Text="未启用" TextWrapping="Wrap" />
+                <TextBlock Grid.Row="2" Text="状态" VerticalAlignment="Top" />
+                <TextBlock x:Name="AcpStatusText" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Foreground="#667085" Text="未启用" TextWrapping="Wrap" />
               </Grid>
             </GroupBox>
 

@@ -102,10 +102,10 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 			acpEnvironment[childName] = value
 		}
 		manager, err := acpruntime.NewManager(acpruntime.Options{
-			Home: cfg.AgentDockHome,
+			Home:       cfg.AgentDockHome,
+			DefaultCWD: cfg.AgentDockDefaultDir,
 			Agent: acpruntime.AgentSpec{
-				Name: cfg.ACPAgentName, Command: cfg.ACPCommand, Args: append([]string(nil), cfg.ACPArgs...),
-				AllowedRoots: append([]string(nil), cfg.ACPAllowedRoots...), Environment: acpEnvironment,
+				Name: cfg.ACPAgentName, Command: cfg.ACPCommand, Args: append([]string(nil), cfg.ACPArgs...), Environment: acpEnvironment,
 			},
 			MaxConcurrentRuns:  cfg.ACPMaxPrompts,
 			InteractionTimeout: time.Duration(cfg.ACPInteractionMS) * time.Millisecond,
@@ -225,7 +225,6 @@ func (r *Runtime) serverInfo() Result {
 		"browser_enabled":     r.cfg.BrowserEnabled,
 		"acp_enabled":         r.cfg.ACPEnabled,
 		"acp_agent":           r.cfg.ACPAgentName,
-		"acp_allowed_roots":   append([]string(nil), r.cfg.ACPAllowedRoots...),
 		"trusted_proxy_cidrs": append([]string(nil), r.cfg.TrustedProxyCIDRs...),
 
 		"auth_enabled":  r.authEnabled(),

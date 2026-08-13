@@ -39,15 +39,14 @@ var managedCoreEnvironment = []string{
 }
 
 type controlPanelSettings struct {
-	Port            int      `json:"port"`
-	LogLevel        string   `json:"log_level"`
-	NexusEndpoint   string   `json:"nexus_endpoint"`
-	BrowserEnabled  bool     `json:"browser_enabled"`
-	ACPEnabled      bool     `json:"acp_enabled"`
-	ACPAgent        string   `json:"acp_agent"`
-	ACPCommand      string   `json:"acp_command"`
-	ACPArgs         []string `json:"acp_args"`
-	ACPAllowedRoots []string `json:"acp_allowed_roots"`
+	Port           int      `json:"port"`
+	LogLevel       string   `json:"log_level"`
+	NexusEndpoint  string   `json:"nexus_endpoint"`
+	BrowserEnabled bool     `json:"browser_enabled"`
+	ACPEnabled     bool     `json:"acp_enabled"`
+	ACPAgent       string   `json:"acp_agent"`
+	ACPCommand     string   `json:"acp_command"`
+	ACPArgs        []string `json:"acp_args"`
 }
 
 func platformPrepareCoreEnvironment(runtimeRoot string) error {
@@ -98,15 +97,6 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("Coding Agent 命令不是普通文件: %s", settings.ACPCommand)
 		}
-		for _, root := range settings.ACPAllowedRoots {
-			rootInfo, rootErr := os.Stat(root)
-			if rootErr != nil {
-				return fmt.Errorf("读取 Coding Agent 允许目录失败 %s: %w", root, rootErr)
-			}
-			if !rootInfo.IsDir() {
-				return fmt.Errorf("Coding Agent 允许目录不是文件夹: %s", root)
-			}
-		}
 		argsJSON, marshalErr := json.Marshal(settings.ACPArgs)
 		if marshalErr != nil {
 			return fmt.Errorf("编码 Coding Agent 参数失败: %w", marshalErr)
@@ -114,7 +104,6 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		managed["AGENTDOCK_ACP_AGENT"] = settings.ACPAgent
 		managed["AGENTDOCK_ACP_COMMAND"] = settings.ACPCommand
 		managed["AGENTDOCK_ACP_ARGS_JSON"] = string(argsJSON)
-		managed["AGENTDOCK_ACP_ALLOWED_ROOTS"] = strings.Join(settings.ACPAllowedRoots, ",")
 	}
 
 	serverURL, err := readTrimmedText(filepath.Join(root, "server-url.txt"))
@@ -175,13 +164,6 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 	if settings.ACPCommand != "" {
 		settings.ACPCommand = filepath.Clean(settings.ACPCommand)
 	}
-	roots := make([]string, 0, len(settings.ACPAllowedRoots))
-	for _, root := range settings.ACPAllowedRoots {
-		if cleaned := strings.TrimSpace(root); cleaned != "" {
-			roots = append(roots, filepath.Clean(cleaned))
-		}
-	}
-	settings.ACPAllowedRoots = roots
 	if settings.ACPEnabled {
 		switch settings.ACPAgent {
 		case "codex", "claude", "grok":
@@ -190,9 +172,6 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 		}
 		if !filepath.IsAbs(settings.ACPCommand) {
 			return controlPanelSettings{}, fmt.Errorf("Coding Agent 命令必须是绝对路径: %s", settings.ACPCommand)
-		}
-		if len(settings.ACPAllowedRoots) == 0 {
-			return controlPanelSettings{}, errors.New("Coding Agent 允许目录不能为空")
 		}
 	}
 	return settings, nil

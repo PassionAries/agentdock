@@ -337,40 +337,6 @@ enum ACPAgentPreset: String, CaseIterable {
 }
 
 struct ACPDesktopConfiguration {
-    static func parseAllowedRoots(_ raw: String) -> [String] {
-        raw.split(separator: ",", omittingEmptySubsequences: true)
-            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
-
-    static func validateAllowedRoots(_ roots: [String]) throws -> [String] {
-        guard !roots.isEmpty else {
-            throw ValidationError("请至少选择一个 Coding Agent 可访问的目录。")
-        }
-
-        var validated: [String] = []
-        var seen = Set<String>()
-        for rawRoot in roots {
-            let root = rawRoot.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard root.hasPrefix("/") else {
-                throw ValidationError("Coding Agent 允许目录必须是绝对路径。")
-            }
-            let resolved = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
-            guard resolved != "/" else {
-                throw ValidationError("不能把整个文件系统作为 Coding Agent 允许目录。")
-            }
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory),
-                  isDirectory.boolValue else {
-                throw ValidationError("Coding Agent 允许目录不存在：\(root)")
-            }
-            if seen.insert(resolved).inserted {
-                validated.append(resolved)
-            }
-        }
-        return validated
-    }
-
     static func encodeArguments(_ arguments: [String]) throws -> String {
         let data = try JSONEncoder().encode(arguments)
         guard let value = String(data: data, encoding: .utf8) else {

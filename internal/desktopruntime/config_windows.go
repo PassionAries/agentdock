@@ -118,15 +118,14 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	}
 
 	settings := controlPanelSettings{
-		Port:            request.Port,
-		LogLevel:        request.LogLevel,
-		NexusEndpoint:   request.NexusEndpoint,
-		BrowserEnabled:  request.BrowserEnabled,
-		ACPEnabled:      request.ACPEnabled,
-		ACPAgent:        request.ACPAgent,
-		ACPCommand:      acpAdapter.Command,
-		ACPArgs:         append([]string(nil), acpAdapter.Args...),
-		ACPAllowedRoots: append([]string(nil), request.ACPAllowedRoots...),
+		Port:           request.Port,
+		LogLevel:       request.LogLevel,
+		NexusEndpoint:  request.NexusEndpoint,
+		BrowserEnabled: request.BrowserEnabled,
+		ACPEnabled:     request.ACPEnabled,
+		ACPAgent:       request.ACPAgent,
+		ACPCommand:     acpAdapter.Command,
+		ACPArgs:        append([]string(nil), acpAdapter.Args...),
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

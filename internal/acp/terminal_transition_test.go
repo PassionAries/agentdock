@@ -53,7 +53,7 @@ func TestTerminalTransitionWaitsForSessionOperations(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	created, err := manager.NewSession(context.Background(), manager.opts.Agent.AllowedRoots[0], nil)
+	created, err := manager.NewSession(context.Background(), manager.opts.DefaultCWD, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestTerminalTransitionCancellationRollsBackMarker(t *testing.T) {
 	}
 	defer func() { _ = manager.Close() }()
 
-	created, err := manager.NewSession(context.Background(), manager.opts.Agent.AllowedRoots[0], nil)
+	created, err := manager.NewSession(context.Background(), manager.opts.DefaultCWD, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

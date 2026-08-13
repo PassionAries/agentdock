@@ -78,9 +78,6 @@ public sealed class ControlPanelSettings
 
     [JsonPropertyName("acp_args")]
     public List<string> AcpArgs { get; set; } = [];
-
-    [JsonPropertyName("acp_allowed_roots")]
-    public List<string> AcpAllowedRoots { get; set; } = [];
 }
 
 public sealed class CoreVersionInfo

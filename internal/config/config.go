@@ -49,7 +49,6 @@ type Config struct {
 	ACPCommand                   string
 	ACPArgs                      []string
 	ACPEnvFromEnv                map[string]string
-	ACPAllowedRoots              []string
 	ACPMaxPrompts                int
 	ACPInteractionMS             int
 	Stdio                        bool
@@ -87,13 +86,11 @@ func FromEnv() (Config, error) {
 	var acpEnvFromEnv map[string]string
 	acpAgentName := "claude"
 	acpCommand := ""
-	var acpAllowedRoots []string
 	acpMaxPrompts := 2
 	acpInteractionMS := 300000
 	if acpEnabled {
 		acpAgentName = getenv("AGENTDOCK_ACP_AGENT", acpAgentName)
 		acpCommand = os.Getenv("AGENTDOCK_ACP_COMMAND")
-		acpAllowedRoots = splitCommaSeparated(os.Getenv("AGENTDOCK_ACP_ALLOWED_ROOTS"))
 		acpArgs, err = getenvStringSliceJSON("AGENTDOCK_ACP_ARGS_JSON")
 		if err != nil {
 			return Config{}, err
@@ -131,7 +128,6 @@ func FromEnv() (Config, error) {
 		ACPCommand:                   acpCommand,
 		ACPArgs:                      acpArgs,
 		ACPEnvFromEnv:                acpEnvFromEnv,
-		ACPAllowedRoots:              acpAllowedRoots,
 		ACPMaxPrompts:                acpMaxPrompts,
 		ACPInteractionMS:             acpInteractionMS,
 		Stdio:                        stdio,
@@ -373,7 +369,6 @@ func (c *Config) normalizeACP() error {
 		c.ACPCommand = ""
 		c.ACPArgs = nil
 		c.ACPEnvFromEnv = nil
-		c.ACPAllowedRoots = nil
 		c.ACPMaxPrompts = 2
 		c.ACPInteractionMS = 300000
 		return nil
@@ -417,47 +412,6 @@ func (c *Config) normalizeACP() error {
 	if err := validateACPCommandPlatform(c.ACPCommand, info); err != nil {
 		return err
 	}
-	if len(c.ACPAllowedRoots) == 0 {
-		return errors.New("AGENTDOCK_ACP_ALLOWED_ROOTS must contain at least one directory when ACP is enabled")
-	}
-	if len(c.ACPAllowedRoots) > 64 {
-		return fmt.Errorf("AGENTDOCK_ACP_ALLOWED_ROOTS contains %d directories; maximum is 64", len(c.ACPAllowedRoots))
-	}
-	roots := make([]string, 0, len(c.ACPAllowedRoots))
-	rootInfos := make([]os.FileInfo, 0, len(c.ACPAllowedRoots))
-	for _, raw := range c.ACPAllowedRoots {
-		cleaned := filepath.Clean(strings.TrimSpace(raw))
-		if !filepath.IsAbs(cleaned) {
-			return fmt.Errorf("AGENTDOCK_ACP_ALLOWED_ROOTS contains a non-absolute path: %s", raw)
-		}
-		realRoot, err := filepath.EvalSymlinks(cleaned)
-		if err != nil {
-			return fmt.Errorf("resolve ACP allowed root %s: %w", cleaned, err)
-		}
-		if filepath.Dir(realRoot) == realRoot {
-			return fmt.Errorf("refusing to use filesystem root as an ACP allowed root: %s", realRoot)
-		}
-		info, err := os.Stat(realRoot)
-		if err != nil {
-			return fmt.Errorf("stat ACP allowed root %s: %w", realRoot, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("ACP allowed root is not a directory: %s", realRoot)
-		}
-		duplicate := false
-		for _, existing := range rootInfos {
-			if os.SameFile(existing, info) {
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		rootInfos = append(rootInfos, info)
-		roots = append(roots, realRoot)
-	}
-	c.ACPAllowedRoots = roots
 	return nil
 }
 
