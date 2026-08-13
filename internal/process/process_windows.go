@@ -20,7 +20,7 @@ type Controller struct {
 }
 
 // Configure 在后台子进程启动前禁用控制台窗口，同时保留调用方已有的创建标志。
-// 标准命令、ACP 和 stdio MCP 都通过该入口启动；交互式 ConPTY 使用独立路径。
+// 标准命令、WSL 文件辅助进程和 stdio MCP 通过该入口启动；ACP 为兼容 Windows sandbox 使用独立启动策略。
 func Configure(cmd *exec.Cmd) {
 	if cmd == nil {
 		return

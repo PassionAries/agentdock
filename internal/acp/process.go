@@ -46,7 +46,7 @@ func startAgentProcess(ctx context.Context, spec AgentSpec, defaultCWD string, r
 		_ = stdout.Close()
 		return nil, newError("ACP_START_FAILED", "open ACP stdin", false, map[string]any{"agent": spec.Name}, err)
 	}
-	processcontrol.Configure(command)
+	configureAgentCommand(command)
 	if err := command.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
