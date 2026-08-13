@@ -99,6 +99,7 @@ type SessionRecord struct {
 	RemoteSessionID       string        `json:"remote_session_id"`
 	CWD                   string        `json:"cwd"`
 	AdditionalDirectories []string      `json:"additional_directories,omitempty"`
+	ModeID                string        `json:"mode_id,omitempty"`
 	Status                SessionStatus `json:"status"`
 	LastStopReason        string        `json:"last_stop_reason,omitempty"`
 	CreatedAt             time.Time     `json:"created_at"`

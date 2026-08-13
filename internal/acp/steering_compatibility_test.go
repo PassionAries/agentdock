@@ -132,3 +132,75 @@ func TestClaudeSteeringResetFailureInterruptsSession(t *testing.T) {
 		t.Fatal("failed steering reset retained loaded-session cache")
 	}
 }
+
+func TestCodexSteeringCompatibilityVersionBoundary(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{version: "1.1.9", want: true},
+		{version: "1.1.8", want: true},
+		{version: "1.2.0", want: false},
+		{version: "2.0.0", want: false},
+		{version: "development", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.version, func(t *testing.T) {
+			got := requiresHostSteeringFallback(AgentInfo{Name: codexACPName, Version: test.version})
+			if got != test.want {
+				t.Fatalf("fallback(%q) = %v, want %v", test.version, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCodexNoRolloutCompatibilityIsExact(t *testing.T) {
+	matching := newError("ACP_REMOTE_ERROR", "Internal error", false, map[string]any{
+		"rpc_code": -32603,
+		"rpc_data": `{"details":"no rollout found for thread id test"}`,
+	}, nil)
+	if !isCodexNoRolloutError(AgentInfo{Name: codexACPName, Version: "1.1.9"}, matching) {
+		t.Fatal("confirmed Codex 1.1.9 no-rollout error was not recognized")
+	}
+	if isCodexNoRolloutError(AgentInfo{Name: codexACPName, Version: "1.2.0"}, matching) {
+		t.Fatal("future Codex release inherited the 1.1.9 compatibility rule")
+	}
+	other := newError("ACP_REMOTE_ERROR", "Internal error", false, map[string]any{"rpc_data": `{"details":"other"}`}, nil)
+	if isCodexNoRolloutError(AgentInfo{Name: codexACPName, Version: "1.1.9"}, other) {
+		t.Fatal("unrelated Codex remote error was swallowed")
+	}
+}
+
+func TestCodexSteeringFallbackCancelsOldRunAndStartsObservableTurn(t *testing.T) {
+	workspace := t.TempDir()
+	manager, err := newTestManagerWithAgent(t.TempDir(), workspace, codexACPName, "1.1.9", "claude_steer_fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	created, err := manager.NewSession(context.Background(), workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := manager.StartPrompt(context.Background(), created.Session.ID, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steering, err := manager.Steer(context.Background(), created.Session.ID, "STEERED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steering["outcome"] != "startedNewTurn" || steering["reason"] != "codex_streaming_compatibility" || steering["cancelledRunId"] != original.RunID {
+		t.Fatalf("steering result = %#v", steering)
+	}
+	newRunID, _ := steering["runId"].(string)
+	cancelled := waitForSettledRun(t, manager, original.RunID)
+	if cancelled.Status != RunCancelled {
+		t.Fatalf("original run = %#v", cancelled)
+	}
+	completed := waitForSettledRun(t, manager, newRunID)
+	if completed.Status != RunCompleted {
+		t.Fatalf("fallback run = %#v", completed)
+	}
+}

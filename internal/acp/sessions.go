@@ -111,7 +111,14 @@ func (m *Manager) LoadSession(ctx context.Context, id string) (SessionResult, er
 		}
 		params := sessionActivationParams(record)
 		if err := process.connection.Request(ctx, "session/load", params, &response); err != nil {
-			return SessionResult{}, process.wrapError("load ACP session", err)
+			wrapped := process.wrapError("load ACP session", err)
+			if isCodexNoRolloutError(process.initialize.AgentInfo, wrapped) {
+				return SessionResult{}, newError("ACP_SESSION_NOT_PERSISTED", "ACP session has no persisted remote turn to load", false, map[string]any{"session_id": id}, wrapped)
+			}
+			return SessionResult{}, wrapped
+		}
+		if err := m.restoreSessionMode(ctx, process, record, &response); err != nil {
+			return SessionResult{}, err
 		}
 	}
 	record, err = m.markSessionReady(record, response)
@@ -135,6 +142,16 @@ func (m *Manager) ResumeSession(ctx context.Context, id string) (SessionResult, 
 	if err != nil {
 		return SessionResult{}, err
 	}
+	m.mu.RLock()
+	loadedState, alreadyLoaded := m.loaded[id]
+	m.mu.RUnlock()
+	if alreadyLoaded {
+		record, err = m.markSessionReady(record, loadedState)
+		if err != nil {
+			return SessionResult{}, err
+		}
+		return SessionResult{Session: record, Modes: loadedState.Modes, ConfigOptions: loadedState.ConfigOptions, Agent: process.initialize.AgentInfo}, nil
+	}
 	if !process.supportsSessionCapability("resume") {
 		return SessionResult{}, capabilityError("sessionCapabilities.resume")
 	}
@@ -143,7 +160,14 @@ func (m *Manager) ResumeSession(ctx context.Context, id string) (SessionResult, 
 	}
 	var response sessionLifecycleResponse
 	if err := process.connection.Request(ctx, "session/resume", sessionActivationParams(record), &response); err != nil {
-		return SessionResult{}, process.wrapError("resume ACP session", err)
+		wrapped := process.wrapError("resume ACP session", err)
+		if isCodexNoRolloutError(process.initialize.AgentInfo, wrapped) {
+			return SessionResult{}, newError("ACP_SESSION_NOT_PERSISTED", "ACP session has no persisted remote turn to resume", false, map[string]any{"session_id": id}, wrapped)
+		}
+		return SessionResult{}, wrapped
+	}
+	if err := m.restoreSessionMode(ctx, process, record, &response); err != nil {
+		return SessionResult{}, err
 	}
 	record, err = m.markSessionReady(record, response)
 	if err != nil {
@@ -231,16 +255,17 @@ func (m *Manager) SetSessionMode(ctx context.Context, id, modeID string) error {
 		return process.wrapError("set ACP session mode", err)
 	}
 	m.mu.Lock()
-	if state, loaded := m.loaded[id]; loaded {
-		if modes, ok := state.Modes.(map[string]any); ok {
-			updated := make(map[string]any, len(modes))
-			for key, value := range modes {
-				updated[key] = value
-			}
-			updated["currentModeId"] = modeID
-			state.Modes = updated
-			m.loaded[id] = state
-		}
+	current := m.sessions[id]
+	current.ModeID = modeID
+	current.UpdatedAt = time.Now().UTC()
+	if err := m.store.Save(current); err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	m.sessions[id] = current
+	if state, ok := m.loaded[id]; ok {
+		applyModeToLifecycleState(&state, modeID)
+		m.loaded[id] = state
 	}
 	m.mu.Unlock()
 	return nil
@@ -367,7 +392,10 @@ func (m *Manager) DeleteSession(ctx context.Context, id string) error {
 	}
 	if process.supportsSessionCapability("delete") {
 		if err := process.connection.Request(ctx, "session/delete", map[string]any{"sessionId": record.RemoteSessionID}, nil); err != nil {
-			return process.wrapError("delete ACP session", err)
+			wrapped := process.wrapError("delete ACP session", err)
+			if !isCodexNoRolloutError(process.initialize.AgentInfo, wrapped) {
+				return wrapped
+			}
 		}
 	}
 	if err := m.store.Delete(id); err != nil {
@@ -441,6 +469,52 @@ func (m *Manager) sessionForActivation(id string) (SessionRecord, error) {
 	}
 	record.AdditionalDirectories = additional
 	return record, nil
+}
+
+func currentModeID(modes any) string {
+	modeState, _ := modes.(map[string]any)
+	modeID, _ := modeState["currentModeId"].(string)
+	return strings.TrimSpace(modeID)
+}
+
+func applyModeToLifecycleState(state *sessionLifecycleResponse, modeID string) {
+	if state == nil || strings.TrimSpace(modeID) == "" {
+		return
+	}
+	if modes, ok := state.Modes.(map[string]any); ok {
+		updated := make(map[string]any, len(modes))
+		for key, value := range modes {
+			updated[key] = value
+		}
+		updated["currentModeId"] = modeID
+		state.Modes = updated
+	}
+	if options, ok := state.ConfigOptions.([]any); ok {
+		for _, raw := range options {
+			if option, ok := raw.(map[string]any); ok && option["id"] == "mode" {
+				option["currentValue"] = modeID
+			}
+		}
+	}
+	if options, ok := state.ConfigOptions.([]map[string]any); ok {
+		for _, option := range options {
+			if option["id"] == "mode" {
+				option["currentValue"] = modeID
+			}
+		}
+	}
+}
+
+func (m *Manager) restoreSessionMode(ctx context.Context, process *agentProcess, record SessionRecord, state *sessionLifecycleResponse) error {
+	modeID := strings.TrimSpace(record.ModeID)
+	if modeID == "" || currentModeID(state.Modes) == modeID {
+		return nil
+	}
+	if err := process.connection.Request(ctx, "session/set_mode", map[string]any{"sessionId": record.RemoteSessionID, "modeId": modeID}, nil); err != nil {
+		return process.wrapError("restore ACP session mode", err)
+	}
+	applyModeToLifecycleState(state, modeID)
+	return nil
 }
 
 func (m *Manager) markSessionReady(record SessionRecord, state sessionLifecycleResponse) (SessionRecord, error) {

@@ -260,7 +260,7 @@ func (m *Manager) Steer(ctx context.Context, sessionID, text string) (map[string
 		return nil, capabilityError("_meta.steering.supported")
 	}
 	if requiresHostSteeringFallback(process.initialize.AgentInfo) {
-		return m.startHostOwnedSteering(ctx, process, record, text, "claude_ede_compatibility")
+		return m.startHostOwnedSteering(ctx, process, record, text, hostSteeringFallbackReason(process.initialize.AgentInfo))
 	}
 	var result map[string]any
 	if err := process.connection.Request(ctx, "_session/steering", map[string]any{
@@ -299,6 +299,10 @@ func (m *Manager) startHostOwnedSteering(ctx context.Context, process *agentProc
 		if err := process.connection.Request(ctx, "session/load", sessionActivationParams(record), &loaded); err != nil {
 			m.markSessionInterrupted(record, "steering_reload_failed")
 			return nil, process.wrapError("reload ACP session after steering cancellation", err)
+		}
+		if err := m.restoreSessionMode(ctx, process, record, &loaded); err != nil {
+			m.markSessionInterrupted(record, "steering_mode_restore_failed")
+			return nil, err
 		}
 		if _, err := m.markSessionReady(record, loaded); err != nil {
 			return nil, err

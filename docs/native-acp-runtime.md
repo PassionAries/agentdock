@@ -186,7 +186,7 @@ Action-based prompt execution entry point:
 
 - `start`: validate and load the session, acquire a concurrency slot, start `session/prompt` in an AgentDock-owned background goroutine, and return an `acpr_*` run ID immediately.
 - `events`: return events after `after_seq`; optional long polling is capped at 25 seconds.
-- `steer`: use the adapter's advertised steering extension. An idle `promptRequired` outcome is converted into a standard, observable prompt run. For `@agentclientprotocol/claude-agent-acp` releases through `0.64.2`, whose injected steering can settle the owning prompt with an SDK EDE diagnostic, AgentDock uses a narrow compatibility path: cancel the old run, remotely close and reload the same transcript-backed session, then start a standard prompt and return its new `runId` together with the cancelled run id.
+- `steer`: use the adapter's advertised steering extension. An idle `promptRequired` outcome is converted into a standard, observable prompt run. For adapter releases with confirmed broken injection semantics, AgentDock uses a narrow version-gated compatibility path: cancel the old run, remotely close and reload the same transcript-backed session, restore the persisted session mode, then start a standard prompt and return its new `runId` together with the cancelled run id.
 - `cancel`: emit `session/cancel` and cancel the local request context.
 
 A session has at most one active prompt. The global limit is host-configurable.
@@ -238,6 +238,7 @@ Cancellation and timeout use:
 Compatibility handling is gated by the exact initialized adapter identity and release boundary; configuration profile names never activate it.
 
 - `@agentclientprotocol/codex-acp` can report a failed App Server turn as a normal ACP `end_turn` after emitting the remote failure text as an `agent_message_chunk`. AgentDock promotes this to `ACP_REMOTE_ERROR` only when a machine-readable retry error was observed and the final assistant chunk exactly matches that error. A retry followed by a different, normal assistant result remains completed.
+- `@agentclientprotocol/codex-acp` through `1.1.9` can report steering as `injected` while an already-streaming final answer continues unchanged. AgentDock uses the observable host-owned steering fallback for those releases. The same releases can return `no rollout found for thread id` when deleting a fresh session that never completed a turn; AgentDock treats that exact delete result as already deleted, while load/resume after restart returns `ACP_SESSION_NOT_PERSISTED` instead of exposing the adapter's generic internal error.
 - `@agentclientprotocol/claude-agent-acp` through `0.64.2` advertises injected steering but the bundled SDK can terminate the owning prompt with an EDE diagnostic. AgentDock avoids that broken injection path and returns an observable replacement run after a standard close/load lifecycle reset. Later versions automatically use native injected steering.
 
 These guards do not patch adapter packages or inspect private transcript files. Unknown versions fail open to the negotiated protocol behavior instead of accumulating permanent vendor-specific assumptions.
@@ -257,6 +258,7 @@ Records are written atomically with private permissions and contain only:
 - local and remote session identifiers;
 - profile name;
 - canonical workspace directory and additional directories;
+- the last explicitly selected session mode, so adapters that reset mode during load/resume can be normalized after recovery;
 - lifecycle status and stop reason;
 - timestamps.
 

@@ -718,10 +718,14 @@ func TestACPHelperProcess(t *testing.T) {
 				"configOptions": []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": true}},
 			})
 		case "session/load", "session/resume":
-			writeHelperResult(encoder, message.ID, map[string]any{
-				"modes":         map[string]any{"currentModeId": "code", "availableModes": []any{}},
-				"configOptions": []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": true}},
-			})
+			if promptMode == "codex_no_rollout" {
+				_ = encoder.Encode(rpcMessage{JSONRPC: "2.0", ID: message.ID, Error: &rpcError{Code: -32603, Message: "Internal error", Data: testMarshalRaw(map[string]any{"details": "no rollout found for thread id remote"})}})
+			} else {
+				writeHelperResult(encoder, message.ID, map[string]any{
+					"modes":         map[string]any{"currentModeId": "code", "availableModes": []any{}},
+					"configOptions": []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": true}},
+				})
+			}
 		case "session/fork":
 			remoteCount++
 			writeHelperResult(encoder, message.ID, map[string]any{"sessionId": "remote-" + strconv.Itoa(remoteCount)})
@@ -738,7 +742,11 @@ func TestACPHelperProcess(t *testing.T) {
 				writeHelperResult(encoder, message.ID, map[string]any{})
 			}
 		case "session/delete":
-			writeHelperResult(encoder, message.ID, map[string]any{})
+			if promptMode == "codex_no_rollout" {
+				_ = encoder.Encode(rpcMessage{JSONRPC: "2.0", ID: message.ID, Error: &rpcError{Code: -32603, Message: "Internal error", Data: testMarshalRaw(map[string]any{"details": "no rollout found for thread id remote"})}})
+			} else {
+				writeHelperResult(encoder, message.ID, map[string]any{})
+			}
 		case "_session/steering":
 			if promptMode == "steering_prompt_required" {
 				writeHelperResult(encoder, message.ID, map[string]any{"outcome": "promptRequired", "reason": "noRunningTurn"})
@@ -891,4 +899,110 @@ func testMarshalRaw(value any) json.RawMessage {
 		panic(err)
 	}
 	return data
+}
+
+func TestSessionModePersistsAndIsRestoredAfterManagerRestart(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	manager, err := newTestManagerWithAgent(home, workspace, "helper-acp", "1.0.0", "permission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.NewSession(context.Background(), workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetSessionMode(context.Background(), created.Session.ID, "review"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := manager.InspectSession(created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ModeID != "review" {
+		t.Fatalf("stored mode = %q, want review", stored.ModeID)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := newTestManagerWithAgent(home, workspace, "helper-acp", "1.0.0", "permission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restarted.Close() }()
+	resumed, err := restarted.ResumeSession(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionModeID(t, resumed.Modes); got != "review" {
+		t.Fatalf("resumed mode = %q, want review", got)
+	}
+	if resumed.Session.ModeID != "review" {
+		t.Fatalf("resumed stored mode = %q, want review", resumed.Session.ModeID)
+	}
+}
+
+func TestApplyModeToLifecycleStateKeepsModeViewsConsistent(t *testing.T) {
+	state := sessionLifecycleResponse{
+		Modes: map[string]any{"currentModeId": "agent", "availableModes": []any{}},
+		ConfigOptions: []any{
+			map[string]any{"id": "mode", "currentValue": "agent"},
+			map[string]any{"id": "model", "currentValue": "test"},
+		},
+	}
+	applyModeToLifecycleState(&state, "read-only")
+	if got := sessionModeID(t, state.Modes); got != "read-only" {
+		t.Fatalf("mode view = %q", got)
+	}
+	options := state.ConfigOptions.([]any)
+	if got := options[0].(map[string]any)["currentValue"]; got != "read-only" {
+		t.Fatalf("mode config option = %#v", got)
+	}
+	if got := options[1].(map[string]any)["currentValue"]; got != "test" {
+		t.Fatalf("unrelated config option changed = %#v", got)
+	}
+}
+
+func TestCodexNoRolloutDeleteIsTreatedAsAlreadyDeleted(t *testing.T) {
+	workspace := t.TempDir()
+	manager, err := newTestManagerWithAgent(t.TempDir(), workspace, codexACPName, "1.1.9", "codex_no_rollout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = manager.Close() }()
+	created, err := manager.NewSession(context.Background(), workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DeleteSession(context.Background(), created.Session.ID); err != nil {
+		t.Fatalf("delete no-rollout session: %v", err)
+	}
+	if _, err := manager.InspectSession(created.Session.ID); errorCode(err) != "ACP_SESSION_NOT_FOUND" {
+		t.Fatalf("deleted session inspect error = %#v", err)
+	}
+}
+
+func TestCodexNoRolloutResumeAfterRestartReturnsExplicitError(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	manager, err := newTestManagerWithAgent(home, workspace, codexACPName, "1.1.9", "codex_no_rollout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.NewSession(context.Background(), workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newTestManagerWithAgent(home, workspace, codexACPName, "1.1.9", "codex_no_rollout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restarted.Close() }()
+	if _, err := restarted.ResumeSession(context.Background(), created.Session.ID); errorCode(err) != "ACP_SESSION_NOT_PERSISTED" {
+		t.Fatalf("resume no-rollout error = %#v", err)
+	}
 }
