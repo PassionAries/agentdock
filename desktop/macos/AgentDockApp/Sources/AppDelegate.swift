@@ -29,9 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("AgentDock 更新结果存在但无法解析，保留后台服务事务状态等待回滚。")
             refreshStatus(showWindow: !launchedInBackground)
         } else {
-            // update-services.json 只属于正在进行的 App 更新事务；没有 pending result 时
-            // 它就是上一次异常/无更新路径留下的陈旧状态，不能继续影响后台服务。
+            // 没有 pending result 时，更新协调文件只能是上一次已结束流程留下的临时状态。
             DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
+            DesktopUpdateHandoff.remove(at: service.paths.updateHandoff)
             refreshStatus(showWindow: !launchedInBackground)
             Task {
                 do {
@@ -55,11 +55,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func restoreBackgroundServicesAfterUpdate(_ pendingResult: DesktopUpdateResult) {
         Task {
+            var handoffAcknowledged = false
             do {
                 guard let serviceState = try DesktopUpdateServiceState.load(from: service.paths.updateServiceState) else {
                     throw ValidationError("AgentDock 更新缺少后台服务恢复状态。")
                 }
-                try await service.reregisterBackgroundServices(
+
+                // 先恢复 SMAppService 注册，确认新版 Bundle 的后台服务定义可以被系统接受。
+                // handoff ACK 随后立即发出；真正的 Core/Tunnel 进程 ready 仍由 launchd 异步完成，
+                // 不能再用它们的启动速度决定是否回滚一个已经接管成功的新 App。
+                try service.restoreBackgroundServiceRegistrations(
+                    coreEnabled: serviceState.coreEnabled,
+                    tunnelEnabled: serviceState.tunnelEnabled
+                )
+                if pendingResult.ok {
+                    try DesktopUpdateHandoff(targetVersion: pendingResult.targetVersion).write(to: service.paths.updateHandoff)
+                    handoffAcknowledged = true
+                }
+
+                let recoveryWarnings = await service.backgroundServiceRecoveryWarnings(
                     coreEnabled: serviceState.coreEnabled,
                     tunnelEnabled: serviceState.tunnelEnabled
                 )
@@ -69,22 +83,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
 
                 // 更新事务恢复的是升级前的瞬时注册状态；公网 mode 才是 Tunnel 的长期意图。
-                // 收敛失败不回滚已经成功安装的新版本，但必须随更新结果明确提示用户。
-                var tunnelRecoveryWarning: String?
+                // 注册已恢复但服务仍在启动时只提示，不把正常的 macOS 启动延迟升级成回滚。
+                var warnings = recoveryWarnings
                 do {
                     try await service.reconcileTunnelRegistrationFromConfiguration()
                 } catch {
-                    tunnelRecoveryWarning = "Tunnel 未能按当前公网模式恢复：\(error.localizedDescription)"
+                    warnings.append("Tunnel 未能按当前公网模式恢复：\(error.localizedDescription)")
                     NSLog("AgentDock 更新后 Tunnel 状态收敛失败：%@", error.localizedDescription)
                 }
-                self.presentUpdateResult(result, warning: tunnelRecoveryWarning)
+                self.presentUpdateResult(result, warning: warnings.isEmpty ? nil : warnings.joined(separator: "\n"))
             } catch {
-                // 成功更新结果只有在新版后台服务恢复后才消费。结果文件保持存在时，
-                // 外部更新事务会超时并自动恢复旧 App。
                 NSLog("AgentDock 更新后后台服务恢复失败：%@", error.localizedDescription)
-                if !pendingResult.ok {
+                if pendingResult.ok, handoffAcknowledged {
+                    // handoff 已经确认新版 App 本身可运行；保留 result/service-state，让下次启动
+                    // 可以继续恢复后台服务，而不是把瞬时 SMAppService 故障变成整包回滚。
+                    self.presentUpdateResult(
+                        pendingResult,
+                        warning: "后台服务尚未恢复，将在下次启动继续尝试：\(error.localizedDescription)"
+                    )
+                } else if !pendingResult.ok {
                     self.presentAlert(title: "AgentDock 恢复失败", message: error.localizedDescription)
                 }
+                self.refreshStatus()
             }
         }
     }

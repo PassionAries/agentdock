@@ -22,6 +22,7 @@ struct AppPaths {
     var quickTunnelURL: URL { appSupport.appendingPathComponent("quick-tunnel-url.txt") }
     var updateResult: URL { appSupport.appendingPathComponent("update-result.json") }
     var updateServiceState: URL { appSupport.appendingPathComponent("update-services.json") }
+    var updateHandoff: URL { appSupport.appendingPathComponent("update-handoff.json") }
     var updateLog: URL { appSupport.appendingPathComponent("update.log") }
     var logs: URL { home.appendingPathComponent("Library/Logs/AgentDock") }
     var workDirectory: URL { home.appendingPathComponent("AgentDock") }

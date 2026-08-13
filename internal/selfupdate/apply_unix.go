@@ -194,7 +194,7 @@ func applyDesktopOnlyUpdate(ctx context.Context, request applyRequest) (applyRes
 		Message:        fmt.Sprintf("AgentDock 已从 %s 更新到 %s。", request.CurrentVersion, request.TargetVersion),
 	}
 	if err := desktopUpdate.Finish(ctx, outcome); err != nil {
-		return applyResult{}, rollback(fmt.Errorf("新版 AgentDock.app 未确认后台服务恢复: %w", err))
+		return applyResult{}, rollback(fmt.Errorf("新版 AgentDock.app 未完成更新接管: %w", err))
 	}
 	if err := desktopUpdate.Commit(); err != nil {
 		fmt.Fprintf(request.Output, "警告：清理 AgentDock.app 更新备份失败: %v\n", err)

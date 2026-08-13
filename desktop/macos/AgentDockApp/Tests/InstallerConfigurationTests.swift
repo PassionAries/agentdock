@@ -109,6 +109,7 @@ struct InstallerConfigurationTests {
         try testTunnelTokenStore()
         try testDesktopUpdateResult()
         try testDesktopUpdateServiceState()
+        try testDesktopUpdateHandoff()
         try await testPublicEndpointChecker()
         print("installer configuration tests passed")
     }
@@ -146,6 +147,25 @@ struct InstallerConfigurationTests {
         let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
         precondition(permissions & 0o077 == 0)
         DesktopUpdateServiceState.remove(at: path)
+        precondition(!FileManager.default.fileExists(atPath: path.path))
+    }
+
+    private static func testDesktopUpdateHandoff() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentDockUpdateHandoffTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let path = root.appendingPathComponent("update-handoff.json")
+        try DesktopUpdateHandoff(targetVersion: "v0.7.1").write(to: path)
+
+        let data = try Data(contentsOf: path)
+        let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        precondition(payload?["schema_version"] as? Int == DesktopUpdateHandoff.schemaVersion)
+        precondition(payload?["target_version"] as? String == "v0.7.1")
+        let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0o777
+        precondition(permissions & 0o077 == 0)
+
+        DesktopUpdateHandoff.remove(at: path)
         precondition(!FileManager.default.fileExists(atPath: path.path))
     }
 

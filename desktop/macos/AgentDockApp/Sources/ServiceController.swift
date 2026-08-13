@@ -158,7 +158,14 @@ final class ServiceController: @unchecked Sendable {
         case .quick, .named:
             try setTunnelEnabled(true)
             if tunnelService.status == .enabled, !(await waitForTunnelProcess()) {
-                throw ValidationError("AgentDock Tunnel 配置要求公网运行，但后台进程没有稳定启动。")
+                // App Bundle 被原子替换后，macOS 偶尔仍把旧 SMAppService 注册显示为 enabled，
+                // 但 launchd 保存的 Bundle 关联已经失效。此时单纯再次 register 会直接 no-op；
+                // 必须完整注销并重新注册，效果等同于用户手动“仅本地 → 公网”但无需人工介入。
+                NSLog("AgentDock Tunnel 注册显示 enabled 但进程未稳定，开始自动重新注册。")
+                try restartTunnel()
+                guard await waitForTunnelProcess() else {
+                    throw ValidationError("AgentDock Tunnel 已重新注册，但后台进程没有稳定启动。")
+                }
             }
         }
     }
@@ -179,7 +186,7 @@ final class ServiceController: @unchecked Sendable {
         try reregister(service: tunnelService, label: Self.tunnelLabel, displayName: "AgentDock Tunnel")
     }
 
-    func reregisterBackgroundServices(coreEnabled: Bool, tunnelEnabled: Bool) async throws {
+    func restoreBackgroundServiceRegistrations(coreEnabled: Bool, tunnelEnabled: Bool) throws {
         if coreEnabled {
             try restoreRegistration(service: coreService, label: Self.coreLabel, displayName: "AgentDock Core")
         } else {
@@ -190,16 +197,29 @@ final class ServiceController: @unchecked Sendable {
         } else {
             try unregister(service: tunnelService, label: Self.tunnelLabel)
         }
+    }
+
+    func backgroundServiceRecoveryWarnings(coreEnabled: Bool, tunnelEnabled: Bool) async -> [String] {
+        // App Bundle 刚替换后，SMAppService 的注册状态可能已经生效，但 launchd 真正拉起
+        // Core/Tunnel 仍需要更长时间。ready 只用于提示，不能把正常的系统传播延迟升级成更新失败。
+        var warnings: [String] = []
         if tunnelEnabled,
            tunnelService.status == .enabled,
            !(await waitForTunnelProcess()) {
-            throw ValidationError("重新注册新版 AgentDock Tunnel 后进程没有稳定运行。")
+            warnings.append("AgentDock Tunnel 已恢复后台注册，但进程仍在启动。")
         }
-        if coreService.status == .enabled,
+        if coreEnabled,
+           coreService.status == .enabled,
            let configuration = ServiceConfiguration.load(from: paths.environment),
            !(await waitForHealth(configuration: configuration)) {
-            throw ValidationError("重新注册新版 AgentDock Core 后健康检查没有通过。")
+            warnings.append("AgentDock Core 已恢复后台注册，但健康检查仍在等待服务启动。")
         }
+        return warnings
+    }
+
+    func reregisterBackgroundServices(coreEnabled: Bool, tunnelEnabled: Bool) async throws -> [String] {
+        try restoreBackgroundServiceRegistrations(coreEnabled: coreEnabled, tunnelEnabled: tunnelEnabled)
+        return await backgroundServiceRecoveryWarnings(coreEnabled: coreEnabled, tunnelEnabled: tunnelEnabled)
     }
 
     func openBackgroundItemsSettings() {
@@ -275,10 +295,13 @@ final class ServiceController: @unchecked Sendable {
         } catch {
             let updateError = error
             do {
-                try await reregisterBackgroundServices(
+                let recoveryWarnings = try await reregisterBackgroundServices(
                     coreEnabled: serviceState.coreEnabled,
                     tunnelEnabled: serviceState.tunnelEnabled
                 )
+                if !recoveryWarnings.isEmpty {
+                    NSLog("AgentDock 更新失败后后台服务仍在启动：%@", recoveryWarnings.joined(separator: "；"))
+                }
                 DesktopUpdateServiceState.remove(at: paths.updateServiceState)
             } catch {
                 throw ValidationError("更新没有应用，而且后台服务恢复失败：\(updateError.localizedDescription)；\(error.localizedDescription)")
@@ -289,10 +312,13 @@ final class ServiceController: @unchecked Sendable {
         // 真正的 App 替换会终止旧 GUI，并由新版 App 根据 update-result.json 恢复服务。
         // 能执行到这里说明更新进程正常返回但没有完成 GUI handoff，因此旧 GUI 必须自己收尾。
         do {
-            try await reregisterBackgroundServices(
+            let recoveryWarnings = try await reregisterBackgroundServices(
                 coreEnabled: serviceState.coreEnabled,
                 tunnelEnabled: serviceState.tunnelEnabled
             )
+            if !recoveryWarnings.isEmpty {
+                NSLog("AgentDock 更新返回后后台服务仍在启动：%@", recoveryWarnings.joined(separator: "；"))
+            }
             DesktopUpdateServiceState.remove(at: paths.updateServiceState)
         } catch {
             throw ValidationError("更新进程已经返回，但后台服务恢复失败：\(error.localizedDescription)")
@@ -355,8 +381,8 @@ final class ServiceController: @unchecked Sendable {
             return
         case .enabled, .requiresApproval:
             try service.unregister()
-            guard waitUntilUnloaded(label: label, timeout: 5) else {
-                throw ValidationError("后台服务 \(label) 注销后仍未退出。")
+            guard waitUntilUnregistered(service: service, label: label, timeout: 5) else {
+                throw ValidationError("后台服务 \(label) 注销后系统状态没有完成收敛。")
             }
         @unknown default:
             return
@@ -374,12 +400,7 @@ final class ServiceController: @unchecked Sendable {
         let plistName = label == Self.coreLabel ? Self.corePlistName : Self.tunnelPlistName
         try validateBundledServiceDefinition(plistName: plistName, displayName: displayName)
         try unregister(service: service, label: label)
-        if service.status == .notRegistered || service.status == .notFound {
-            try service.register()
-        }
-        guard service.status == .enabled || service.status == .requiresApproval else {
-            throw ValidationError("无法恢复 \(displayName) 的后台注册状态。")
-        }
+        try register(service: service, plistName: plistName, displayName: displayName)
     }
 
     private var serviceDomain: String { "gui/\(getuid())" }
@@ -453,13 +474,17 @@ final class ServiceController: @unchecked Sendable {
         return false
     }
 
-    private func waitUntilUnloaded(label: String, timeout: TimeInterval) -> Bool {
+    private func waitUntilUnregistered(service: SMAppService, label: String, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if !isLoaded(label: label) { return true }
+            if !isLoaded(label: label), Self.isUnregistered(service.status) { return true }
             Thread.sleep(forTimeInterval: 0.1)
         }
-        return !isLoaded(label: label)
+        return !isLoaded(label: label) && Self.isUnregistered(service.status)
+    }
+
+    static func isUnregistered(_ status: SMAppService.Status) -> Bool {
+        status == .notRegistered || status == .notFound
     }
 
     private func waitForHealthSynchronously(configuration: ServiceConfiguration, timeout: TimeInterval) -> Bool {

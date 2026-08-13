@@ -26,6 +26,11 @@ type macOSDesktopUpdate struct {
 	installed     bool
 }
 
+type macOSDesktopUpdateHandoff struct {
+	SchemaVersion int    `json:"schema_version"`
+	TargetVersion string `json:"target_version"`
+}
+
 func prepareDesktopUpdate(
 	ctx context.Context,
 	targetPath string,
@@ -156,6 +161,9 @@ func (update *macOSDesktopUpdate) Restore(ctx context.Context) error {
 	if err := os.RemoveAll(update.newPath); err != nil {
 		restoreErrors = append(restoreErrors, "清理 App 暂存副本失败: "+err.Error())
 	}
+	if err := removeMacOSDesktopUpdateHandoff(); err != nil {
+		restoreErrors = append(restoreErrors, "清理更新接管确认失败: "+err.Error())
+	}
 	if len(restoreErrors) > 0 {
 		return errors.New(strings.Join(restoreErrors, "；"))
 	}
@@ -166,6 +174,11 @@ func (update *macOSDesktopUpdate) Finish(ctx context.Context, outcome desktopUpd
 	if !update.appWasRunning {
 		return nil
 	}
+	// 每次 handoff 前先清掉旧确认文件。新版 App 会在成功解析 update-result 和
+	// update-services 后原子写入新的确认，避免上一次异常退出留下的文件误提交事务。
+	if err := removeMacOSDesktopUpdateHandoff(); err != nil {
+		return fmt.Errorf("清理旧的 macOS 更新接管确认失败: %w", err)
+	}
 	if err := writeMacOSDesktopUpdateResult(outcome); err != nil {
 		return err
 	}
@@ -175,32 +188,11 @@ func (update *macOSDesktopUpdate) Finish(ctx context.Context, outcome desktopUpd
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("启动 macOS 控制面板失败: %w", err)
 	}
-	_ = command.Process.Release()
-	resultPath, err := macOSDesktopUpdateResultPath()
-	if err != nil {
-		return err
-	}
-	// 新版 App 要先恢复 Core/Tunnel 的 SMAppService 注册并完成健康检查，
-	// 消费更新结果文件就是事务提交 ACK，因此给后台服务恢复留足时间。
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
-		pids, findErr := runningMacOSAppPIDs(ctx, update.targetPath)
-		resultConsumed := !outcome.OK
-		if outcome.OK {
-			_, statErr := os.Stat(resultPath)
-			resultConsumed = os.IsNotExist(statErr)
-		}
-		// 成功更新只有在新版 App 已启动并消费一次性结果后才提交，避免静默留下半更新状态。
-		if findErr == nil && len(pids) > 0 && resultConsumed {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
-	return errors.New("新版 macOS 控制面板未在超时前启动并确认更新结果")
+	// updater 可能在回滚路径主动终止这个子进程。保持 Wait 可以及时回收退出状态，
+	// 避免 kill(pid, 0) 把僵尸进程继续判断成“未退出”。
+	go func() { _ = command.Wait() }()
+
+	return waitForMacOSDesktopHandoff(ctx, update.targetPath, outcome.TargetVersion, outcome.OK, 60*time.Second)
 }
 
 func (update *macOSDesktopUpdate) Commit() error {
@@ -210,10 +202,105 @@ func (update *macOSDesktopUpdate) Commit() error {
 			cleanupErrors = append(cleanupErrors, err.Error())
 		}
 	}
+	if err := removeMacOSDesktopUpdateHandoff(); err != nil {
+		cleanupErrors = append(cleanupErrors, err.Error())
+	}
 	if len(cleanupErrors) > 0 {
 		return errors.New(strings.Join(cleanupErrors, "；"))
 	}
 	return nil
+}
+
+func waitForMacOSDesktopHandoff(
+	ctx context.Context,
+	targetPath string,
+	targetVersion string,
+	requireHandoff bool,
+	timeout time.Duration,
+) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pids, findErr := runningMacOSAppPIDs(ctx, targetPath)
+		if findErr == nil && len(pids) > 0 {
+			if !requireHandoff {
+				return nil
+			}
+			handoff, handoffErr := readMacOSDesktopUpdateHandoff()
+			if handoffErr != nil {
+				return fmt.Errorf("读取新版 macOS 控制面板接管确认失败: %w", handoffErr)
+			}
+			if handoff != nil {
+				if normalizeVersion(handoff.TargetVersion) != normalizeVersion(targetVersion) {
+					return fmt.Errorf(
+						"新版 macOS 控制面板接管确认版本为 %s，目标版本为 %s",
+						normalizeVersion(handoff.TargetVersion),
+						normalizeVersion(targetVersion),
+					)
+				}
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	if requireHandoff {
+		return errors.New("新版 macOS 控制面板未在超时前确认更新接管")
+	}
+	return errors.New("macOS 控制面板未在超时前重新启动")
+}
+
+func readMacOSDesktopUpdateHandoff() (*macOSDesktopUpdateHandoff, error) {
+	path, err := macOSDesktopUpdateHandoffPath()
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("更新接管确认文件不安全: %s", path)
+	}
+	if info.Size() > 4096 {
+		return nil, fmt.Errorf("更新接管确认文件过大: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var handoff macOSDesktopUpdateHandoff
+	if err := json.Unmarshal(data, &handoff); err != nil {
+		return nil, fmt.Errorf("解析更新接管确认失败: %w", err)
+	}
+	if handoff.SchemaVersion != 1 || strings.TrimSpace(handoff.TargetVersion) == "" {
+		return nil, errors.New("更新接管确认内容无效")
+	}
+	return &handoff, nil
+}
+
+func removeMacOSDesktopUpdateHandoff() error {
+	path, err := macOSDesktopUpdateHandoffPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func macOSDesktopUpdateHandoffPath() (string, error) {
+	directory, err := macOSDesktopUpdateDirectory()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, "update-handoff.json"), nil
 }
 
 type processOutputRedirect struct {

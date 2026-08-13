@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExtractDesktopUpdateArchiveValidatesSignedApp(t *testing.T) {
@@ -104,6 +105,57 @@ esac
 	assertMacOSAppVersion(t, appTarget, "v0.7.0")
 }
 
+func TestMacOSDesktopUpdateFinishAcceptsHandoffBeforeServiceRecovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	target := writeHandoffTestMacOSApp(t, filepath.Join(t.TempDir(), "Applications"))
+	update := &macOSDesktopUpdate{
+		targetPath:    target,
+		targetVersion: "v0.7.1",
+		appWasRunning: true,
+	}
+	t.Cleanup(func() {
+		pids, _ := runningMacOSAppPIDs(context.Background(), target)
+		_ = terminatePIDs(context.Background(), pids)
+	})
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		directory := filepath.Join(home, "Library", "Application Support", "AgentDock")
+		_ = os.MkdirAll(directory, 0o700)
+		_ = os.WriteFile(
+			filepath.Join(directory, "update-handoff.json"),
+			[]byte("{\"schema_version\":1,\"target_version\":\"v0.7.1\"}\n"),
+			0o600,
+		)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := update.Finish(ctx, desktopUpdateOutcome{
+		OK:             true,
+		CurrentVersion: "v0.7.0",
+		TargetVersion:  "v0.7.1",
+		Message:        "更新完成",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// handoff 只确认新版 App 已经接管事务；后台服务恢复期间 update-result 仍可保留。
+	resultPath := filepath.Join(home, "Library", "Application Support", "AgentDock", "update-result.json")
+	if _, err := os.Stat(resultPath); err != nil {
+		t.Fatalf("update result should remain until App finishes recovery: %v", err)
+	}
+
+	pids, err := runningMacOSAppPIDs(context.Background(), target)
+	if err != nil || len(pids) == 0 {
+		t.Fatalf("updated App is not running: pids=%v err=%v", pids, err)
+	}
+	if err := terminatePIDs(context.Background(), pids); err != nil {
+		t.Fatalf("updated App child was not reaped after termination: %v", err)
+	}
+}
+
 func TestWriteMacOSDesktopUpdateResultIsPrivateAndExplicit(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -143,6 +195,23 @@ func TestWriteMacOSDesktopUpdateResultIsPrivateAndExplicit(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("update result permissions = %o, want 600", info.Mode().Perm())
 	}
+}
+
+func writeHandoffTestMacOSApp(t *testing.T, root string) string {
+	t.Helper()
+	appPath := filepath.Join(root, "AgentDock.app")
+	macOSDir := filepath.Join(appPath, "Contents", "MacOS")
+	if err := os.MkdirAll(macOSDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "handoff-app.c")
+	program := "#include <unistd.h>\nint main(void) { sleep(30); return 0; }\n"
+	if err := os.WriteFile(source, []byte(program), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(macOSDir, "AgentDock")
+	runTestCommand(t, "/usr/bin/xcrun", "clang", "-Os", source, "-o", executable)
+	return appPath
 }
 
 func writeSignedMacOSApp(t *testing.T, root, version string) string {

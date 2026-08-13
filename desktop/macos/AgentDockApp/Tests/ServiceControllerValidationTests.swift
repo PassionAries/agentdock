@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 
 @main
 struct ServiceControllerValidationTests {
@@ -52,6 +53,7 @@ struct ServiceControllerValidationTests {
         }
 
         try testConfiguredTunnelMode(root: root, appBundle: appBundle)
+        testServiceRegistrationStatusClassification()
         try testDesktopUpdateCheckDecoding()
 
         print("service controller validation tests passed")
@@ -76,6 +78,13 @@ struct ServiceControllerValidationTests {
             let configuredMode = try service.configuredTunnelMode()
             precondition(configuredMode == expected, rawMode)
         }
+    }
+
+    private static func testServiceRegistrationStatusClassification() {
+        precondition(ServiceController.isUnregistered(.notRegistered))
+        precondition(ServiceController.isUnregistered(.notFound))
+        precondition(!ServiceController.isUnregistered(.enabled))
+        precondition(!ServiceController.isUnregistered(.requiresApproval))
     }
 
     private static func testDesktopUpdateCheckDecoding() throws {
