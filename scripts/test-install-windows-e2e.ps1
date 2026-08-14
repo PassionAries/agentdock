@@ -84,6 +84,27 @@ function Assert-AgentDockHealthy {
     if ($runtimeManifest.tunnel_mode -ne 'none' -or $runtimeManifest.local_mcp_url -ne "http://127.0.0.1:$Port/mcp") {
         throw 'AgentDock runtime manifest contains unexpected local settings.'
     }
+    if (-not [string]::Equals(
+        [IO.Path]::GetFullPath([string] $runtimeManifest.install_root),
+        [IO.Path]::GetFullPath($testRoot),
+        [StringComparison]::OrdinalIgnoreCase)) {
+        throw "AgentDock runtime manifest install_root does not match the real runtime root: $($runtimeManifest.install_root) / $testRoot"
+    }
+    foreach ($entry in @(
+        @{ Name = 'agentdock_binary'; Expected = $binaryPath },
+        @{ Name = 'tray_binary'; Expected = $trayBinaryPath }
+    )) {
+        $recordedPath = [string] $runtimeManifest.($entry.Name)
+        if (-not [string]::Equals(
+            [IO.Path]::GetFullPath($recordedPath),
+            [IO.Path]::GetFullPath([string] $entry.Expected),
+            [StringComparison]::OrdinalIgnoreCase)) {
+            throw "AgentDock runtime manifest $($entry.Name) does not match the installed file: $recordedPath / $($entry.Expected)"
+        }
+        if (-not (Test-Path -LiteralPath $recordedPath -PathType Leaf)) {
+            throw "AgentDock runtime manifest $($entry.Name) records a missing file: $recordedPath"
+        }
+    }
     if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
         throw "AgentDock DPAPI token was not created: $tokenPath"
     }
@@ -125,6 +146,55 @@ function Assert-AgentDockHealthy {
     }
 }
 
+function Assert-RedirectedManifestRecovery {
+    $managerPath = Join-Path $testRoot 'installer\manage-windows.ps1'
+    if (-not (Test-Path -LiteralPath $managerPath -PathType Leaf)) {
+        throw "AgentDock Windows manager was not installed: $managerPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+    $staleRoot = Join-Path ([IO.Path]::GetTempPath()) ('agentdock-msix-stale-' + [Guid]::NewGuid().ToString('N'))
+    $manifest.install_root = $staleRoot
+    $manifest.agentdock_binary = Join-Path $staleRoot 'bin\agentdock.exe'
+    $manifest.tray_binary = Join-Path $staleRoot 'bin\agentdock-tray.exe'
+    $manifest.agentdock_launcher = Join-Path $staleRoot 'start-agentdock.ps1'
+    if ($null -ne $manifest.PSObject.Properties['cloudflared_binary'] -and
+        -not [string]::IsNullOrWhiteSpace([string] $manifest.cloudflared_binary)) {
+        $manifest.cloudflared_binary = Join-Path $staleRoot 'bin\cloudflared.exe'
+    }
+    if ($null -ne $manifest.PSObject.Properties['cloudflared_launcher'] -and
+        -not [string]::IsNullOrWhiteSpace([string] $manifest.cloudflared_launcher)) {
+        $manifest.cloudflared_launcher = Join-Path $staleRoot 'start-cloudflared.ps1'
+    }
+    [IO.File]::WriteAllText(
+        $runtimeManifestPath,
+        ($manifest | ConvertTo-Json -Depth 4),
+        (New-Object System.Text.UTF8Encoding($false)))
+
+    if (Test-Path -LiteralPath $manifest.agentdock_binary -PathType Leaf) {
+        throw 'Issue #22 fixture is invalid: stale core path unexpectedly exists.'
+    }
+    & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+        -File $managerPath `
+        -Action restart `
+        -RuntimeRoot $testRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "AgentDock manager could not recover a redirected runtime manifest: $LASTEXITCODE"
+    }
+
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 5
+    if ($response.StatusCode -ne 200) {
+        throw "AgentDock redirected manifest recovery health check failed: $($response.StatusCode)"
+    }
+    $after = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+    if (-not [string]::Equals(
+        [IO.Path]::GetFullPath([string] $after.install_root),
+        [IO.Path]::GetFullPath($staleRoot),
+        [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Issue #22 recovery test was masked by rewriting runtime.json before restart completed.'
+    }
+}
+
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
 if ($principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -157,7 +227,8 @@ try {
         throw 'AgentDock DPAPI token changed during an in-place upgrade.'
     }
 
-    Write-Host 'AgentDock Windows full install and in-place upgrade passed.'
+    Assert-RedirectedManifestRecovery
+    Write-Host 'AgentDock Windows full install, in-place upgrade, and redirected manifest recovery passed.'
 }
 finally {
     Stop-TestAgentDock

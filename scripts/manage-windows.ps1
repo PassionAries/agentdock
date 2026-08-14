@@ -88,6 +88,85 @@ function Set-ObjectProperty {
     $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
 }
 
+function Test-SameFullPath {
+    param(
+        [string] $Left,
+        [string] $Right
+    )
+
+    try {
+        return [string]::Equals(
+            [IO.Path]::GetFullPath($Left).TrimEnd([char[]]'\/'),
+            [IO.Path]::GetFullPath($Right).TrimEnd([char[]]'\/'),
+            [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Test-PathWithinRoot {
+    param(
+        [string] $Root,
+        [string] $Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Root) -or [string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+    try {
+        $fullRoot = [IO.Path]::GetFullPath($Root).TrimEnd([char[]]'\/')
+        $fullPath = [IO.Path]::GetFullPath($Path)
+        $rootPrefix = $fullRoot + [IO.Path]::DirectorySeparatorChar
+        return $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-RuntimeManagedPath {
+    param(
+        [string] $CurrentRuntimeRoot,
+        [string] $RecordedRuntimeRoot,
+        [string] $RecordedPath,
+        [string] $FallbackRelativePath,
+        [switch] $Required
+    )
+
+    $fallbackPath = [IO.Path]::GetFullPath((Join-Path $CurrentRuntimeRoot $FallbackRelativePath))
+    $candidate = $RecordedPath.Trim()
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        if ($Required -or (Test-Path -LiteralPath $fallbackPath -PathType Leaf)) {
+            return $fallbackPath
+        }
+        return ''
+    }
+
+    $managedPath = (Test-PathWithinRoot -Root $CurrentRuntimeRoot -Path $candidate) -or
+        (-not [string]::IsNullOrWhiteSpace($RecordedRuntimeRoot) -and
+            (Test-PathWithinRoot -Root $RecordedRuntimeRoot -Path $candidate))
+
+    # runtime.json 所在目录是当前安装根；若清单路径仍属于旧根目录，就保持相对布局重定位。
+    if (-not [string]::IsNullOrWhiteSpace($RecordedRuntimeRoot) -and
+        (Test-PathWithinRoot -Root $RecordedRuntimeRoot -Path $candidate) -and
+        -not (Test-SameFullPath -Left $RecordedRuntimeRoot -Right $CurrentRuntimeRoot)) {
+        try {
+            $fullRecordedRoot = [IO.Path]::GetFullPath($RecordedRuntimeRoot).TrimEnd([char[]]'\/')
+            $fullCandidate = [IO.Path]::GetFullPath($candidate)
+            $relativePath = $fullCandidate.Substring($fullRecordedRoot.Length + 1)
+            $candidate = [IO.Path]::GetFullPath((Join-Path $CurrentRuntimeRoot $relativePath))
+        } catch {
+        }
+    }
+
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        return [IO.Path]::GetFullPath($candidate)
+    }
+    if ($managedPath -and (Test-Path -LiteralPath $fallbackPath -PathType Leaf)) {
+        return $fallbackPath
+    }
+    return $candidate
+}
+
 function Read-JsonFile {
     param([string] $Path)
 
@@ -224,11 +303,33 @@ $CloudflaredStderrPath = Join-Path $RuntimeRoot 'cloudflared.err.log'
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
 $Manifest = Read-JsonFile -Path $ManifestPath
-$AgentDockBinary = [string] (Get-ObjectProperty -Object $Manifest -Name 'agentdock_binary' -Default (Join-Path $RuntimeRoot 'bin\agentdock.exe'))
-$TrayBinary = [string] (Get-ObjectProperty -Object $Manifest -Name 'tray_binary' -Default (Join-Path $RuntimeRoot 'bin\agentdock-tray.exe'))
-$AgentDockLauncher = [string] (Get-ObjectProperty -Object $Manifest -Name 'agentdock_launcher' -Default (Join-Path $RuntimeRoot 'start-agentdock.ps1'))
-$CloudflaredLauncher = [string] (Get-ObjectProperty -Object $Manifest -Name 'cloudflared_launcher' -Default (Join-Path $RuntimeRoot 'start-cloudflared.ps1'))
-$CloudflaredBinary = [string] (Get-ObjectProperty -Object $Manifest -Name 'cloudflared_binary' -Default (Join-Path $RuntimeRoot 'bin\cloudflared.exe'))
+$RecordedInstallRoot = [string] (Get-ObjectProperty -Object $Manifest -Name 'install_root' -Default '')
+$AgentDockBinary = Resolve-RuntimeManagedPath `
+    -CurrentRuntimeRoot $RuntimeRoot `
+    -RecordedRuntimeRoot $RecordedInstallRoot `
+    -RecordedPath ([string] (Get-ObjectProperty -Object $Manifest -Name 'agentdock_binary' -Default '')) `
+    -FallbackRelativePath 'bin\agentdock.exe' `
+    -Required
+$TrayBinary = Resolve-RuntimeManagedPath `
+    -CurrentRuntimeRoot $RuntimeRoot `
+    -RecordedRuntimeRoot $RecordedInstallRoot `
+    -RecordedPath ([string] (Get-ObjectProperty -Object $Manifest -Name 'tray_binary' -Default '')) `
+    -FallbackRelativePath 'bin\agentdock-tray.exe'
+$AgentDockLauncher = Resolve-RuntimeManagedPath `
+    -CurrentRuntimeRoot $RuntimeRoot `
+    -RecordedRuntimeRoot $RecordedInstallRoot `
+    -RecordedPath ([string] (Get-ObjectProperty -Object $Manifest -Name 'agentdock_launcher' -Default '')) `
+    -FallbackRelativePath 'start-agentdock.ps1'
+$CloudflaredLauncher = Resolve-RuntimeManagedPath `
+    -CurrentRuntimeRoot $RuntimeRoot `
+    -RecordedRuntimeRoot $RecordedInstallRoot `
+    -RecordedPath ([string] (Get-ObjectProperty -Object $Manifest -Name 'cloudflared_launcher' -Default '')) `
+    -FallbackRelativePath 'start-cloudflared.ps1'
+$CloudflaredBinary = Resolve-RuntimeManagedPath `
+    -CurrentRuntimeRoot $RuntimeRoot `
+    -RecordedRuntimeRoot $RecordedInstallRoot `
+    -RecordedPath ([string] (Get-ObjectProperty -Object $Manifest -Name 'cloudflared_binary' -Default '')) `
+    -FallbackRelativePath 'bin\cloudflared.exe'
 $PrivilegeMode = [string] (Get-ObjectProperty -Object $Manifest -Name 'privilege_mode' -Default 'standard')
 $TaskName = [string] (Get-ObjectProperty -Object $Manifest -Name 'agentdock_task_name' -Default 'AgentDock')
 $CoreStartupValueName = [string] (Get-ObjectProperty -Object $Manifest -Name 'startup_value_name' -Default 'AgentDock')
@@ -274,6 +375,7 @@ function Update-RuntimeManifest {
     # 版本由 agentdock.exe BuildInfo 唯一提供；清理旧清单残留，避免再次形成第二版本真值。
     $Manifest.PSObject.Properties.Remove('version')
     Set-ObjectProperty -Object $Manifest -Name 'schema_version' -Value 1
+    Set-ObjectProperty -Object $Manifest -Name 'install_root' -Value $RuntimeRoot
     Set-ObjectProperty -Object $Manifest -Name 'agentdock_binary' -Value $AgentDockBinary
     Set-ObjectProperty -Object $Manifest -Name 'tray_binary' -Value $TrayBinary
     Set-ObjectProperty -Object $Manifest -Name 'agentdock_launcher' -Value $AgentDockLauncher

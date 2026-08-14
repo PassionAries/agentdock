@@ -288,6 +288,27 @@ try {
         }
     }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if (-not [string]::Equals(
+        [IO.Path]::GetFullPath([string] $manifest.install_root),
+        [IO.Path]::GetFullPath($InstallRoot),
+        [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Setup runtime manifest install_root does not match the real install root: $($manifest.install_root) / $InstallRoot"
+    }
+    foreach ($entry in @(
+        @{ Name = 'agentdock_binary'; Expected = $binaryPath },
+        @{ Name = 'tray_binary'; Expected = $trayPath }
+    )) {
+        $recordedPath = [string] $manifest.($entry.Name)
+        if (-not [string]::Equals(
+            [IO.Path]::GetFullPath($recordedPath),
+            [IO.Path]::GetFullPath([string] $entry.Expected),
+            [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Setup runtime manifest $($entry.Name) does not match the installed file: $recordedPath / $($entry.Expected)"
+        }
+        if (-not (Test-Path -LiteralPath $recordedPath -PathType Leaf)) {
+            throw "Setup runtime manifest $($entry.Name) records a missing file: $recordedPath"
+        }
+    }
     if ($manifest.install_channel -ne 'setup') {
         throw "Unexpected install channel: $($manifest.install_channel)"
     }

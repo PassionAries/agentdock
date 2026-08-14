@@ -43,7 +43,7 @@ public sealed class RuntimeService : IDisposable
 
     public async Task<RuntimeSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
-        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
+        var manifest = await ReadRuntimeManifestAsync(cancellationToken) ?? new RuntimeManifest();
         var manifestPort = manifest.ListenPort is >= 1 and <= 65535 ? manifest.ListenPort : 8765;
         var settings = await ReadJsonAsync<ControlPanelSettings>(SettingsPath, cancellationToken);
         if (settings is null)
@@ -262,7 +262,7 @@ public sealed class RuntimeService : IDisposable
 
     public async Task SetPrivilegeModeAsync(bool elevated, CancellationToken cancellationToken = default)
     {
-        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken)
+        var manifest = await ReadRuntimeManifestAsync(cancellationToken)
             ?? throw new InvalidOperationException("找不到 AgentDock runtime.json。");
         var wasElevated = string.Equals(manifest.PrivilegeMode, "elevated", StringComparison.OrdinalIgnoreCase);
         if (wasElevated == elevated)
@@ -381,22 +381,148 @@ public sealed class RuntimeService : IDisposable
     public void OpenLogsDirectory() => OpenDirectory(LogsDirectory);
     public void OpenConfigDirectory() => OpenDirectory(ConfigDirectory);
 
-    private async Task<string> ResolveCoreBinaryAsync(CancellationToken cancellationToken)
+    private async Task<RuntimeManifest?> ReadRuntimeManifestAsync(CancellationToken cancellationToken)
     {
         var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken);
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        // runtime.json 的实际目录才是当前安装位置。打包应用文件系统重定向可能让
+        // 安装时记录的绝对路径失效，因此先把属于旧 install_root 的路径整体重定位。
+        var recordedRoot = manifest.InstallRoot;
+        manifest.BinaryPath = ResolveRuntimeManagedPath(
+            recordedRoot,
+            manifest.BinaryPath,
+            Path.Combine("bin", "agentdock.exe"),
+            required: true);
+        manifest.TrayBinaryPath = ResolveRuntimeManagedPath(
+            recordedRoot,
+            manifest.TrayBinaryPath,
+            Path.Combine("bin", "agentdock-tray.exe"));
+        manifest.LauncherPath = ResolveRuntimeManagedPath(
+            recordedRoot,
+            manifest.LauncherPath,
+            "start-agentdock.ps1");
+        manifest.CloudflaredBinary = ResolveRuntimeManagedPath(
+            recordedRoot,
+            manifest.CloudflaredBinary,
+            Path.Combine("bin", "cloudflared.exe"));
+        manifest.CloudflaredLauncher = ResolveRuntimeManagedPath(
+            recordedRoot,
+            manifest.CloudflaredLauncher,
+            "start-cloudflared.ps1");
+        manifest.InstallRoot = RuntimeRoot;
+        return manifest;
+    }
+
+    private string ResolveRuntimeManagedPath(
+        string? recordedRoot,
+        string? recordedPath,
+        string fallbackRelativePath,
+        bool required = false)
+    {
+        var fallbackPath = Path.GetFullPath(Path.Combine(RuntimeRoot, fallbackRelativePath));
+        var candidate = recordedPath?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return required || File.Exists(fallbackPath) ? fallbackPath : "";
+        }
+
+        var managedPath = IsPathWithinRoot(RuntimeRoot, candidate) ||
+            (!string.IsNullOrWhiteSpace(recordedRoot) && IsPathWithinRoot(recordedRoot, candidate));
+        if (!string.IsNullOrWhiteSpace(recordedRoot) &&
+            IsPathWithinRoot(recordedRoot, candidate) &&
+            !PathsEqual(recordedRoot, RuntimeRoot))
+        {
+            candidate = RebaseRuntimePath(recordedRoot, candidate);
+        }
+
+        if (File.Exists(candidate))
+        {
+            return Path.GetFullPath(candidate);
+        }
+        if (managedPath && File.Exists(fallbackPath))
+        {
+            return fallbackPath;
+        }
+        return candidate;
+    }
+
+    private static bool IsPathWithinRoot(string root, string path)
+    {
+        try
+        {
+            var relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path));
+            return !Path.IsPathRooted(relative) &&
+                !string.Equals(relative, "..", StringComparison.Ordinal) &&
+                !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal) &&
+                !string.Equals(relative, ".", StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private string RebaseRuntimePath(string recordedRoot, string recordedPath)
+    {
+        try
+        {
+            var relative = Path.GetRelativePath(Path.GetFullPath(recordedRoot), Path.GetFullPath(recordedPath));
+            if (Path.IsPathRooted(relative) ||
+                string.Equals(relative, "..", StringComparison.Ordinal) ||
+                relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+                relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                return recordedPath;
+            }
+            return Path.GetFullPath(Path.Combine(RuntimeRoot, relative));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return recordedPath;
+        }
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<string> ResolveCoreBinaryAsync(CancellationToken cancellationToken)
+    {
+        var manifest = await ReadRuntimeManifestAsync(cancellationToken);
         var binaryPath = ResolveCoreBinaryPath(manifest);
         if (!File.Exists(binaryPath))
         {
-            throw new FileNotFoundException("找不到 AgentDock 核心程序，请运行 Setup.exe 修复安装。", binaryPath);
+            throw new FileNotFoundException($"找不到 AgentDock 核心程序（{binaryPath}），请运行 Setup.exe 修复安装。", binaryPath);
         }
         return binaryPath;
     }
 
     private string ResolveCoreBinaryPath(RuntimeManifest? manifest)
     {
+        var rootRelativePath = Path.Combine(RuntimeRoot, "bin", "agentdock.exe");
         var binaryPath = manifest?.BinaryPath;
-        return string.IsNullOrWhiteSpace(binaryPath)
-            ? Path.Combine(RuntimeRoot, "bin", "agentdock.exe")
+        if (string.IsNullOrWhiteSpace(binaryPath))
+        {
+            return rootRelativePath;
+        }
+        return !File.Exists(binaryPath) && File.Exists(rootRelativePath)
+            ? rootRelativePath
             : binaryPath;
     }
 
@@ -411,7 +537,7 @@ public sealed class RuntimeService : IDisposable
             : manifest.TrayBinaryPath;
         if (!File.Exists(trayBinary))
         {
-            throw new FileNotFoundException("找不到 AgentDock 管理程序。", trayBinary);
+            throw new FileNotFoundException($"找不到 AgentDock 管理程序（{trayBinary}）。", trayBinary);
         }
 
         var arguments = new List<string>
@@ -491,7 +617,7 @@ public sealed class RuntimeService : IDisposable
             : manifest.TrayBinaryPath;
         if (!File.Exists(trayBinary))
         {
-            throw new FileNotFoundException("找不到 AgentDock 托盘程序。", trayBinary);
+            throw new FileNotFoundException($"找不到 AgentDock 托盘程序（{trayBinary}）。", trayBinary);
         }
         var command = $"\"{trayBinary}\" --start-core --runtime-root \"{RuntimeRoot}\"";
         key.SetValue(valueName, command, RegistryValueKind.String);
@@ -499,11 +625,11 @@ public sealed class RuntimeService : IDisposable
 
     internal async Task<int> RunElevatedCoreTaskAsync(CancellationToken cancellationToken = default)
     {
-        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
+        var manifest = await ReadRuntimeManifestAsync(cancellationToken) ?? new RuntimeManifest();
         var binaryPath = ResolveCoreBinaryPath(manifest);
         if (!File.Exists(binaryPath))
         {
-            throw new FileNotFoundException("找不到 AgentDock 核心程序。", binaryPath);
+            throw new FileNotFoundException($"找不到 AgentDock 核心程序（{binaryPath}）。", binaryPath);
         }
 
         Directory.CreateDirectory(LogsDirectory);
@@ -589,7 +715,7 @@ public sealed class RuntimeService : IDisposable
         CancellationToken cancellationToken,
         bool allowElevation = true)
     {
-        var manifest = await ReadJsonAsync<RuntimeManifest>(ManifestPath, cancellationToken) ?? new RuntimeManifest();
+        var manifest = await ReadRuntimeManifestAsync(cancellationToken) ?? new RuntimeManifest();
         var binaryPath = await ResolveCoreBinaryAsync(cancellationToken);
         var commandArguments = new List<string> { command };
         commandArguments.AddRange(arguments);

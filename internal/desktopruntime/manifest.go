@@ -51,6 +51,11 @@ func Load(path string) (Manifest, error) {
 	if err := manifest.Validate(); err != nil {
 		return Manifest{}, err
 	}
+	runtimeRoot, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return Manifest{}, fmt.Errorf("resolve Windows runtime root: %w", err)
+	}
+	manifest.resolveRuntimePaths(runtimeRoot)
 	return manifest, nil
 }
 
@@ -78,6 +83,96 @@ func LoadForBinary(binaryPath string) (Manifest, error) {
 		return Manifest{}, errors.New("Windows runtime manifest belongs to another AgentDock binary")
 	}
 	return manifest, nil
+}
+
+// resolveRuntimePaths 以 runtime.json 的实际目录作为当前安装根。
+// Windows 打包应用可能重定向文件写入，却保留安装时记录的旧绝对路径；
+// 因此所有由 AgentDock 管理的安装路径都必须先按真实根目录收敛。
+func (manifest *Manifest) resolveRuntimePaths(runtimeRoot string) {
+	runtimeRoot = filepath.Clean(runtimeRoot)
+	recordedRoot := strings.TrimSpace(manifest.InstallRoot)
+	manifest.InstallRoot = runtimeRoot
+	manifest.AgentDockBinary = resolveRuntimeManagedFile(
+		recordedRoot,
+		runtimeRoot,
+		manifest.AgentDockBinary,
+		filepath.Join(runtimeRoot, "bin", "agentdock.exe"),
+		true,
+	)
+	manifest.TrayBinary = resolveRuntimeManagedFile(
+		recordedRoot,
+		runtimeRoot,
+		manifest.TrayBinary,
+		filepath.Join(runtimeRoot, "bin", "agentdock-tray.exe"),
+		false,
+	)
+	manifest.AgentDockLauncher = resolveRuntimeManagedFile(
+		recordedRoot,
+		runtimeRoot,
+		manifest.AgentDockLauncher,
+		filepath.Join(runtimeRoot, "start-agentdock.ps1"),
+		false,
+	)
+	manifest.CloudflaredBinary = resolveRuntimeManagedFile(
+		recordedRoot,
+		runtimeRoot,
+		manifest.CloudflaredBinary,
+		filepath.Join(runtimeRoot, "bin", "cloudflared.exe"),
+		false,
+	)
+	manifest.CloudflaredLauncher = resolveRuntimeManagedFile(
+		recordedRoot,
+		runtimeRoot,
+		manifest.CloudflaredLauncher,
+		filepath.Join(runtimeRoot, "start-cloudflared.ps1"),
+		false,
+	)
+}
+
+func resolveRuntimeManagedFile(recordedRoot, runtimeRoot, recordedPath, fallbackPath string, required bool) string {
+	recordedPath = strings.TrimSpace(recordedPath)
+	if recordedPath == "" {
+		if required || regularFileExists(fallbackPath) {
+			return filepath.Clean(fallbackPath)
+		}
+		return ""
+	}
+
+	candidate := recordedPath
+	managedPath := pathWithinRoot(runtimeRoot, recordedPath)
+	if recordedRoot != "" && filepath.IsAbs(recordedRoot) && pathWithinRoot(recordedRoot, recordedPath) {
+		managedPath = true
+		if !samePath(recordedRoot, runtimeRoot) {
+			relative, err := filepath.Rel(recordedRoot, recordedPath)
+			if err == nil {
+				candidate = filepath.Join(runtimeRoot, relative)
+			}
+		}
+	}
+
+	if regularFileExists(candidate) {
+		return filepath.Clean(candidate)
+	}
+	if managedPath && regularFileExists(fallbackPath) {
+		return filepath.Clean(fallbackPath)
+	}
+	return filepath.Clean(candidate)
+}
+
+func pathWithinRoot(root, path string) bool {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" || !filepath.IsAbs(root) || !filepath.IsAbs(path) {
+		return false
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == "." || relative == ".." {
+		return false
+	}
+	return !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func regularFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func (manifest Manifest) Validate() error {
