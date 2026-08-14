@@ -16,7 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func processRunningAtPath(binaryPath string) (bool, error) {
+// BinaryProcessRunning 只按完整可执行文件路径判断进程是否正在运行。
+func BinaryProcessRunning(binaryPath string) (bool, error) {
 	processes, err := processIDsAtPath(binaryPath)
 	if err != nil {
 		return false, err
@@ -24,12 +25,16 @@ func processRunningAtPath(binaryPath string) (bool, error) {
 	return len(processes) > 0, nil
 }
 
+func processRunningAtPath(binaryPath string) (bool, error) {
+	return BinaryProcessRunning(binaryPath)
+}
+
 // StopBinaryProcesses 只终止可执行文件路径与 binaryPath 完全一致的进程。
 func StopBinaryProcesses(ctx context.Context, binaryPath string, timeout time.Duration) error {
 	if err := terminateProcessesAtPath(binaryPath); err != nil {
 		return err
 	}
-	stopped, err := waitBinaryStopped(ctx, binaryPath, timeout)
+	stopped, err := WaitBinaryStopped(ctx, binaryPath, timeout)
 	if err != nil {
 		return err
 	}
@@ -39,10 +44,11 @@ func StopBinaryProcesses(ctx context.Context, binaryPath string, timeout time.Du
 	return nil
 }
 
-func waitBinaryStopped(ctx context.Context, binaryPath string, timeout time.Duration) (bool, error) {
+// WaitBinaryStopped waits until no process with the exact binary path remains.
+func WaitBinaryStopped(ctx context.Context, binaryPath string, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		running, err := processRunningAtPath(binaryPath)
+		running, err := BinaryProcessRunning(binaryPath)
 		if err != nil {
 			return false, err
 		}
@@ -56,6 +62,10 @@ func waitBinaryStopped(ctx context.Context, binaryPath string, timeout time.Dura
 		}
 	}
 	return false, nil
+}
+
+func waitBinaryStopped(ctx context.Context, binaryPath string, timeout time.Duration) (bool, error) {
+	return WaitBinaryStopped(ctx, binaryPath, timeout)
 }
 
 func terminateProcessesAtPath(binaryPath string) error {

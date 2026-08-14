@@ -24,20 +24,25 @@ import (
 const windowsServiceName = "agentdock"
 
 type windowsUpdatePlan struct {
-	ParentPID      int      `json:"parent_pid"`
-	TargetPath     string   `json:"target_path"`
-	StagedPath     string   `json:"staged_path"`
-	BundlePath     string   `json:"bundle_path"`
-	CurrentVersion string   `json:"current_version"`
-	TargetVersion  string   `json:"target_version"`
-	RestartMode    string   `json:"restart_mode"`
-	RuntimeRoot    string   `json:"runtime_root,omitempty"`
-	LauncherPath   string   `json:"launcher_path,omitempty"`
-	TaskName       string   `json:"task_name,omitempty"`
-	HealthURLs     []string `json:"health_urls,omitempty"`
+	ParentPID         int      `json:"parent_pid"`
+	TargetPath        string   `json:"target_path"`
+	StagedPath        string   `json:"staged_path"`
+	BundlePath        string   `json:"bundle_path"`
+	DesktopTargetPath string   `json:"desktop_target_path,omitempty"`
+	DesktopStagedPath string   `json:"desktop_staged_path,omitempty"`
+	CurrentVersion    string   `json:"current_version"`
+	TargetVersion     string   `json:"target_version"`
+	RestartMode       string   `json:"restart_mode"`
+	RuntimeRoot       string   `json:"runtime_root,omitempty"`
+	LauncherPath      string   `json:"launcher_path,omitempty"`
+	TaskName          string   `json:"task_name,omitempty"`
+	HealthURLs        []string `json:"health_urls,omitempty"`
 }
 
 func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult, error) {
+	if request.DesktopOnly {
+		return applyWindowsDesktopOnlyUpdate(ctx, request)
+	}
 	helperDir, err := os.MkdirTemp("", "agentdock-update-helper-*")
 	if err != nil {
 		return applyResult{}, fmt.Errorf("创建 Windows 更新辅助目录失败: %w", err)
@@ -52,6 +57,7 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 	helperPath := filepath.Join(helperDir, "agentdock-update-helper.exe")
 	stagedPath := filepath.Join(helperDir, "agentdock-new.exe")
 	bundlePath := filepath.Join(helperDir, "core-skills")
+	desktopStagedPath := ""
 	planPath := filepath.Join(helperDir, "update-plan.json")
 	if err := copyFileWindows(request.CurrentPath, helperPath); err != nil {
 		return applyResult{}, fmt.Errorf("准备 Windows 更新辅助程序失败: %w", err)
@@ -61,6 +67,12 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 	}
 	if err := copyDirectoryWindows(request.BundlePath, bundlePath); err != nil {
 		return applyResult{}, fmt.Errorf("准备 Windows 核心 Skill Bundle 失败: %w", err)
+	}
+	if strings.TrimSpace(request.DesktopStagedPath) != "" {
+		desktopStagedPath = filepath.Join(helperDir, "desktop")
+		if err := copyWindowsDesktopStaging(request.DesktopStagedPath, desktopStagedPath); err != nil {
+			return applyResult{}, fmt.Errorf("准备 Windows 桌面组件失败: %w", err)
+		}
 	}
 
 	restartMode := "none"
@@ -84,17 +96,19 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 		healthURLs = []string{healthyURL}
 	}
 	plan := windowsUpdatePlan{
-		ParentPID:      os.Getpid(),
-		TargetPath:     request.CurrentPath,
-		StagedPath:     stagedPath,
-		BundlePath:     bundlePath,
-		CurrentVersion: request.CurrentVersion,
-		TargetVersion:  request.TargetVersion,
-		RestartMode:    restartMode,
-		RuntimeRoot:    runtimeRoot,
-		LauncherPath:   launcherPath,
-		TaskName:       taskName,
-		HealthURLs:     healthURLs,
+		ParentPID:         os.Getpid(),
+		TargetPath:        request.CurrentPath,
+		StagedPath:        stagedPath,
+		BundlePath:        bundlePath,
+		DesktopTargetPath: request.DesktopTargetPath,
+		DesktopStagedPath: desktopStagedPath,
+		CurrentVersion:    request.CurrentVersion,
+		TargetVersion:     request.TargetVersion,
+		RestartMode:       restartMode,
+		RuntimeRoot:       runtimeRoot,
+		LauncherPath:      launcherPath,
+		TaskName:          taskName,
+		HealthURLs:        healthURLs,
 	}
 	planData, err := json.Marshal(plan)
 	if err != nil {
@@ -118,6 +132,9 @@ func applyPlatformUpdate(ctx context.Context, request applyRequest) (applyResult
 }
 
 func HandleInternalCommand(ctx context.Context, args []string) (bool, error) {
+	if handled, err := handleWindowsDesktopRepairCommand(ctx, args); handled {
+		return true, err
+	}
 	if len(args) == 0 || args[0] != "__update-finalize" {
 		return false, nil
 	}
@@ -135,6 +152,9 @@ func HandleInternalCommand(ctx context.Context, args []string) (bool, error) {
 	if plan.ParentPID <= 0 || strings.TrimSpace(plan.TargetPath) == "" || strings.TrimSpace(plan.StagedPath) == "" || strings.TrimSpace(plan.BundlePath) == "" || normalizeVersion(plan.CurrentVersion) == "" || normalizeVersion(plan.TargetVersion) == "" {
 		return true, errors.New("Windows 更新计划缺少必要字段")
 	}
+	if (strings.TrimSpace(plan.DesktopTargetPath) == "") != (strings.TrimSpace(plan.DesktopStagedPath) == "") {
+		return true, errors.New("Windows 更新计划的桌面组件路径不完整")
+	}
 	defer scheduleWindowsCleanup(filepath.Dir(args[1]))
 	return true, finalizeWindowsUpdate(ctx, plan)
 }
@@ -143,10 +163,20 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 	if err := waitForWindowsProcessExit(plan.ParentPID, 30*time.Second); err != nil {
 		return err
 	}
-	restartOldOnFailure := plan.RestartMode != "none"
+	desktopUpdate, err := prepareWindowsDesktopUpdate(plan.TargetPath, plan.DesktopTargetPath, plan.DesktopStagedPath)
+	if err != nil {
+		return fmt.Errorf("准备 Windows 桌面组件更新失败: %w", err)
+	}
+	recoveryPending := true
 	defer func() {
-		if restartOldOnFailure {
+		if !recoveryPending {
+			return
+		}
+		if plan.RestartMode != "none" {
 			_ = restartWindowsMode(context.Background(), plan)
+		}
+		if desktopUpdate != nil {
+			_ = desktopUpdate.RestartTray(context.Background())
 		}
 	}()
 	if plan.RestartMode == "service" {
@@ -170,6 +200,11 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 	}
 	if err := desktopruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second); err != nil {
 		return fmt.Errorf("停止旧 AgentDock 进程失败: %w", err)
+	}
+	if desktopUpdate != nil {
+		if err := desktopUpdate.StopTray(ctx); err != nil {
+			return err
+		}
 	}
 
 	backupPath := plan.TargetPath + ".backup"
@@ -196,21 +231,49 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 
 	rollback := func(cause error) error {
 		_ = desktopruntime.StopBinaryProcesses(ctx, plan.TargetPath, 15*time.Second)
-		if err := moveFileReplace(backupPath, plan.TargetPath); err != nil {
-			return fmt.Errorf("%v；自动恢复 Windows 旧版本失败: %w", cause, err)
-		}
-		if err := restartWindowsMode(ctx, plan); err != nil {
-			return fmt.Errorf("%v；旧版本已恢复，但重新启动失败: %w", cause, err)
-		}
-		if plan.RestartMode != "none" {
-			if err := waitForVersion(ctx, plan.HealthURLs, plan.CurrentVersion, 30*time.Second); err != nil {
-				return fmt.Errorf("%v；旧版本已恢复并重启，但健康检查失败: %w", cause, err)
+		rollbackErrors := make([]string, 0, 4)
+		if desktopUpdate != nil {
+			_ = desktopruntime.StopBinaryProcesses(ctx, desktopUpdate.trayPath, 15*time.Second)
+			if err := desktopUpdate.Restore(); err != nil {
+				rollbackErrors = append(rollbackErrors, "恢复旧控制面板失败: "+err.Error())
 			}
 		}
-		restartOldOnFailure = false
+		if err := moveFileReplace(backupPath, plan.TargetPath); err != nil {
+			rollbackErrors = append(rollbackErrors, "恢复旧核心失败: "+err.Error())
+		}
+		if len(rollbackErrors) == 0 {
+			if err := restartWindowsMode(ctx, plan); err != nil {
+				rollbackErrors = append(rollbackErrors, "重新启动旧核心失败: "+err.Error())
+			}
+		}
+		if len(rollbackErrors) == 0 && plan.RestartMode != "none" {
+			if err := waitForVersion(ctx, plan.HealthURLs, plan.CurrentVersion, 30*time.Second); err != nil {
+				rollbackErrors = append(rollbackErrors, "旧核心健康检查失败: "+err.Error())
+			}
+		}
+		if len(rollbackErrors) == 0 && desktopUpdate != nil {
+			if err := desktopUpdate.RestartTray(ctx); err != nil {
+				rollbackErrors = append(rollbackErrors, "重新启动旧控制面板失败: "+err.Error())
+			}
+		}
+		if len(rollbackErrors) > 0 {
+			return fmt.Errorf("%v；自动恢复 Windows 旧版本不完整: %s", cause, strings.Join(rollbackErrors, "；"))
+		}
+		if desktopUpdate != nil {
+			if err := desktopUpdate.Commit(); err != nil {
+				return fmt.Errorf("%v；旧版本已恢复，但清理更新临时文件失败: %w", cause, err)
+			}
+		}
+		recoveryPending = false
 		return fmt.Errorf("%v；已自动恢复 Windows 旧版本", cause)
 	}
 
+	if desktopUpdate != nil {
+		fmt.Println("正在更新 Windows 控制面板...")
+		if err := desktopUpdate.Install(); err != nil {
+			return rollback(fmt.Errorf("安装 Windows 控制面板失败: %w", err))
+		}
+	}
 	if err := verifyBinaryVersion(ctx, plan.TargetPath, plan.TargetVersion); err != nil {
 		return rollback(fmt.Errorf("替换后的 Windows 二进制验证失败: %w", err))
 	}
@@ -223,12 +286,22 @@ func finalizeWindowsUpdate(ctx context.Context, plan windowsUpdatePlan) error {
 		}
 		fmt.Println("健康检查通过")
 	}
+	if desktopUpdate != nil {
+		if err := desktopUpdate.RestartTray(ctx); err != nil {
+			return rollback(err)
+		}
+	}
 
 	fmt.Println("正在更新官方核心 Skill...")
 	if err := bootstrapBundledSkills(ctx, plan.TargetPath, plan.BundlePath, os.Stdout); err != nil {
 		return rollback(err)
 	}
-	restartOldOnFailure = false
+	if desktopUpdate != nil {
+		if err := desktopUpdate.Commit(); err != nil {
+			fmt.Printf("警告：清理 Windows 控制面板更新备份失败: %v\n", err)
+		}
+	}
+	recoveryPending = false
 	if plan.RestartMode == "none" {
 		fmt.Printf("Windows 更新完成到 %s；当前未检测到托管服务，请重新启动 AgentDock。\n", plan.TargetVersion)
 	} else {

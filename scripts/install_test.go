@@ -217,6 +217,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Write-RuntimeManifest",
 		"Write-InstallResult",
 		"runtime.json",
+		"desktop-version.txt",
+		"$destinationBinary version --json",
 		"New-ItemProperty -Path $runKey -Name $trayRunValueName",
 		"cloudflared-windows-$Architecture.exe",
 		"Get-FileHash -LiteralPath $archivePath -Algorithm SHA256",

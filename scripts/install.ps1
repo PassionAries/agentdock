@@ -875,6 +875,7 @@ $controlPanelSettingsPath = Join-Path $runtimeDir 'control-panel-settings.json'
 $tunnelModePath = Join-Path $runtimeDir 'cloudflared-mode.txt'
 $tunnelTokenPath = Join-Path $runtimeDir 'cloudflared-token.dpapi'
 $runtimeManifestPath = Join-Path $runtimeDir 'runtime.json'
+$desktopVersionPath = Join-Path $runtimeDir 'desktop-version.txt'
 $quickTunnelUrlPath = Join-Path $runtimeDir 'quick-tunnel-url.txt'
 $cloudflaredStdoutLogPath = Join-Path $runtimeDir 'cloudflared.out.log'
 $cloudflaredStderrLogPath = Join-Path $runtimeDir 'cloudflared.err.log'
@@ -938,6 +939,7 @@ $managedRuntimeFiles = @(
     @{ Path = $tunnelModePath; Name = 'cloudflared-mode.txt' },
     @{ Path = $tunnelTokenPath; Name = 'cloudflared-token.dpapi' },
     @{ Path = $runtimeManifestPath; Name = 'runtime.json' },
+    @{ Path = $desktopVersionPath; Name = 'desktop-version.txt' },
     @{ Path = $quickTunnelUrlPath; Name = 'quick-tunnel-url.txt' }
 )
 
@@ -1065,6 +1067,15 @@ try {
     Copy-Item -LiteralPath $sourceTrayIcon -Destination $destinationTrayIcon -Force
     New-Item -ItemType Directory -Path $installerDir -Force | Out-Null
     Copy-Item -LiteralPath $sourceManagerScript -Destination $managerScriptPath -Force
+    $installedVersionJson = & $destinationBinary version --json
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to read the installed AgentDock version after replacing the Windows payload.'
+    }
+    $installedVersionInfo = $installedVersionJson | ConvertFrom-Json
+    if ($null -eq $installedVersionInfo -or [string]::IsNullOrWhiteSpace([string] $installedVersionInfo.version)) {
+        throw 'Unable to read the installed AgentDock version after replacing the Windows payload.'
+    }
+    Write-TextFile -Path $desktopVersionPath -Value ("v" + ([string] $installedVersionInfo.version).TrimStart('v'))
     Add-UserPath -Directory $InstallDir
 
     $agentDockHome = Join-Path $userHome '.agentdock'

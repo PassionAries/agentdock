@@ -20,6 +20,7 @@ $binaryPath = Join-Path $installDir 'agentdock.exe'
 $trayBinaryPath = Join-Path $installDir 'agentdock-tray.exe'
 $trayIconPath = Join-Path $installDir 'agentdock.ico'
 $runtimeManifestPath = Join-Path $testRoot 'runtime.json'
+$desktopVersionPath = Join-Path $testRoot 'desktop-version.txt'
 $tokenPath = Join-Path $testRoot 'auth-token.dpapi'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValueName = 'AgentDock'
@@ -70,6 +71,14 @@ function Assert-AgentDockHealthy {
     }
     if (-not (Test-Path -LiteralPath $runtimeManifestPath -PathType Leaf)) {
         throw "AgentDock runtime manifest was not created: $runtimeManifestPath"
+    }
+    if (-not (Test-Path -LiteralPath $desktopVersionPath -PathType Leaf)) {
+        throw "AgentDock desktop version marker was not created: $desktopVersionPath"
+    }
+    $installedVersion = (& $binaryPath version --json | ConvertFrom-Json).version
+    $desktopVersion = (Get-Content -LiteralPath $desktopVersionPath -Raw).Trim()
+    if ($desktopVersion -ne ("v" + ([string] $installedVersion).TrimStart('v'))) {
+        throw "AgentDock desktop version marker does not match the installed core: $desktopVersion / $installedVersion"
     }
     $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
     if ($runtimeManifest.tunnel_mode -ne 'none' -or $runtimeManifest.local_mcp_url -ne "http://127.0.0.1:$Port/mcp") {

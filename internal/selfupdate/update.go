@@ -164,7 +164,7 @@ func run(ctx context.Context, opts options) error {
 		fmt.Fprintln(opts.Output, inspection.Result.Message)
 		return nil
 	}
-	if opts.DesktopOnly {
+	if opts.DesktopOnly || (inspection.Result.DesktopUpdateAvailable && normalizeVersion(inspection.Result.CurrentVersion) == normalizeVersion(inspection.Result.LatestVersion)) {
 		return runDesktopOnlyUpdate(ctx, opts, inspection)
 	}
 
@@ -214,23 +214,27 @@ func run(ctx context.Context, opts options) error {
 
 	desktopStagedPath := ""
 	if inspection.DesktopArchiveAsset.Name != "" {
-		fmt.Fprintf(opts.Output, "正在下载 %s...\n", inspection.DesktopArchiveAsset.Name)
-		desktopArchiveData, downloadErr := download(ctx, opts.HTTPClient, inspection.DesktopArchiveAsset.URL, maxDesktopArchiveBytes)
-		if downloadErr != nil {
-			return fmt.Errorf("下载 macOS 桌面更新文件失败: %w", downloadErr)
-		}
-		desktopChecksumData, checksumErr := download(ctx, opts.HTTPClient, inspection.DesktopChecksumAsset.URL, 1<<20)
-		if checksumErr != nil {
-			return fmt.Errorf("下载 macOS 桌面校验文件失败: %w", checksumErr)
-		}
-		if checksumErr := verifyChecksum(desktopArchiveData, desktopChecksumData); checksumErr != nil {
-			return fmt.Errorf("macOS 桌面更新文件校验失败，当前版本未被修改: %w", checksumErr)
+		desktopArchiveData := archiveData
+		if inspection.DesktopArchiveAsset.Name != archiveAsset.Name || inspection.DesktopArchiveAsset.URL != archiveAsset.URL {
+			fmt.Fprintf(opts.Output, "正在下载 %s...\n", inspection.DesktopArchiveAsset.Name)
+			var downloadErr error
+			desktopArchiveData, downloadErr = download(ctx, opts.HTTPClient, inspection.DesktopArchiveAsset.URL, maxDesktopArchiveBytes)
+			if downloadErr != nil {
+				return fmt.Errorf("下载桌面组件更新文件失败: %w", downloadErr)
+			}
+			desktopChecksumData, checksumErr := download(ctx, opts.HTTPClient, inspection.DesktopChecksumAsset.URL, 1<<20)
+			if checksumErr != nil {
+				return fmt.Errorf("下载桌面组件校验文件失败: %w", checksumErr)
+			}
+			if checksumErr := verifyChecksum(desktopArchiveData, desktopChecksumData); checksumErr != nil {
+				return fmt.Errorf("桌面组件更新文件校验失败，当前版本未被修改: %w", checksumErr)
+			}
 		}
 		desktopStagedPath, err = opts.ExtractDesktop(ctx, desktopArchiveData, tempDir, targetVersion)
 		if err != nil {
-			return fmt.Errorf("解压 macOS 桌面更新文件失败: %w", err)
+			return fmt.Errorf("解压桌面组件更新文件失败: %w", err)
 		}
-		fmt.Fprintln(opts.Output, "macOS 桌面更新文件校验通过")
+		fmt.Fprintln(opts.Output, "桌面组件更新文件校验通过")
 	}
 
 	fmt.Fprintln(opts.Output, "正在备份并安装新版本...")
@@ -264,39 +268,39 @@ func runDesktopOnlyUpdate(ctx context.Context, opts options, inspection updateIn
 	asset := inspection.DesktopArchiveAsset
 	checksumAsset := inspection.DesktopChecksumAsset
 	if asset.Name == "" || checksumAsset.Name == "" {
-		return errors.New("macOS 桌面更新缺少 AgentDock.app Release 资源")
+		return errors.New("桌面组件更新缺少 Release 资源")
 	}
 
 	fmt.Fprintf(opts.Output, "当前版本：%s\n最新版本：%s\n\n", inspection.Result.CurrentVersion, targetVersion)
 	fmt.Fprintf(opts.Output, "正在下载 %s...\n", asset.Name)
 	archiveData, err := download(ctx, opts.HTTPClient, asset.URL, maxDesktopArchiveBytes)
 	if err != nil {
-		return fmt.Errorf("下载 macOS 桌面更新文件失败: %w", err)
+		return fmt.Errorf("下载桌面组件更新文件失败: %w", err)
 	}
 	checksumData, err := download(ctx, opts.HTTPClient, checksumAsset.URL, 1<<20)
 	if err != nil {
-		return fmt.Errorf("下载 macOS 桌面校验文件失败: %w", err)
+		return fmt.Errorf("下载桌面组件校验文件失败: %w", err)
 	}
 	if err := verifyChecksum(archiveData, checksumData); err != nil {
-		return fmt.Errorf("macOS 桌面更新文件校验失败，当前版本未被修改: %w", err)
+		return fmt.Errorf("桌面组件更新文件校验失败，当前版本未被修改: %w", err)
 	}
 
 	tempDir, err := os.MkdirTemp("", "agentdock-desktop-update-*")
 	if err != nil {
-		return fmt.Errorf("创建 macOS 桌面更新临时目录失败: %w", err)
+		return fmt.Errorf("创建桌面组件更新临时目录失败: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
-	stagedApp, err := opts.ExtractDesktop(ctx, archiveData, tempDir, targetVersion)
+	stagedDesktop, err := opts.ExtractDesktop(ctx, archiveData, tempDir, targetVersion)
 	if err != nil {
-		return fmt.Errorf("解压 macOS 桌面更新文件失败: %w", err)
+		return fmt.Errorf("解压桌面组件更新文件失败: %w", err)
 	}
-	fmt.Fprintln(opts.Output, "macOS App 校验通过")
+	fmt.Fprintln(opts.Output, "桌面组件校验通过")
 
 	_, err = opts.Apply(ctx, applyRequest{
 		CurrentPath:       opts.ExecutablePath,
 		CurrentVersion:    inspection.Result.CurrentVersion,
 		DesktopTargetPath: opts.DesktopTargetPath,
-		DesktopStagedPath: stagedApp,
+		DesktopStagedPath: stagedDesktop,
 		DesktopOnly:       true,
 		TargetVersion:     targetVersion,
 		Output:            opts.Output,
@@ -321,7 +325,7 @@ func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) 
 
 	desktopVersion := normalizeVersion(opts.DesktopCurrentVersion)
 	desktopNeedsUpdate := false
-	if opts.GOOS == "darwin" && strings.TrimSpace(opts.DesktopTargetPath) != "" {
+	if strings.TrimSpace(opts.DesktopTargetPath) != "" {
 		comparison, comparable := compareVersions(desktopVersion, targetVersion)
 		desktopNeedsUpdate = desktopVersion == "" || !comparable || comparison < 0
 	}
@@ -376,13 +380,21 @@ func inspectUpdate(ctx context.Context, opts options) (updateInspection, error) 
 	desktopArchiveAsset := releaseAsset{}
 	desktopChecksumAsset := releaseAsset{}
 	if desktopNeedsUpdate {
-		desktopArchiveAsset, ok = findAsset(latest.Assets, macOSDesktopArchiveName)
-		if !ok {
-			return updateInspection{}, fmt.Errorf("Release %s 缺少 macOS 桌面更新文件 %s", targetVersion, macOSDesktopArchiveName)
-		}
-		desktopChecksumAsset, ok = findAsset(latest.Assets, macOSDesktopArchiveName+".sha256")
-		if !ok {
-			return updateInspection{}, fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, macOSDesktopArchiveName)
+		switch opts.GOOS {
+		case "darwin":
+			desktopArchiveAsset, ok = findAsset(latest.Assets, macOSDesktopArchiveName)
+			if !ok {
+				return updateInspection{}, fmt.Errorf("Release %s 缺少 macOS 桌面更新文件 %s", targetVersion, macOSDesktopArchiveName)
+			}
+			desktopChecksumAsset, ok = findAsset(latest.Assets, macOSDesktopArchiveName+".sha256")
+			if !ok {
+				return updateInspection{}, fmt.Errorf("Release %s 缺少校验文件 %s.sha256", targetVersion, macOSDesktopArchiveName)
+			}
+		case "windows":
+			// Windows 控制面板与核心位于同一个 Release ZIP；复用已经校验过的归档，
+			// 避免同一次升级重复下载数百 MB 文件。
+			desktopArchiveAsset = archiveAsset
+			desktopChecksumAsset = checksumAsset
 		}
 	}
 

@@ -125,6 +125,69 @@ func TestInspectUpdateRepairsOlderDesktopWhenCoreIsCurrent(t *testing.T) {
 	}
 }
 
+func TestInspectUpdateUsesWindowsReleaseBundleForDesktopUpdate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.7.5",
+			Assets: []releaseAsset{
+				{Name: "agentdock_windows_amd64.zip", URL: "https://example.invalid/windows"},
+				{Name: "agentdock_windows_amd64.zip.sha256", URL: "https://example.invalid/windows.sha256"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	inspection, err := inspectUpdate(context.Background(), options{
+		CurrentVersion:        "0.7.4",
+		DesktopTargetPath:     `C:\Users\test\AppData\Local\AgentDock`,
+		DesktopCurrentVersion: "0.7.4",
+		GOOS:                  "windows",
+		GOARCH:                "amd64",
+		ReleaseAPI:            server.URL,
+		HTTPClient:            server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Result.UpdateAvailable || !inspection.Result.DesktopUpdateAvailable {
+		t.Fatalf("Windows desktop update was not reported: %#v", inspection.Result)
+	}
+	if inspection.DesktopArchiveAsset != inspection.ArchiveAsset || inspection.DesktopChecksumAsset != inspection.ChecksumAsset {
+		t.Fatalf("Windows desktop update must reuse the platform archive: %#v", inspection)
+	}
+}
+
+func TestInspectUpdateRepairsMissingWindowsDesktopMarkerWhenCoreIsCurrent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.7.5",
+			Assets: []releaseAsset{
+				{Name: "agentdock_windows_amd64.zip", URL: "https://example.invalid/windows"},
+				{Name: "agentdock_windows_amd64.zip.sha256", URL: "https://example.invalid/windows.sha256"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	inspection, err := inspectUpdate(context.Background(), options{
+		CurrentVersion:    "0.7.5",
+		DesktopTargetPath: `C:\Users\test\AppData\Local\AgentDock`,
+		GOOS:              "windows",
+		GOARCH:            "amd64",
+		ReleaseAPI:        server.URL,
+		HTTPClient:        server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inspection.Result.UpdateAvailable || !inspection.Result.DesktopUpdateAvailable {
+		t.Fatalf("missing Windows desktop marker was not repairable: %#v", inspection.Result)
+	}
+	if inspection.DesktopArchiveAsset != inspection.ArchiveAsset {
+		t.Fatalf("Windows desktop repair did not reuse the release archive: %#v", inspection)
+	}
+}
+
 func TestInspectUpdateRejectsMacOSReleaseWithoutDesktopAsset(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(release{
@@ -370,6 +433,70 @@ func TestRunDesktopOnlyDoesNotRequireCoreAsset(t *testing.T) {
 	}
 	if !applied {
 		t.Fatal("desktop-only update was not applied")
+	}
+}
+
+func TestRunRepairsWindowsDesktopOnlyWhenCoreIsCurrent(t *testing.T) {
+	desktopArchive := []byte("windows-release-bundle")
+	desktopDigest := sha256.Sum256(desktopArchive)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/release":
+			_ = json.NewEncoder(w).Encode(release{
+				TagName: "v0.7.5",
+				Assets: []releaseAsset{
+					{Name: "agentdock_windows_amd64.zip", URL: server.URL + "/windows"},
+					{Name: "agentdock_windows_amd64.zip.sha256", URL: server.URL + "/windows.sha256"},
+				},
+			})
+		case "/windows":
+			_, _ = w.Write(desktopArchive)
+		case "/windows.sha256":
+			fmt.Fprintf(w, "%s  agentdock_windows_amd64.zip\n", hex.EncodeToString(desktopDigest[:]))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	extracted := false
+	applied := false
+	err := run(context.Background(), options{
+		CurrentVersion:        "0.7.5",
+		ExecutablePath:        `C:\Users\test\AppData\Local\AgentDock\bin\agentdock.exe`,
+		DesktopTargetPath:     `C:\Users\test\AppData\Local\AgentDock`,
+		DesktopCurrentVersion: "0.7.4",
+		GOOS:                  "windows",
+		GOARCH:                "amd64",
+		ReleaseAPI:            server.URL + "/release",
+		HTTPClient:            server.Client(),
+		Output:                io.Discard,
+		VerifyBinary:          func(context.Context, string, string) error { return nil },
+		ExtractDesktop: func(_ context.Context, data []byte, tempDir, targetVersion string) (string, error) {
+			extracted = true
+			if string(data) != string(desktopArchive) || targetVersion != "v0.7.5" {
+				return "", fmt.Errorf("unexpected Windows desktop payload")
+			}
+			path := filepath.Join(tempDir, "windows-desktop")
+			if err := os.Mkdir(path, 0o700); err != nil {
+				return "", err
+			}
+			return path, nil
+		},
+		Apply: func(_ context.Context, request applyRequest) (applyResult, error) {
+			applied = true
+			if !request.DesktopOnly || request.StagedPath != "" || request.BundlePath != "" || request.TargetVersion != "v0.7.5" {
+				t.Fatalf("unexpected Windows desktop-only request: %#v", request)
+			}
+			return applyResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !extracted || !applied {
+		t.Fatalf("Windows desktop repair flow incomplete: extracted=%v applied=%v", extracted, applied)
 	}
 }
 
