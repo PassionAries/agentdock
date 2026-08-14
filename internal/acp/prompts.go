@@ -285,9 +285,9 @@ func (m *Manager) startHostOwnedSteering(ctx context.Context, process *agentProc
 		if err := m.CancelPrompt(ctx, sessionID, cancelledRunID); err != nil && errorCode(err) != "ACP_RUN_SETTLED" {
 			return nil, err
 		}
-		// claude-agent-acp <= 0.64.2 keeps the cancelled SDK query in the
-		// in-memory session object. A standard close/load cycle tears down that
-		// object while retaining the adapter-owned transcript and session id.
+		// Affected adapters can retain cancelled turn state in memory. A standard
+		// close/load cycle resets that state while preserving the adapter-owned
+		// transcript whenever the remote session already has persisted history.
 		if !process.supportsLoadSession() || !process.supportsSessionCapability("close") {
 			return nil, capabilityError("loadSession + sessionCapabilities.close")
 		}
@@ -297,8 +297,25 @@ func (m *Manager) startHostOwnedSteering(ctx context.Context, process *agentProc
 		}
 		var loaded sessionLifecycleResponse
 		if err := process.connection.Request(ctx, "session/load", sessionActivationParams(record), &loaded); err != nil {
-			m.markSessionInterrupted(record, "steering_reload_failed")
-			return nil, process.wrapError("reload ACP session after steering cancellation", err)
+			wrapped := process.wrapError("reload ACP session after steering cancellation", err)
+			if !isCodexNoRolloutError(process.initialize.AgentInfo, wrapped) {
+				m.markSessionInterrupted(record, "steering_reload_failed")
+				return nil, wrapped
+			}
+
+			// codex-acp 1.1.9 cannot reload a cancelled first turn before any
+			// rollout exists. The cancelled turn has no transcript to preserve, so
+			// recreate only the remote thread while keeping the AgentDock session.
+			if err := process.connection.Request(ctx, "session/new", sessionCreationParams(record.CWD, record.AdditionalDirectories), &loaded); err != nil {
+				m.markSessionInterrupted(record, "steering_recreate_failed")
+				return nil, process.wrapError("recreate ACP session after unpersisted steering cancellation", err)
+			}
+			updatedRecord, rebindErr := m.rebindRemoteSession(record, loaded)
+			if rebindErr != nil {
+				m.markSessionInterrupted(record, "steering_rebind_failed")
+				return nil, rebindErr
+			}
+			record = updatedRecord
 		}
 		if err := m.restoreSessionMode(ctx, process, record, &loaded); err != nil {
 			m.markSessionInterrupted(record, "steering_mode_restore_failed")

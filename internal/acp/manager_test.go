@@ -718,7 +718,7 @@ func TestACPHelperProcess(t *testing.T) {
 				"configOptions": []map[string]any{{"id": "safe", "name": "Safe", "type": "boolean", "currentValue": true}},
 			})
 		case "session/load", "session/resume":
-			if promptMode == "codex_no_rollout" {
+			if promptMode == "codex_no_rollout" || promptMode == "codex_no_rollout_steer" {
 				_ = encoder.Encode(rpcMessage{JSONRPC: "2.0", ID: message.ID, Error: &rpcError{Code: -32603, Message: "Internal error", Data: testMarshalRaw(map[string]any{"details": "no rollout found for thread id remote"})}})
 			} else {
 				writeHelperResult(encoder, message.ID, map[string]any{
@@ -785,8 +785,8 @@ func handleHelperPrompt(scanner *bufio.Scanner, encoder *json.Encoder, prompt rp
 		writeHelperResult(encoder, prompt.ID, map[string]any{"stopReason": "end_turn"})
 		return
 	}
-	if mode == "claude_steer_fallback" || mode == "steering_reset_failure" {
-		handleClaudeSteeringFallbackPrompt(scanner, encoder, prompt, promptParams.SessionID, promptCount)
+	if mode == "claude_steer_fallback" || mode == "steering_reset_failure" || mode == "codex_no_rollout_steer" {
+		handleSteeringFallbackPrompt(scanner, encoder, prompt, promptParams.SessionID, promptCount)
 		return
 	}
 	if mode == "codex_false_success" || mode == "codex_recovered" {
@@ -835,7 +835,7 @@ func handleHelperPrompt(scanner *bufio.Scanner, encoder *json.Encoder, prompt rp
 	os.Exit(5)
 }
 
-func handleClaudeSteeringFallbackPrompt(scanner *bufio.Scanner, encoder *json.Encoder, prompt rpcMessage, sessionID string, promptCount int) {
+func handleSteeringFallbackPrompt(scanner *bufio.Scanner, encoder *json.Encoder, prompt rpcMessage, sessionID string, promptCount int) {
 	if promptCount == 1 {
 		for scanner.Scan() {
 			var message rpcMessage

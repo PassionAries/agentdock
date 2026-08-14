@@ -204,3 +204,51 @@ func TestCodexSteeringFallbackCancelsOldRunAndStartsObservableTurn(t *testing.T)
 		t.Fatalf("fallback run = %#v", completed)
 	}
 }
+
+func TestCodexFirstTurnSteeringFallbackRecreatesUnpersistedRemoteSession(t *testing.T) {
+	workspace := t.TempDir()
+	manager, err := newTestManagerWithAgent(t.TempDir(), workspace, codexACPName, "1.1.9", "codex_no_rollout_steer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = manager.Close() }()
+
+	created, err := manager.NewSession(context.Background(), workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetSessionMode(context.Background(), created.Session.ID, "review"); err != nil {
+		t.Fatal(err)
+	}
+	original, err := manager.StartPrompt(context.Background(), created.Session.ID, "original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steering, err := manager.Steer(context.Background(), created.Session.ID, "STEERED")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steering["outcome"] != "startedNewTurn" || steering["reason"] != "codex_streaming_compatibility" {
+		t.Fatalf("steering result = %#v", steering)
+	}
+	cancelled := waitForSettledRun(t, manager, original.RunID)
+	if cancelled.Status != RunCancelled {
+		t.Fatalf("original run = %#v", cancelled)
+	}
+	newRunID, _ := steering["runId"].(string)
+	completed := waitForSettledRun(t, manager, newRunID)
+	if completed.Status != RunCompleted {
+		t.Fatalf("replacement run = %#v", completed)
+	}
+
+	recovered, err := manager.LoadSession(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Session.RemoteSessionID == created.Session.RemoteSessionID {
+		t.Fatalf("unpersisted remote session was not replaced: %q", recovered.Session.RemoteSessionID)
+	}
+	if recovered.Session.ModeID != "review" || sessionModeID(t, recovered.Modes) != "review" {
+		t.Fatalf("recovered mode = stored %q, response %#v", recovered.Session.ModeID, recovered.Modes)
+	}
+}

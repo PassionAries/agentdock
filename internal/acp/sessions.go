@@ -67,10 +67,7 @@ func (m *Manager) NewSession(ctx context.Context, cwd string, additionalDirector
 	if len(additional) > 0 && !process.supportsSessionCapability("additionalDirectories") {
 		return SessionResult{}, capabilityError("sessionCapabilities.additionalDirectories")
 	}
-	params := map[string]any{"cwd": resolved, "mcpServers": []any{}}
-	if len(additional) > 0 {
-		params["additionalDirectories"] = additional
-	}
+	params := sessionCreationParams(resolved, additional)
 	var response sessionLifecycleResponse
 	if err := process.connection.Request(ctx, "session/new", params, &response); err != nil {
 		return SessionResult{}, process.wrapError("create ACP session", err)
@@ -546,12 +543,52 @@ func (m *Manager) markSessionReady(record SessionRecord, state sessionLifecycleR
 	return record, nil
 }
 
-func sessionActivationParams(record SessionRecord) map[string]any {
-	params := map[string]any{"sessionId": record.RemoteSessionID, "cwd": record.CWD, "mcpServers": []any{}}
-	if len(record.AdditionalDirectories) > 0 {
-		params["additionalDirectories"] = record.AdditionalDirectories
+func sessionCreationParams(cwd string, additional []string) map[string]any {
+	params := map[string]any{"cwd": cwd, "mcpServers": []any{}}
+	if len(additional) > 0 {
+		params["additionalDirectories"] = additional
 	}
 	return params
+}
+
+func sessionActivationParams(record SessionRecord) map[string]any {
+	params := sessionCreationParams(record.CWD, record.AdditionalDirectories)
+	params["sessionId"] = record.RemoteSessionID
+	return params
+}
+
+func (m *Manager) rebindRemoteSession(record SessionRecord, state sessionLifecycleResponse) (SessionRecord, error) {
+	remoteID := strings.TrimSpace(state.SessionID)
+	if remoteID == "" {
+		return SessionRecord{}, newError("ACP_INVALID_RESPONSE", "ACP session/new omitted sessionId during recovery", false, map[string]any{"session_id": record.ID}, nil)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return SessionRecord{}, newError("ACP_MANAGER_CLOSED", "ACP manager is closed", false, nil, nil)
+	}
+	current, exists := m.sessions[record.ID]
+	if !exists {
+		return SessionRecord{}, newError("ACP_SESSION_NOT_FOUND", "ACP session was not found", false, map[string]any{"session_id": record.ID}, nil)
+	}
+	if current.RemoteSessionID != record.RemoteSessionID {
+		return SessionRecord{}, newError("ACP_SESSION_STATE_INVALID", "ACP session remote id changed during recovery", false, map[string]any{"session_id": record.ID}, nil)
+	}
+	if existing := m.remoteToLocal[remoteID]; existing != "" && existing != record.ID {
+		return SessionRecord{}, newError("ACP_INVALID_RESPONSE", "ACP agent reused an existing remote session id", false, map[string]any{"remote_session_id": remoteID, "existing_session_id": existing}, nil)
+	}
+
+	current.RemoteSessionID = remoteID
+	current.UpdatedAt = time.Now().UTC()
+	if err := m.store.Save(current); err != nil {
+		return SessionRecord{}, err
+	}
+	delete(m.remoteToLocal, record.RemoteSessionID)
+	m.remoteToLocal[remoteID] = record.ID
+	m.sessions[record.ID] = current
+	delete(m.loaded, record.ID)
+	return current, nil
 }
 
 func typeName(value any) string {
