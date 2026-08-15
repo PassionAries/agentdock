@@ -217,26 +217,21 @@ func InputSchema(name string) map[string]any {
 		props["include_body"] = boolProp("Include section body text in recall_bootstrap. Defaults to false; prefer recall_read for targeted full text.")
 	case "recall_search":
 		props["query"] = stringProp("Text query to search in NexusDock Recall files and paths.")
-		props["kind"] = map[string]any{"type": "string", "description": "Search kind. Defaults to all.", "enum": []string{"all", "markdown", "card", "note"}}
-		props["note_scope"] = map[string]any{"type": "string", "description": "Note only: notes scope to search or capture.", "enum": []string{"questions", "github-learning"}}
+		props["kind"] = map[string]any{"type": "string", "description": "Search kind. Defaults to all.", "enum": []string{"all", "markdown", "card"}}
 		props["max_results"] = intProp("Maximum results to return.")
 		required = []string{"query"}
 	case "recall_read":
-		props["path"] = stringProp("NexusDock Recall-relative Markdown/card/note path.")
+		props["path"] = stringProp("NexusDock Recall-relative Markdown or card path.")
 		props["include_raw"] = boolProp("Include raw Markdown as raw_content. Defaults to false to avoid duplicating body/content tokens.")
 		required = []string{"path"}
 	case "recall_write":
-		props["target"] = map[string]any{"type": "string", "description": "Recall target selected by the model.", "enum": []string{"card", "note", "markdown"}}
+		props["target"] = map[string]any{"type": "string", "description": "Recall target selected by the model.", "enum": []string{"card", "markdown"}}
 		props["action"] = map[string]any{"type": "string", "description": "Recall action selected by the model.", "enum": []string{"plan", "create", "replace", "append", "patch", "update_fact", "diff", "delete"}}
-		props["confirmed"] = boolProp("Required for true writes/deletes. card/note create with confirmed=false returns a review plan.")
+		props["confirmed"] = boolProp("Required for true writes/deletes. card create with confirmed=false returns a review plan.")
 		props["path"] = stringProp("NexusDock Recall-relative path when reading, updating, deleting, or writing a known entry.")
-		props["content"] = stringProp("Memory content, note content, Markdown content, or proposed replacement content.")
+		props["content"] = stringProp("Card or Markdown content, or proposed replacement content.")
 		props["title"] = stringProp("Short title for a card or Markdown entry.")
-		props["summary"] = stringProp("Short summary for a card or note.")
-		props["query"] = stringProp("Search question or topic used by note planning.")
-		props["note_scope"] = map[string]any{"type": "string", "description": "Note only: notes scope to search, capture, or write. Defaults to questions; github-learning is for GitHub learning notes.", "enum": []string{"questions", "github-learning"}}
-		props["conclusion"] = stringProp("Note only: optional conclusion or current answer for the captured question.")
-		props["open_questions"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Note only: unresolved follow-up questions."}
+		props["summary"] = stringProp("Short summary for a card.")
 		props["overwrite"] = boolProp("Replace an existing entry when supported.")
 		props["allow_warnings"] = boolProp("Card only: after reviewing warnings, allow writing a warned card. Do not use by default.")
 		props["old"] = stringProp("Patch only: literal text to replace.")

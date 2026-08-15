@@ -115,6 +115,22 @@ func (svc *Service) memoryPatch(ctx context.Context, args map[string]any) (Resul
 	return result, nil
 }
 
+func (svc *Service) memoryAppend(ctx context.Context, args map[string]any) (Result, error) {
+	appendText := firstNonEmptyString(args, "append", "content")
+	if strings.TrimSpace(appendText) == "" {
+		return nil, toolError("MISSING_CONTENT", "append or content is required", "validation")
+	}
+	patchArgs := map[string]any{
+		"path":      stringArg(args, "path", ""),
+		"append":    appendText,
+		"confirmed": boolArg(args, "confirmed", false),
+	}
+	if maxBytes := intArg(args, "max_bytes", 0); maxBytes > 0 {
+		patchArgs["max_bytes"] = maxBytes
+	}
+	return svc.memoryPatch(ctx, patchArgs)
+}
+
 func (svc *Service) memoryUpdateFact(ctx context.Context, args map[string]any) (Result, error) {
 	p := strings.TrimSpace(stringArg(args, "path", ""))
 	if p == "" {

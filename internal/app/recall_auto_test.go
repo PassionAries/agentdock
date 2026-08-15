@@ -94,6 +94,47 @@ func TestRecallWriteMarkdownDiffDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestRecallWriteMarkdownAppendUsesGenericMarkdownFlow(t *testing.T) {
+	store := map[string]string{"projects/demo/project.md": "# Demo\nold\n"}
+	rt, closeServer := newMemoryTestRuntime(t, store)
+	defer closeServer()
+
+	res, err := rt.recallWrite(context.Background(), map[string]any{
+		"target":    "markdown",
+		"action":    "append",
+		"path":      "projects/demo/project.md",
+		"content":   "new\n",
+		"confirmed": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store["projects/demo/project.md"]; got != "# Demo\nold\nnew\n" {
+		t.Fatalf("append should update the existing Markdown document, got %q", got)
+	}
+	if got, _ := res["recall_action"].(string); got != "append" {
+		t.Fatalf("expected append action, got %#v", res)
+	}
+}
+
+func TestRecallWriteRejectsRemovedNoteTarget(t *testing.T) {
+	store := map[string]string{}
+	rt, closeServer := newMemoryTestRuntime(t, store)
+	defer closeServer()
+
+	_, err := rt.recallWrite(context.Background(), map[string]any{
+		"target":  "note",
+		"action":  "create",
+		"content": "removed",
+	})
+	if err == nil {
+		t.Fatal("expected removed note target to be rejected")
+	}
+	if len(store) != 0 {
+		t.Fatalf("removed note target must not write, store=%#v", store)
+	}
+}
+
 func TestRecallMaintainReindexCardsUsesCanonicalPrefix(t *testing.T) {
 	var gotPrefix string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

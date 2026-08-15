@@ -19,15 +19,6 @@ func (svc *Service) Bootstrap(ctx context.Context, args map[string]any) (Result,
 func (svc *Service) Search(ctx context.Context, args map[string]any) (Result, error) {
 	kind := strings.ToLower(strings.TrimSpace(stringArg(args, "kind", "all")))
 	switch kind {
-	case "note", "notes":
-		result, err := svc.notesSearch(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-		decorateRecallResult(result)
-		relabelRecallWriteResult(result)
-		result["recall_kind"] = "note"
-		return result, nil
 	case "card", "cards":
 		result, err := svc.memorySearch(ctx, recallSearchArgs(args, recallCardsPrefix))
 		if err != nil {
@@ -69,7 +60,7 @@ func (svc *Service) Write(ctx context.Context, args map[string]any) (Result, err
 	target := strings.ToLower(strings.TrimSpace(stringArg(args, "target", "")))
 	action := strings.ToLower(strings.TrimSpace(stringArg(args, "action", "")))
 	if target == "" || action == "" {
-		return nil, toolErrorDetails("MISSING_RECALL_TARGET_ACTION", "recall_write requires target and action", "validation", map[string]any{"targets": []string{"card", "note", "markdown"}, "actions": []string{"plan", "create", "replace", "append", "patch", "update_fact", "diff", "delete"}})
+		return nil, toolErrorDetails("MISSING_RECALL_TARGET_ACTION", "recall_write requires target and action", "validation", map[string]any{"targets": []string{"card", "markdown"}, "actions": []string{"plan", "create", "replace", "append", "patch", "update_fact", "diff", "delete"}})
 	}
 
 	var result Result
@@ -88,26 +79,12 @@ func (svc *Service) Write(ctx context.Context, args map[string]any) (Result, err
 		default:
 			return nil, invalidRecallTargetAction(target, action)
 		}
-	case "note", "notes":
-		target = "note"
-		switch action {
-		case "plan":
-			result, err = svc.notesCapture(ctx, args)
-		case "create":
-			if boolArg(args, "confirmed", false) {
-				result, err = svc.notesWrite(ctx, args)
-			} else {
-				result, err = svc.notesCapture(ctx, args)
-			}
-		default:
-			return nil, invalidRecallTargetAction(target, action)
-		}
 	case "markdown":
 		switch action {
 		case "create", "replace":
 			result, err = svc.memoryWrite(ctx, args)
 		case "append":
-			result, err = svc.memoryAppendNote(ctx, args)
+			result, err = svc.memoryAppend(ctx, args)
 		case "patch":
 			result, err = svc.memoryPatch(ctx, args)
 		case "update_fact":
@@ -120,7 +97,7 @@ func (svc *Service) Write(ctx context.Context, args map[string]any) (Result, err
 			return nil, invalidRecallTargetAction(target, action)
 		}
 	default:
-		return nil, toolErrorDetails("INVALID_RECALL_TARGET", "unsupported recall_write target", "validation", map[string]any{"target": target, "allowed": []string{"card", "note", "markdown"}})
+		return nil, toolErrorDetails("INVALID_RECALL_TARGET", "unsupported recall_write target", "validation", map[string]any{"target": target, "allowed": []string{"card", "markdown"}})
 	}
 	if err != nil {
 		return nil, err
@@ -210,7 +187,6 @@ func relabelRecallWriteResult(result Result) {
 		}
 	}
 	delete(result, "recall_card_tool")
-	delete(result, "recall_note_tool")
 }
 
 func decorateRecallResult(result Result) {

@@ -6,6 +6,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 const recallCardsPrefix = "recall/managed/cards"
@@ -94,7 +95,7 @@ func (svc *Service) memoryCardWrite(ctx context.Context, args map[string]any) (R
 		p = memoryCardPath(card)
 	}
 	p = path.Clean(p)
-	if !strings.HasPrefix(p, recallCardsPrefix+"/") || hasUnsafeNotesPathSegment(p) {
+	if !strings.HasPrefix(p, recallCardsPrefix+"/") || hasUnsafeCardPathSegment(p) {
 		return nil, toolErrorDetails("INVALID_RECALL_CARD_PATH", "recall_write only writes under recall/managed/cards/ with safe path segments", "validation", map[string]any{"path": p})
 	}
 
@@ -188,7 +189,7 @@ func memoryCardWarnings(card MemoryCardSpec) []string {
 	if len(contentRunes) < 20 {
 		warnings = append(warnings, "content is very short; make the reusable action explicit")
 	}
-	if hasNotesSensitiveMarker(card.Title + "\n" + card.Content + "\n" + card.Evidence) {
+	if hasCardSensitiveMarker(card.Title + "\n" + card.Content + "\n" + card.Evidence) {
 		warnings = append(warnings, "content looks like it may contain credential material")
 	}
 	lower := strings.ToLower(card.Content)
@@ -226,11 +227,11 @@ func normalizedMemoryCardTags(tags []string) []string {
 }
 
 func memoryCardPath(card MemoryCardSpec) string {
-	project := notesSlug(card.Project)
+	project := cardSlug(card.Project)
 	if project == "" {
 		project = "global"
 	}
-	slug := notesSlug(card.Title)
+	slug := cardSlug(card.Title)
 	if slug == "" {
 		slug = "untitled"
 	}
@@ -277,6 +278,51 @@ func memoryCardResult(card MemoryCardSpec) Result {
 		"tags":       card.Tags,
 		"boundary":   card.Boundary,
 	}
+}
+
+func cardSlug(value string) string {
+	value = strings.ToLower(value)
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if r > unicode.MaxASCII && unicode.IsLetter(r) {
+			builder.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && builder.Len() > 0 {
+			builder.WriteRune('-')
+			lastDash = true
+		}
+		if builder.Len() >= 48 {
+			break
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func hasUnsafeCardPathSegment(value string) bool {
+	for _, segment := range strings.Split(value, "/") {
+		if segment == ".." || strings.HasPrefix(segment, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCardSensitiveMarker(content string) bool {
+	lower := strings.ToLower(content)
+	for _, marker := range []string{"begin private key", "github_pat_", "ghp_", "xoxb-", "sk-"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func yamlSingleLine(value string) string {

@@ -150,21 +150,6 @@ func (svc *Service) memorySearch(ctx context.Context, args map[string]any) (Resu
 	return svc.Request(ctx, http.MethodPost, "/v1/recall/search", payload)
 }
 
-func (svc *Service) memoryAppendNote(ctx context.Context, args map[string]any) (Result, error) {
-	content := strings.TrimSpace(stringArg(args, "content", ""))
-	if content == "" {
-		return nil, toolError("MISSING_CONTENT", "content is required", "validation")
-	}
-	payload := map[string]any{"content": content}
-	if scope := strings.TrimSpace(stringArg(args, "scope", "")); scope != "" {
-		payload["scope"] = scope
-	}
-	if name := strings.TrimSpace(stringArg(args, "name", "")); name != "" {
-		payload["name"] = name
-	}
-	return svc.Request(ctx, http.MethodPost, "/v1/recall/notes/append", payload)
-}
-
 func (svc *Service) memoryWrite(ctx context.Context, args map[string]any) (Result, error) {
 	content := stringArg(args, "content", "")
 	if strings.TrimSpace(content) == "" {

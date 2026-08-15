@@ -26,12 +26,3 @@ func (s *Service) MemoryCardCapture(ctx context.Context, args map[string]any) (R
 func (s *Service) MemoryCardWrite(ctx context.Context, args map[string]any) (Result, error) {
 	return s.memoryCardWrite(ctx, args)
 }
-func (s *Service) NotesSearch(ctx context.Context, args map[string]any) (Result, error) {
-	return s.notesSearch(ctx, args)
-}
-func (s *Service) NotesCapture(ctx context.Context, args map[string]any) (Result, error) {
-	return s.notesCapture(ctx, args)
-}
-func (s *Service) NotesWrite(ctx context.Context, args map[string]any) (Result, error) {
-	return s.notesWrite(ctx, args)
-}

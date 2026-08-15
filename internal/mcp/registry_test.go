@@ -322,32 +322,34 @@ func TestLegacyModelEntrypointsAreRemoved(t *testing.T) {
 
 func TestRecallModelChoiceFieldsUseEnums(t *testing.T) {
 	searchProps := schemaProperties(t, "recall_search")
-	for _, want := range []string{"all", "markdown", "card", "note"} {
+	for _, want := range []string{"all", "markdown", "card"} {
 		if !containsString(enumStrings(t, searchProps["kind"]), want) {
 			t.Fatalf("recall_search kind enum missing %s: %#v", want, searchProps["kind"])
 		}
 	}
-	for _, want := range []string{"questions", "github-learning"} {
-		if !containsString(enumStrings(t, searchProps["note_scope"]), want) {
-			t.Fatalf("recall_search note_scope enum missing %s: %#v", want, searchProps["note_scope"])
-		}
+	if containsString(enumStrings(t, searchProps["kind"]), "note") {
+		t.Fatalf("recall_search kind enum should not expose note: %#v", searchProps["kind"])
+	}
+	if _, ok := searchProps["note_scope"]; ok {
+		t.Fatal("recall_search should not expose note_scope")
 	}
 
 	writeProps := schemaProperties(t, "recall_write")
-	for _, want := range []string{"card", "note", "markdown"} {
+	for _, want := range []string{"card", "markdown"} {
 		if !containsString(enumStrings(t, writeProps["target"]), want) {
 			t.Fatalf("recall_write target enum missing %s: %#v", want, writeProps["target"])
 		}
+	}
+	if containsString(enumStrings(t, writeProps["target"]), "note") {
+		t.Fatalf("recall_write target enum should not expose note: %#v", writeProps["target"])
 	}
 	for _, want := range []string{"plan", "create", "replace", "append", "patch", "update_fact", "diff", "delete"} {
 		if !containsString(enumStrings(t, writeProps["action"]), want) {
 			t.Fatalf("recall_write action enum missing %s: %#v", want, writeProps["action"])
 		}
 	}
-	for _, want := range []string{"questions", "github-learning"} {
-		if !containsString(enumStrings(t, writeProps["note_scope"]), want) {
-			t.Fatalf("recall_write note_scope enum missing %s: %#v", want, writeProps["note_scope"])
-		}
+	if _, ok := writeProps["note_scope"]; ok {
+		t.Fatal("recall_write should not expose note_scope")
 	}
 
 	maintainProps := schemaProperties(t, "recall_maintain")
@@ -409,7 +411,7 @@ func TestRecallToolDescriptionsMatchCompactModelEntrypoints(t *testing.T) {
 			t.Fatalf("recall_write description should not advertise legacy alias %q: %q", legacy, writeDef.Description)
 		}
 	}
-	for _, required := range []string{"target=card/note/markdown", "action"} {
+	for _, required := range []string{"target=card/markdown", "action"} {
 		if !strings.Contains(writeDef.Description, required) {
 			t.Fatalf("recall_write description missing %q: %q", required, writeDef.Description)
 		}
@@ -422,12 +424,12 @@ func TestRecallWriteSchemaExposesCompactCoreFields(t *testing.T) {
 	if !ok {
 		t.Fatal("recall_write input schema properties missing")
 	}
-	for _, name := range []string{"target", "action", "title", "content", "summary", "query", "note_scope", "confirmed", "path", "overwrite", "max_bytes", "old", "new", "append", "section", "section_content", "key", "value", "facts", "append_if_missing", "allow_warnings", "conclusion", "open_questions"} {
+	for _, name := range []string{"target", "action", "title", "content", "summary", "confirmed", "path", "overwrite", "max_bytes", "old", "new", "append", "section", "section_content", "key", "value", "facts", "append_if_missing", "allow_warnings"} {
 		if _, ok := inputProps[name]; !ok {
 			t.Fatalf("recall_write input schema missing compact core field %q", name)
 		}
 	}
-	for _, name := range []string{"kind", "project", "prefix", "scope", "status", "confidence", "source", "evidence", "boundary", "pattern", "replacement", "operations", "dry_run"} {
+	for _, name := range []string{"kind", "project", "prefix", "scope", "status", "confidence", "source", "evidence", "boundary", "pattern", "replacement", "operations", "dry_run", "query", "note_scope", "conclusion", "open_questions"} {
 		if _, ok := inputProps[name]; ok {
 			t.Fatalf("recall_write input schema should hide advanced/internal field %q", name)
 		}
@@ -482,10 +484,7 @@ func TestRecallSearchSchemaHidesInternalRoutingFields(t *testing.T) {
 	if !ok {
 		t.Fatal("recall_search input schema properties missing")
 	}
-	if _, ok := inputProps["note_scope"]; !ok {
-		t.Fatal("recall_search input schema should expose note_scope for questions/github-learning notes")
-	}
-	for _, name := range []string{"prefix", "scope", "include_search_results"} {
+	for _, name := range []string{"prefix", "scope", "include_search_results", "note_scope"} {
 		if _, ok := inputProps[name]; ok {
 			t.Fatalf("recall_search input schema should hide internal field %q", name)
 		}
@@ -495,8 +494,8 @@ func TestRecallSearchSchemaHidesInternalRoutingFields(t *testing.T) {
 		t.Fatal("recall_search output schema properties missing")
 	}
 	for _, name := range []string{"candidate_paths", "candidates", "search_result_count", "search_results"} {
-		if _, ok := outputProps[name]; !ok {
-			t.Fatalf("recall_search output schema missing %q", name)
+		if _, ok := outputProps[name]; ok {
+			t.Fatalf("recall_search output schema should not expose note-only field %q", name)
 		}
 	}
 }

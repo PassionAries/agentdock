@@ -105,15 +105,6 @@ func (r *Runtime) memoryCardCapture(ctx context.Context, args map[string]any) (R
 func (r *Runtime) memoryCardWrite(ctx context.Context, args map[string]any) (Result, error) {
 	return r.recall.MemoryCardWrite(ctx, args)
 }
-func (r *Runtime) notesSearch(ctx context.Context, args map[string]any) (Result, error) {
-	return r.recall.NotesSearch(ctx, args)
-}
-func (r *Runtime) notesCapture(ctx context.Context, args map[string]any) (Result, error) {
-	return r.recall.NotesCapture(ctx, args)
-}
-func (r *Runtime) notesWrite(ctx context.Context, args map[string]any) (Result, error) {
-	return r.recall.NotesWrite(ctx, args)
-}
 
 type memoryCardSpec = toolrecall.MemoryCardSpec
 type memoryLintFinding = toolrecall.MemoryLintFinding
