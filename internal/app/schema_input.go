@@ -276,7 +276,7 @@ func InputSchema(name string) map[string]any {
 		required = []string{"action"}
 	case "browser_session":
 		props["action"] = map[string]any{"type": "string", "description": "Browser session action.", "enum": []string{"start", "close", "cleanup_stale"}}
-		props["url"] = stringProp("Initial URL for action=start. Defaults to about:blank.")
+		props["url"] = stringProp("Initial URL for action=start. Defaults to about:blank in the AgentDock-managed target.")
 		props["browser"] = map[string]any{"type": "string", "description": "Chromium-family browser to launch. Defaults to auto.", "enum": []string{"auto", "chrome", "chromium", "edge"}}
 		props["headless"] = boolProp("Run the AgentDock-owned browser headless. Defaults to true.")
 		props["viewport"] = map[string]any{
@@ -287,7 +287,8 @@ func InputSchema(name string) map[string]any {
 			},
 		}
 		props["session_id"] = stringProp("In-memory browser session id for action=close.")
-		props["profile_id"] = stringProp("Optional persistent profile id stored under ~/.agentdock/browser/profiles/<id>.")
+		props["profile_id"] = stringProp("Optional persistent profile id stored under ~/.agentdock/browser/profiles/<id>; not valid with an external CDP browser.")
+		props["cdp_url"] = stringProp("Optional loopback Chromium CDP endpoint (http(s) root or ws(s) browser websocket). Remote CDP endpoints must be configured by the user through AgentDock settings. When set, AgentDock attaches and manages only its own dedicated target instead of launching a browser.")
 		props["cookies"] = map[string]any{
 			"type": "array", "description": "Cookies injected when action=start.",
 			"items": map[string]any{

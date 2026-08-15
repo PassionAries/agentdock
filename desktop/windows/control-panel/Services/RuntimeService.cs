@@ -228,6 +228,8 @@ public sealed class RuntimeService : IDisposable
             "--log-level", settings.LogLevel,
             "--nexus-endpoint", settings.NexusEndpoint ?? "",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
+            "--browser-cdp-url", settings.BrowserCdpUrl ?? "",
+            $"--browser-reuse-existing-cdp={settings.BrowserReuseExistingCdp.ToString().ToLowerInvariant()}",
             $"--acp-enabled={settings.AcpEnabled.ToString().ToLowerInvariant()}",
             "--acp-agent", NormalizeAcpAgent(settings.AcpAgent)
         };

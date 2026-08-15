@@ -36,6 +36,8 @@ struct ServiceConfiguration: Equatable {
         "AGENTDOCK_NEXUS_ENDPOINT",
         "AGENTDOCK_NEXUS_TOKEN",
         "AGENTDOCK_BROWSER_ENABLED",
+        "AGENTDOCK_BROWSER_CDP_URL",
+        "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP",
         "AGENTDOCK_ACP_ENABLED",
         "AGENTDOCK_ACP_AGENT",
         "AGENTDOCK_ACP_COMMAND",
@@ -53,6 +55,8 @@ struct ServiceConfiguration: Equatable {
     let nexusEndpoint: String
     let nexusToken: String
     let browserEnabled: Bool
+    let browserCDPURL: String
+    let browserReuseExistingCDP: Bool
     let acpEnabled: Bool
     let acpAgent: ACPAgentPreset
     let acpCommand: String
@@ -101,6 +105,8 @@ struct ServiceConfiguration: Equatable {
             nexusEndpoint: values["AGENTDOCK_NEXUS_ENDPOINT"] ?? "",
             nexusToken: values["AGENTDOCK_NEXUS_TOKEN"] ?? "",
             browserEnabled: parseBool(values["AGENTDOCK_BROWSER_ENABLED"]),
+            browserCDPURL: values["AGENTDOCK_BROWSER_CDP_URL"] ?? "",
+            browserReuseExistingCDP: parseBool(values["AGENTDOCK_BROWSER_REUSE_EXISTING_CDP"]),
             acpEnabled: parseBool(values["AGENTDOCK_ACP_ENABLED"]),
             acpAgent: ACPAgentPreset.parse(values["AGENTDOCK_ACP_AGENT"] ?? "codex"),
             acpCommand: values["AGENTDOCK_ACP_COMMAND"] ?? "",

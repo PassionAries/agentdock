@@ -192,6 +192,7 @@ func TestFromEnvRejectsInvalidTypedValues(t *testing.T) {
 	}{
 		{name: "port", key: "AGENTDOCK_PORT", value: "not-a-number"},
 		{name: "browser enabled", key: "AGENTDOCK_BROWSER_ENABLED", value: "sometimes"},
+		{name: "browser reuse existing cdp", key: "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP", value: "sometimes"},
 		{name: "oauth enabled", key: "AGENTDOCK_OAUTH_ENABLED", value: "enabled"},
 		{name: "oauth access token ttl", key: "AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", value: "one-day"},
 		{name: "stdio", key: "AGENTDOCK_STDIO", value: "enabled"},
@@ -200,6 +201,7 @@ func TestFromEnvRejectsInvalidTypedValues(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("AGENTDOCK_PORT", "")
 			t.Setenv("AGENTDOCK_BROWSER_ENABLED", "")
+			t.Setenv("AGENTDOCK_BROWSER_REUSE_EXISTING_CDP", "")
 			t.Setenv("AGENTDOCK_OAUTH_ENABLED", "")
 			t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "")
 			t.Setenv("AGENTDOCK_STDIO", "")
@@ -217,6 +219,8 @@ func TestFromEnvParsesTypedValues(t *testing.T) {
 	t.Setenv("AGENTDOCK_PORT", " 9876 ")
 	t.Setenv("AGENTDOCK_BROWSER_ENABLED", "true")
 	t.Setenv("AGENTDOCK_BROWSER_EXECUTABLE_PATH", browserPath)
+	t.Setenv("AGENTDOCK_BROWSER_CDP_URL", "http://127.0.0.1:9222")
+	t.Setenv("AGENTDOCK_BROWSER_REUSE_EXISTING_CDP", "true")
 	t.Setenv("AGENTDOCK_OAUTH_ENABLED", "true")
 	t.Setenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL", "24h")
 	t.Setenv("AGENTDOCK_STDIO", "1")
@@ -225,7 +229,7 @@ func TestFromEnvParsesTypedValues(t *testing.T) {
 		t.Fatalf("FromEnv() error = %v", err)
 	}
 	if cfg.Port != 9876 || !cfg.BrowserEnabled || !cfg.OAuthEnabled || !cfg.Stdio || cfg.OAuthAccessTokenTTLSeconds != int64(24*time.Hour/time.Second) ||
-		cfg.BrowserExecutablePath != browserPath {
+		cfg.BrowserExecutablePath != browserPath || cfg.BrowserCDPURL != "http://127.0.0.1:9222" || !cfg.BrowserReuseExistingCDP {
 		t.Fatalf("config = %#v", cfg)
 	}
 }

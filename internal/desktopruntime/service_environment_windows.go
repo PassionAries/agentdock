@@ -24,6 +24,8 @@ var managedCoreEnvironment = []string{
 	"AGENTDOCK_NEXUS_ENDPOINT",
 	"AGENTDOCK_NEXUS_TOKEN",
 	"AGENTDOCK_BROWSER_ENABLED",
+	"AGENTDOCK_BROWSER_CDP_URL",
+	"AGENTDOCK_BROWSER_REUSE_EXISTING_CDP",
 	"AGENTDOCK_ACP_ENABLED",
 	"AGENTDOCK_ACP_AGENT",
 	"AGENTDOCK_ACP_COMMAND",
@@ -39,14 +41,16 @@ var managedCoreEnvironment = []string{
 }
 
 type controlPanelSettings struct {
-	Port           int      `json:"port"`
-	LogLevel       string   `json:"log_level"`
-	NexusEndpoint  string   `json:"nexus_endpoint"`
-	BrowserEnabled bool     `json:"browser_enabled"`
-	ACPEnabled     bool     `json:"acp_enabled"`
-	ACPAgent       string   `json:"acp_agent"`
-	ACPCommand     string   `json:"acp_command"`
-	ACPArgs        []string `json:"acp_args"`
+	Port                    int      `json:"port"`
+	LogLevel                string   `json:"log_level"`
+	NexusEndpoint           string   `json:"nexus_endpoint"`
+	BrowserEnabled          bool     `json:"browser_enabled"`
+	BrowserCDPURL           string   `json:"browser_cdp_url"`
+	BrowserReuseExistingCDP bool     `json:"browser_reuse_existing_cdp"`
+	ACPEnabled              bool     `json:"acp_enabled"`
+	ACPAgent                string   `json:"acp_agent"`
+	ACPCommand              string   `json:"acp_command"`
+	ACPArgs                 []string `json:"acp_args"`
 }
 
 func platformPrepareCoreEnvironment(runtimeRoot string) error {
@@ -73,13 +77,17 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	}
 
 	managed := map[string]string{
-		"AGENTDOCK_RUNTIME_ROOT":    root,
-		"AGENTDOCK_AUTH_TOKEN":      authToken,
-		"AGENTDOCK_HOST":            "127.0.0.1",
-		"AGENTDOCK_PORT":            strconv.Itoa(settings.Port),
-		"AGENTDOCK_LOG_LEVEL":       settings.LogLevel,
-		"AGENTDOCK_BROWSER_ENABLED": strconv.FormatBool(settings.BrowserEnabled),
-		"AGENTDOCK_ACP_ENABLED":     strconv.FormatBool(settings.ACPEnabled),
+		"AGENTDOCK_RUNTIME_ROOT":               root,
+		"AGENTDOCK_AUTH_TOKEN":                 authToken,
+		"AGENTDOCK_HOST":                       "127.0.0.1",
+		"AGENTDOCK_PORT":                       strconv.Itoa(settings.Port),
+		"AGENTDOCK_LOG_LEVEL":                  settings.LogLevel,
+		"AGENTDOCK_BROWSER_ENABLED":            strconv.FormatBool(settings.BrowserEnabled),
+		"AGENTDOCK_BROWSER_REUSE_EXISTING_CDP": strconv.FormatBool(settings.BrowserReuseExistingCDP),
+		"AGENTDOCK_ACP_ENABLED":                strconv.FormatBool(settings.ACPEnabled),
+	}
+	if settings.BrowserCDPURL != "" {
+		managed["AGENTDOCK_BROWSER_CDP_URL"] = settings.BrowserCDPURL
 	}
 	if settings.NexusEndpoint != "" {
 		managed["AGENTDOCK_NEXUS_ENDPOINT"] = settings.NexusEndpoint

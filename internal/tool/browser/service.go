@@ -23,25 +23,29 @@ import (
 const defaultStaleAge = 6 * time.Hour
 
 type Config struct {
-	AgentDockHome  string
-	ExecutablePath string
+	AgentDockHome    string
+	ExecutablePath   string
+	CDPURL           string
+	ReuseExistingCDP bool
 }
 
 type Service struct {
-	mu       sync.Mutex
-	cfg      Config
-	sessions map[string]*session
-	profiles map[string]string
-	closed   bool
-	now      func() time.Time
+	mu          sync.Mutex
+	cfg         Config
+	sessions    map[string]*session
+	profiles    map[string]string
+	closed      bool
+	now         func() time.Time
+	discoverCDP func(context.Context) ([]cdpCandidate, error)
 }
 
 func New(cfg Config) *Service {
 	return &Service{
-		cfg:      cfg,
-		sessions: make(map[string]*session),
-		profiles: make(map[string]string),
-		now:      time.Now,
+		cfg:         cfg,
+		sessions:    make(map[string]*session),
+		profiles:    make(map[string]string),
+		now:         time.Now,
+		discoverCDP: discoverCDPEndpoints,
 	}
 }
 
@@ -68,66 +72,116 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, err
 		req.Viewport.Height = 800
 	}
 
-	executable, err := FindExecutable(s.cfg.ExecutablePath, req.Browser)
+	cdpURL, connectionMode, err := s.resolveCDPConnection(ctx, req)
 	if err != nil {
 		return StartResult{}, err
 	}
 
-	profileID := normalizeProfileID(req.ProfileID)
-	profileDir, temporary, err := s.reserveProfile(profileID)
-	if err != nil {
-		return StartResult{}, err
-	}
-	reserved := true
+	var (
+		sess       *session
+		profileID  string
+		profileDir string
+		temporary  bool
+		reserved   bool
+	)
 	defer func() {
 		if reserved {
 			s.releaseProfile(profileID, profileDir, temporary)
 		}
 	}()
 
-	if temporary {
-		profileDir, err = os.MkdirTemp(profileDir, "session-")
-		if err != nil {
-			return StartResult{}, browserError(ErrLaunchFailed, "create temporary browser profile", "browser_launch", nil, err)
+	if cdpURL != "" {
+		if strings.TrimSpace(req.ProfileID) != "" {
+			return StartResult{}, browserError(ErrActionInvalid, "profile_id cannot be used with an external CDP browser", "input", &ErrorDetails{Field: "profile_id"}, nil)
 		}
-	} else if err := os.MkdirAll(profileDir, 0o700); err != nil {
-		return StartResult{}, browserError(ErrLaunchFailed, "create browser profile", "browser_launch", &ErrorDetails{ProfileID: profileID}, err)
-	}
+		if len(req.Cookies) != 0 {
+			return StartResult{}, browserError(ErrActionInvalid, "cookies cannot be injected into an external CDP browser", "input", &ErrorDetails{Field: "cookies"}, nil)
+		}
+		if len(req.LocalStorage) != 0 {
+			return StartResult{}, browserError(ErrActionInvalid, "local_storage cannot be injected into an external CDP browser", "input", &ErrorDetails{Field: "local_storage"}, nil)
+		}
+		// Resolve the browser websocket ourselves with a direct HTTP client so
+		// CDP discovery never inherits HTTP(S)_PROXY from the host process.
+		wsURL, resolveErr := resolveCDPWebSocket(ctx, cdpURL, req.Timeout)
+		if resolveErr != nil {
+			return StartResult{}, browserError(ErrCDPFailed, "resolve external CDP browser websocket", "cdp", nil, resolveErr)
+		}
+		if connectionMode != "external_configured" {
+			if err := validateToolCDPURL(wsURL); err != nil {
+				return StartResult{}, browserError(ErrCDPFailed, "resolved CDP websocket left the loopback trust boundary", "cdp", nil, err)
+			}
+		}
+		allocatorCtx, allocatorCancel := chromedp.NewRemoteAllocator(context.Background(), wsURL, chromedp.NoModifyURL)
+		browserCtx, browserCancel := chromedp.NewContext(allocatorCtx)
+		sess = &session{
+			id:              newSessionID(),
+			kind:            BrowserAuto,
+			external:        true,
+			ownedTargets:    make(map[target.ID]struct{}),
+			createdAt:       s.now(),
+			lastActivity:    s.now(),
+			allocatorCtx:    allocatorCtx,
+			allocatorCancel: allocatorCancel,
+			browserCtx:      browserCtx,
+			browserCancel:   browserCancel,
+			pages:           make(map[target.ID]*pageState),
+			pageContexts:    make(map[target.ID]*pageContext),
+		}
+	} else {
+		executable, findErr := FindExecutable(s.cfg.ExecutablePath, req.Browser)
+		if findErr != nil {
+			return StartResult{}, findErr
+		}
+		profileID = normalizeProfileID(req.ProfileID)
+		profileDir, temporary, err = s.reserveProfile(profileID)
+		if err != nil {
+			return StartResult{}, err
+		}
+		reserved = true
+		if temporary {
+			profileDir, err = os.MkdirTemp(profileDir, "session-")
+			if err != nil {
+				return StartResult{}, browserError(ErrLaunchFailed, "create temporary browser profile", "browser_launch", nil, err)
+			}
+		} else if err := os.MkdirAll(profileDir, 0o700); err != nil {
+			return StartResult{}, browserError(ErrLaunchFailed, "create browser profile", "browser_launch", &ErrorDetails{ProfileID: profileID}, err)
+		}
 
-	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
-	allocatorOptions = append(allocatorOptions,
-		chromedp.ExecPath(executable.Path),
-		chromedp.UserDataDir(profileDir),
-		chromedp.WindowSize(req.Viewport.Width, req.Viewport.Height),
-		chromedp.Flag("headless", req.Headless),
-		chromedp.Flag("disable-features", "site-per-process,Translate,BlinkGenPropertyTrees,BackForwardCache"),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("no-default-browser-check", true),
-	)
-	allocatorCtx, allocatorCancel := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
-	browserCtx, browserCancel := chromedp.NewContext(allocatorCtx)
-
-	sess := &session{
-		id:               newSessionID(),
-		kind:             executable.Kind,
-		profileID:        profileID,
-		profileDir:       profileDir,
-		temporaryProfile: temporary,
-		createdAt:        s.now(),
-		lastActivity:     s.now(),
-		allocatorCtx:     allocatorCtx,
-		allocatorCancel:  allocatorCancel,
-		browserCtx:       browserCtx,
-		browserCancel:    browserCancel,
-		pages:            make(map[target.ID]*pageState),
-		pageContexts:     make(map[target.ID]*pageContext),
+		allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+		allocatorOptions = append(allocatorOptions,
+			chromedp.ExecPath(executable.Path),
+			chromedp.UserDataDir(profileDir),
+			chromedp.WindowSize(req.Viewport.Width, req.Viewport.Height),
+			chromedp.Flag("headless", req.Headless),
+			chromedp.Flag("disable-features", "site-per-process,Translate,BlinkGenPropertyTrees,BackForwardCache"),
+			chromedp.Flag("no-first-run", true),
+			chromedp.Flag("no-default-browser-check", true),
+		)
+		allocatorCtx, allocatorCancel := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+		browserCtx, browserCancel := chromedp.NewContext(allocatorCtx)
+		sess = &session{
+			id:               newSessionID(),
+			kind:             executable.Kind,
+			profileID:        profileID,
+			profileDir:       profileDir,
+			temporaryProfile: temporary,
+			ownedTargets:     make(map[target.ID]struct{}),
+			createdAt:        s.now(),
+			lastActivity:     s.now(),
+			allocatorCtx:     allocatorCtx,
+			allocatorCancel:  allocatorCancel,
+			browserCtx:       browserCtx,
+			browserCancel:    browserCancel,
+			pages:            make(map[target.ID]*pageState),
+			pageContexts:     make(map[target.ID]*pageContext),
+		}
 	}
-	chromedp.ListenBrowser(browserCtx, func(ev any) { sess.recordTargetEvent(ev) })
+	chromedp.ListenBrowser(sess.browserCtx, func(ev any) { sess.recordTargetEvent(ev) })
 
 	launchCtx, cancel := context.WithTimeout(ctx, req.Timeout)
 	defer cancel()
 	launchDone := make(chan error, 1)
-	go func() { launchDone <- chromedp.Run(browserCtx) }()
+	go func() { launchDone <- chromedp.Run(sess.browserCtx) }()
 	select {
 	case err := <-launchDone:
 		if err != nil {
@@ -138,6 +192,18 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, err
 		sess.stop()
 		return StartResult{}, classifyLaunchError(launchCtx.Err())
 	}
+
+	if sess.external {
+		chromedpCtx := chromedp.FromContext(sess.browserCtx)
+		if chromedpCtx == nil || chromedpCtx.Target == nil || chromedpCtx.Target.TargetID == "" {
+			sess.stop()
+			return StartResult{}, browserError(ErrCDPFailed, "external CDP browser did not provide an AgentDock target", "cdp", nil, nil)
+		}
+		sess.mu.Lock()
+		sess.ownedTargets[chromedpCtx.Target.TargetID] = struct{}{}
+		sess.mu.Unlock()
+	}
+
 	if err := sess.refreshPages(); err != nil {
 		sess.stop()
 		return StartResult{}, browserError(ErrCDPFailed, "list initial browser pages", "cdp", nil, err)
@@ -191,17 +257,46 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (StartResult, err
 	s.mu.Unlock()
 	reserved = false
 
-	// TargetInfo.URL 在部分 Chromium 上对 about:blank 会短暂保持空字符串。
-	// StartResult 以真实 document 状态为准，并只在输出副本中覆盖当前页，避免和异步 target 事件争写内部状态。
 	pages := sess.pageSummaries(pageID, currentURL, currentTitle)
 	return StartResult{
-		SessionID: sess.id,
-		PageID:    string(pageID),
-		Pages:     pages,
-		URL:       currentURL,
-		Title:     currentTitle,
-		ProfileID: profileID,
+		SessionID:      sess.id,
+		PageID:         string(pageID),
+		Pages:          pages,
+		URL:            currentURL,
+		Title:          currentTitle,
+		ProfileID:      profileID,
+		ConnectionMode: connectionMode,
 	}, nil
+}
+
+func (s *Service) resolveCDPConnection(ctx context.Context, req StartRequest) (string, string, error) {
+	if cdpURL := strings.TrimSpace(req.CDPURL); cdpURL != "" {
+		if err := validateToolCDPURL(cdpURL); err != nil {
+			return "", "", browserError(ErrActionInvalid, "invalid cdp_url", "input", &ErrorDetails{Field: "cdp_url"}, err)
+		}
+		return cdpURL, "external_explicit", nil
+	}
+	if cdpURL := strings.TrimSpace(s.cfg.CDPURL); cdpURL != "" {
+		if err := validateCDPURL(cdpURL); err != nil {
+			return "", "", browserError(ErrActionInvalid, "invalid configured CDP URL", "input", &ErrorDetails{Field: "cdp_url"}, err)
+		}
+		return cdpURL, "external_configured", nil
+	}
+	if !s.cfg.ReuseExistingCDP {
+		return "", "owned", nil
+	}
+	candidates, err := s.discoverCDP(ctx)
+	if err != nil {
+		return "", "", browserError(ErrCDPFailed, "discover existing CDP browsers", "cdp_discovery", nil, err)
+	}
+	switch len(candidates) {
+	case 0:
+		return "", "owned", nil
+	case 1:
+		return candidates[0].URL, "external_discovered", nil
+	default:
+		return "", "", browserError(ErrCDPAmbiguous, "multiple existing CDP browsers were discovered; configure cdp_url explicitly", "cdp_discovery", &ErrorDetails{Count: len(candidates)}, nil)
+	}
 }
 
 func (s *Service) CloseSession(req CloseRequest) (CloseResult, error) {
@@ -352,6 +447,7 @@ func (sess *session) stop() {
 	allocatorCancel := sess.allocatorCancel
 	profileDir := sess.profileDir
 	temporary := sess.temporaryProfile
+	external := sess.external
 	pageCancels := make([]context.CancelFunc, 0, len(sess.pageContexts))
 	for _, pageCtx := range sess.pageContexts {
 		if pageCtx != nil && pageCtx.cancel != nil {
@@ -360,6 +456,21 @@ func (sess *session) stop() {
 	}
 	sess.pageContexts = nil
 	sess.mu.Unlock()
+
+	if external {
+		// RemoteAllocator never owns the external browser process. Cancel only the
+		// AgentDock-created target contexts and disconnect the CDP client.
+		for _, cancel := range pageCancels {
+			cancel()
+		}
+		if browserCancel != nil {
+			browserCancel()
+		}
+		if allocatorCancel != nil {
+			allocatorCancel()
+		}
+		return
+	}
 
 	graceful := false
 	if browserCtx != nil {
@@ -400,7 +511,7 @@ func (sess *session) recordTargetEvent(ev any) {
 	}
 	switch event := ev.(type) {
 	case *target.EventTargetCreated:
-		if event.TargetInfo == nil || event.TargetInfo.Type != "page" {
+		if event.TargetInfo == nil || event.TargetInfo.Type != "page" || !sess.allowTargetLocked(event.TargetInfo, true) {
 			sess.mu.Unlock()
 			return
 		}
@@ -408,7 +519,7 @@ func (sess *session) recordTargetEvent(ev any) {
 		sess.pages[event.TargetInfo.TargetID] = &pageState{ID: event.TargetInfo.TargetID, URL: event.TargetInfo.URL, Title: event.TargetInfo.Title, Order: sess.pageOrder}
 		sess.activePage = event.TargetInfo.TargetID
 	case *target.EventTargetInfoChanged:
-		if event.TargetInfo == nil || event.TargetInfo.Type != "page" {
+		if event.TargetInfo == nil || event.TargetInfo.Type != "page" || !sess.allowTargetLocked(event.TargetInfo, true) {
 			sess.mu.Unlock()
 			return
 		}
@@ -422,6 +533,7 @@ func (sess *session) recordTargetEvent(ev any) {
 		page.Title = event.TargetInfo.Title
 	case *target.EventTargetDestroyed:
 		delete(sess.pages, event.TargetID)
+		delete(sess.ownedTargets, event.TargetID)
 		if pageCtx := sess.pageContexts[event.TargetID]; pageCtx != nil {
 			pageCancel = pageCtx.cancel
 			delete(sess.pageContexts, event.TargetID)
@@ -436,6 +548,25 @@ func (sess *session) recordTargetEvent(ev any) {
 	}
 }
 
+func (sess *session) allowTargetLocked(info *target.Info, adoptChild bool) bool {
+	if !sess.external {
+		return true
+	}
+	if info == nil {
+		return false
+	}
+	if _, ok := sess.ownedTargets[info.TargetID]; ok {
+		return true
+	}
+	if adoptChild && info.OpenerID != "" {
+		if _, ok := sess.ownedTargets[info.OpenerID]; ok {
+			sess.ownedTargets[info.TargetID] = struct{}{}
+			return true
+		}
+	}
+	return false
+}
+
 func (sess *session) refreshPages() error {
 	targets, err := chromedp.Targets(sess.browserCtx)
 	if err != nil {
@@ -443,20 +574,34 @@ func (sess *session) refreshPages() error {
 	}
 	sess.mu.Lock()
 	alive := make(map[target.ID]struct{})
-	for _, info := range targets {
-		if info == nil || info.Type != "page" {
-			continue
+	remaining := append([]*target.Info(nil), targets...)
+	for len(remaining) > 0 {
+		progress := false
+		next := remaining[:0]
+		for _, info := range remaining {
+			if info == nil || info.Type != "page" {
+				continue
+			}
+			if !sess.allowTargetLocked(info, true) {
+				next = append(next, info)
+				continue
+			}
+			progress = true
+			alive[info.TargetID] = struct{}{}
+			page := sess.pages[info.TargetID]
+			if page == nil {
+				sess.pageOrder++
+				page = &pageState{ID: info.TargetID, Order: sess.pageOrder}
+				sess.pages[info.TargetID] = page
+				sess.activePage = info.TargetID
+			}
+			page.URL = info.URL
+			page.Title = info.Title
 		}
-		alive[info.TargetID] = struct{}{}
-		page := sess.pages[info.TargetID]
-		if page == nil {
-			sess.pageOrder++
-			page = &pageState{ID: info.TargetID, Order: sess.pageOrder}
-			sess.pages[info.TargetID] = page
-			sess.activePage = info.TargetID
+		if !progress || len(next) == 0 {
+			break
 		}
-		page.URL = info.URL
-		page.Title = info.Title
+		remaining = next
 	}
 	var staleCancels []context.CancelFunc
 	for id := range sess.pages {
@@ -464,6 +609,7 @@ func (sess *session) refreshPages() error {
 			continue
 		}
 		delete(sess.pages, id)
+		delete(sess.ownedTargets, id)
 		if pageCtx := sess.pageContexts[id]; pageCtx != nil {
 			staleCancels = append(staleCancels, pageCtx.cancel)
 			delete(sess.pageContexts, id)

@@ -44,6 +44,8 @@ type Config struct {
 	NexusToken                   string
 	BrowserEnabled               bool
 	BrowserExecutablePath        string
+	BrowserCDPURL                string
+	BrowserReuseExistingCDP      bool
 	ACPEnabled                   bool
 	ACPAgentName                 string
 	ACPCommand                   string
@@ -63,6 +65,10 @@ func FromEnv() (Config, error) {
 		return Config{}, err
 	}
 	browserEnabled, err := getenvBool("AGENTDOCK_BROWSER_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	browserReuseExistingCDP, err := getenvBool("AGENTDOCK_BROWSER_REUSE_EXISTING_CDP", false)
 	if err != nil {
 		return Config{}, err
 	}
@@ -123,6 +129,8 @@ func FromEnv() (Config, error) {
 		NexusToken:                   os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
 		BrowserEnabled:               browserEnabled,
 		BrowserExecutablePath:        os.Getenv("AGENTDOCK_BROWSER_EXECUTABLE_PATH"),
+		BrowserCDPURL:                strings.TrimSpace(os.Getenv("AGENTDOCK_BROWSER_CDP_URL")),
+		BrowserReuseExistingCDP:      browserReuseExistingCDP,
 		ACPEnabled:                   acpEnabled,
 		ACPAgentName:                 acpAgentName,
 		ACPCommand:                   acpCommand,
@@ -182,6 +190,18 @@ func (c *Config) Normalize() error {
 		c.BrowserExecutablePath = filepath.Clean(c.BrowserExecutablePath)
 		if !filepath.IsAbs(c.BrowserExecutablePath) {
 			return fmt.Errorf("BrowserExecutablePath must resolve to an absolute path: %s", c.BrowserExecutablePath)
+		}
+	}
+	c.BrowserCDPURL = strings.TrimSpace(c.BrowserCDPURL)
+	if c.BrowserCDPURL != "" {
+		parsed, err := url.Parse(c.BrowserCDPURL)
+		if err != nil || parsed.Host == "" {
+			return fmt.Errorf("BrowserCDPURL must be an absolute CDP endpoint URL: %s", c.BrowserCDPURL)
+		}
+		switch strings.ToLower(parsed.Scheme) {
+		case "http", "https", "ws", "wss":
+		default:
+			return fmt.Errorf("BrowserCDPURL must use http, https, ws, or wss: %s", c.BrowserCDPURL)
 		}
 	}
 	c.InstructionsFile = strings.TrimSpace(c.InstructionsFile)

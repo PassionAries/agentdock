@@ -164,6 +164,8 @@
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="端口" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="PortTextBox" Grid.Column="1" Width="130" HorizontalAlignment="Left" Margin="0,0,0,10" />
@@ -179,7 +181,11 @@
                 <TextBlock Text="Nexus Token" Grid.Row="3" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <PasswordBox x:Name="NexusTokenPasswordBox" Grid.Row="3" Grid.Column="1" Margin="0,0,0,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
                 <TextBlock Text="浏览器工具" Grid.Row="4" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用浏览器CDP工具（仅支持Chrome/Chromium/Edge）" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用浏览器 CDP 工具" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBlock Text="已有 CDP 地址" Grid.Row="5" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBox x:Name="BrowserCdpUrlTextBox" Grid.Row="5" Grid.Column="1" Margin="0,0,0,10" ToolTip="可选，例如 http://127.0.0.1:9222 或 ws://.../devtools/browser/..." />
+                <TextBlock Text="自动复用" Grid.Row="6" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <CheckBox x:Name="BrowserReuseExistingCdpCheckBox" Grid.Row="6" Grid.Column="1" Content="自动发现并复用唯一已有 CDP；发现多个时不自动选择" VerticalAlignment="Center" Margin="0,0,0,10" />
               </Grid>
             </GroupBox>
 

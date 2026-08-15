@@ -101,6 +101,8 @@ public partial class MainWindow : Window
                 SelectLogLevel(snapshot.Settings.LogLevel);
                 NexusEndpointTextBox.Text = snapshot.Settings.NexusEndpoint;
                 BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
+                BrowserCdpUrlTextBox.Text = snapshot.Settings.BrowserCdpUrl;
+                BrowserReuseExistingCdpCheckBox.IsChecked = snapshot.Settings.BrowserReuseExistingCdp;
                 AcpEnabledCheckBox.IsChecked = snapshot.Settings.AcpEnabled;
                 SelectAcpAgent(snapshot.Settings.AcpAgent);
                 _settingsLoaded = true;
@@ -320,6 +322,8 @@ public partial class MainWindow : Window
             LogLevel = SelectedLogLevel(),
             NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
+            BrowserCdpUrl = BrowserCdpUrlTextBox.Text.Trim(),
+            BrowserReuseExistingCdp = BrowserReuseExistingCdpCheckBox.IsChecked == true,
             AcpEnabled = acpEnabled,
             AcpAgent = acpAgent
         };

@@ -13,6 +13,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private let portField = NSTextField(string: "8765")
     private let logLevel = NSPopUpButton(frame: .zero, pullsDown: false)
     private let browserEnabled = NSButton(checkboxWithTitle: "启用浏览器工具", target: nil, action: nil)
+    private let browserCDPURL = NSTextField(string: "")
+    private let browserReuseExistingCDP = NSButton(checkboxWithTitle: "自动发现并复用唯一已有 CDP", target: nil, action: nil)
     private let browserStatus = NSTextField(wrappingLabelWithString: "")
     private let acpEnabled = NSButton(checkboxWithTitle: "启用 Coding Agent", target: nil, action: nil)
     private let acpAgent = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -32,6 +34,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private var initialLogLevel = "info"
     private var initialNexusEndpoint = ""
     private var initialBrowserEnabled = false
+    private var initialBrowserCDPURL = ""
+    private var initialBrowserReuseExistingCDP = false
     private var initialACPEnabled = false
     private var initialACPAgent = ACPAgentPreset.codex
     private var isBusy = false
@@ -46,7 +50,7 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         self.menuLoginAgent = menuLoginAgent
         self.onChanged = onChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 590, height: 710),
+            contentRect: NSRect(x: 0, y: 0, width: 590, height: 780),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -71,6 +75,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         initialLogLevel = configuration.logLevel
         initialNexusEndpoint = configuration.nexusEndpoint
         initialBrowserEnabled = configuration.browserEnabled
+        initialBrowserCDPURL = configuration.browserCDPURL
+        initialBrowserReuseExistingCDP = configuration.browserReuseExistingCDP
         initialACPEnabled = configuration.acpEnabled
         initialACPAgent = configuration.acpAgent
 
@@ -79,6 +85,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         portField.integerValue = initialPort
         logLevel.selectItem(withTitle: initialLogLevel)
         browserEnabled.state = initialBrowserEnabled ? .on : .off
+        browserCDPURL.stringValue = initialBrowserCDPURL
+        browserReuseExistingCDP.state = initialBrowserReuseExistingCDP ? .on : .off
         acpEnabled.state = initialACPEnabled ? .on : .off
         acpAgent.selectItem(withTitle: initialACPAgent.title)
         nexusEndpoint.stringValue = initialNexusEndpoint
@@ -126,6 +134,13 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
 
         browserEnabled.target = self
         browserEnabled.action = #selector(browserToggled)
+        browserCDPURL.placeholderString = "可选，例如 http://127.0.0.1:9222"
+        browserCDPURL.target = self
+        browserCDPURL.action = #selector(markChanged)
+        browserCDPURL.delegate = self
+        browserCDPURL.widthAnchor.constraint(equalToConstant: 390).isActive = true
+        browserReuseExistingCDP.target = self
+        browserReuseExistingCDP.action = #selector(browserToggled)
         browserStatus.textColor = .secondaryLabelColor
         browserStatus.font = .systemFont(ofSize: 12)
 
@@ -181,7 +196,12 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         serviceForm.alignment = .leading
         serviceForm.spacing = 10
 
-        let browserStack = NSStackView(views: [browserEnabled, browserStatus])
+        let browserStack = NSStackView(views: [
+            browserEnabled,
+            formRow(title: "已有 CDP", control: browserCDPURL),
+            browserReuseExistingCDP,
+            browserStatus,
+        ])
         browserStack.orientation = .vertical
         browserStack.alignment = .leading
         browserStack.spacing = 5
@@ -280,6 +300,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        if obj.object as? NSTextField === browserCDPURL {
+            refreshBrowserStatus()
+        }
         refreshApplyState()
     }
 
@@ -289,9 +312,13 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     }
 
     @objc private func browserToggled() {
-        if browserEnabled.state == .on, BrowserSupportController.detectExecutable() == nil {
+        let configuredCDP = browserCDPURL.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if browserEnabled.state == .on,
+           configuredCDP.isEmpty,
+           browserReuseExistingCDP.state != .on,
+           BrowserSupportController.detectExecutable() == nil {
             browserEnabled.state = .off
-            showStatus("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge。", isError: true)
+            showStatus("未检测到受支持的 Chromium 系浏览器，且未配置外部 CDP。", isError: true)
         }
         refreshBrowserStatus()
         refreshApplyState()
@@ -308,6 +335,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             nexusEndpoint: nexusEndpoint.stringValue,
             nexusTokenReplacement: tokenReplacement,
             browserEnabled: browserEnabled.state == .on,
+            browserCDPURL: browserCDPURL.stringValue,
+            browserReuseExistingCDP: browserReuseExistingCDP.state == .on,
             acpEnabled: acpEnabled.state == .on,
             acpAgent: selectedAgent,
             acpCommand: sameAgent ? configuration.acpCommand : "",
@@ -333,15 +362,20 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 initialLogLevel = validatedSettings.logLevel
                 initialNexusEndpoint = validatedSettings.nexusEndpoint
                 initialBrowserEnabled = validatedSettings.browserEnabled
+                initialBrowserCDPURL = validatedSettings.browserCDPURL
+                initialBrowserReuseExistingCDP = validatedSettings.browserReuseExistingCDP
                 initialACPEnabled = validatedSettings.acpEnabled
                 initialACPAgent = validatedSettings.acpAgent
                 portField.integerValue = initialPort
                 logLevel.selectItem(withTitle: initialLogLevel)
                 nexusEndpoint.stringValue = initialNexusEndpoint
+                browserCDPURL.stringValue = initialBrowserCDPURL
+                browserReuseExistingCDP.state = initialBrowserReuseExistingCDP ? .on : .off
                 nexusToken.stringValue = ""
                 if let updatedConfiguration = ServiceConfiguration.load(from: service.paths.environment) {
                     currentConfiguration = updatedConfiguration
                 }
+                refreshBrowserStatus()
                 refreshACPStatus()
                 showStatus("设置已保存。", isError: false)
                 setBusy(false)
@@ -389,14 +423,26 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     }
 
     private func refreshBrowserStatus() {
-        if let executable = BrowserSupportController.detectExecutable() {
-            browserStatus.stringValue = browserEnabled.state == .on
+        let enabled = browserEnabled.state == .on
+        let configuredCDP = browserCDPURL.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredCDP.isEmpty {
+            browserStatus.stringValue = enabled
+                ? "已启用 · 连接已有 CDP · \(configuredCDP)"
+                : "已配置已有 CDP · 启用后生效"
+            browserStatus.textColor = .secondaryLabelColor
+        } else if browserReuseExistingCDP.state == .on {
+            browserStatus.stringValue = enabled
+                ? "已启用 · 优先自动发现唯一已有 CDP，找不到时启动本地浏览器"
+                : "已启用自动复用选项 · 浏览器工具开启后生效"
+            browserStatus.textColor = .secondaryLabelColor
+        } else if let executable = BrowserSupportController.detectExecutable() {
+            browserStatus.stringValue = enabled
                 ? "已启用 · Go 原生 CDP · \(executable)"
                 : "已检测到 Chromium 系浏览器 · 启用后生效"
             browserStatus.textColor = .secondaryLabelColor
         } else {
-            browserStatus.stringValue = "未检测到 Chrome、Chromium 或 Microsoft Edge"
-            browserStatus.textColor = browserEnabled.state == .on ? .systemRed : .secondaryLabelColor
+            browserStatus.stringValue = "未检测到 Chromium 系浏览器，也未配置外部 CDP"
+            browserStatus.textColor = enabled ? .systemRed : .secondaryLabelColor
         }
     }
 
@@ -415,13 +461,15 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             || nexusEndpoint.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) != initialNexusEndpoint
             || !nexusToken.stringValue.isEmpty
             || (browserEnabled.state == .on) != initialBrowserEnabled
+            || browserCDPURL.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) != initialBrowserCDPURL
+            || (browserReuseExistingCDP.state == .on) != initialBrowserReuseExistingCDP
             || acpSettingsChanged
         applyButton.isEnabled = changed
     }
 
     private func setBusy(_ busy: Bool) {
         isBusy = busy
-        for control in [serviceAutostart, menuAutostart, portField, logLevel, browserEnabled, acpEnabled, nexusEndpoint, nexusToken] {
+        for control in [serviceAutostart, menuAutostart, portField, logLevel, browserEnabled, browserCDPURL, browserReuseExistingCDP, acpEnabled, nexusEndpoint, nexusToken] {
             control.isEnabled = !busy
         }
         refreshACPStatus()

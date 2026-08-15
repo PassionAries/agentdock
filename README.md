@@ -287,7 +287,11 @@ A public endpoint must use HTTPS. `AGENTDOCK_SERVER_URL` must contain only the o
 | `dev-latest` / `dev-<version>` | Development image with Go, C, and C++ build tools |
 | `browser-latest` / `browser-<version>` | Native Go CDP browser automation image with Chromium |
 
-Browser tools (`browser_session`, `browser_act`, and `browser_snapshot`) use a native Go CDP runtime. Outside the browser image, install Chrome, Chromium, or Microsoft Edge locally; AgentDock does not download a browser and browser automation does not require Node.js or Playwright.
+Browser tools (`browser_session`, `browser_act`, and `browser_snapshot`) use a native Go CDP runtime. Outside the browser image, AgentDock normally launches a locally installed Chrome, Chromium, or Microsoft Edge; it does not download a browser and browser automation does not require Node.js or Playwright.
+
+You can also reuse an existing Chromium-family browser with remote debugging enabled. Pass a loopback `cdp_url` to `browser_session start`, or configure `AGENTDOCK_BROWSER_CDP_URL` in the environment/desktop settings when the endpoint is remote (for example from Docker). AgentDock creates and manages a dedicated target in the external browser; closing the AgentDock session does not exit that browser or adopt pre-existing user tabs. Cookie and localStorage injection are rejected for external sessions so AgentDock does not mutate the user's existing browser profile.
+
+Set `AGENTDOCK_BROWSER_REUSE_EXISTING_CDP=true` in user configuration to opt in to local automatic reuse; it is off by default and tool calls cannot override it. Discovery only follows Chromium-family process `--remote-debugging-port` arguments and matching `DevToolsActivePort` files, and its HTTP probes bypass host proxy settings. No candidates falls back to the existing AgentDock-owned launch path, exactly one valid candidate is reused, and multiple candidates require an explicit configured CDP endpoint. Containers cannot enumerate host processes or profiles, so use an explicitly reachable configured CDP endpoint to attach to a host browser from Docker.
 
 Production images are published to:
 

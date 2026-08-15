@@ -88,7 +88,7 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 	runtime.git = toolgit.New(ws, runtime.command.CommandEnv)
 	runtime.dynamicMCP = toolmcp.New(mcpClients, envs)
 	runtime.media = toolmedia.New(cfg, ws, runtime.command.InternalCommandEnv)
-	runtime.browser = toolbrowser.New(toolbrowser.Config{AgentDockHome: cfg.AgentDockHome, ExecutablePath: cfg.BrowserExecutablePath})
+	runtime.browser = toolbrowser.New(toolbrowser.Config{AgentDockHome: cfg.AgentDockHome, ExecutablePath: cfg.BrowserExecutablePath, CDPURL: cfg.BrowserCDPURL, ReuseExistingCDP: cfg.BrowserReuseExistingCDP})
 	runtime.recall = toolrecall.New(func() config.Config { return runtime.cfg })
 	runtime.taskTools = tooltask.New(func() config.Config { return runtime.cfg }, tasks)
 	if cfg.ACPEnabled {

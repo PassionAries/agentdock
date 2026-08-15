@@ -82,7 +82,7 @@ func TestBrowserSchemasUseNativeCDPContract(t *testing.T) {
 			t.Fatalf("%s additionalProperties = %#v, want false", tool, schema["additionalProperties"])
 		}
 		properties := schema["properties"].(map[string]any)
-		for _, forbidden := range []string{"backend", "channel", "cdp_url", "storage_state", "storage_state_path", "save_storage_state"} {
+		for _, forbidden := range []string{"backend", "channel", "storage_state", "storage_state_path", "save_storage_state"} {
 			if _, exists := properties[forbidden]; exists {
 				t.Fatalf("%s input schema still exposes %s", tool, forbidden)
 			}
@@ -92,6 +92,19 @@ func TestBrowserSchemasUseNativeCDPContract(t *testing.T) {
 			if _, exists := output[forbidden]; exists {
 				t.Fatalf("%s output schema still exposes %s", tool, forbidden)
 			}
+		}
+	}
+	sessionProperties := InputSchema("browser_session")["properties"].(map[string]any)
+	if _, exists := sessionProperties["cdp_url"]; !exists {
+		t.Fatal("browser_session input schema missing cdp_url")
+	}
+	if _, exists := sessionProperties["reuse_existing_cdp"]; exists {
+		t.Fatal("browser_session must not let a tool call enable automatic CDP reuse; it is a user configuration")
+	}
+	for _, tool := range []string{"browser_act", "browser_snapshot"} {
+		properties := InputSchema(tool)["properties"].(map[string]any)
+		if _, exists := properties["cdp_url"]; exists {
+			t.Fatalf("%s must not expose cdp_url; CDP attachment belongs to browser_session", tool)
 		}
 	}
 }

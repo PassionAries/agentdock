@@ -289,7 +289,11 @@ https://agentdock.example.com/mcp
 | `dev-latest` / `dev-<version>` | 开发镜像，包含 Go、C 和 C++ 构建工具链 |
 | `browser-latest` / `browser-<version>` | Go 原生 CDP 浏览器自动化镜像，包含 Chromium 运行环境 |
 
-浏览器工具（`browser_session`、`browser_act`、`browser_snapshot`）使用 Go 原生 CDP。非 browser 镜像环境需要本机安装 Chrome、Chromium 或 Microsoft Edge；AgentDock 不自动下载浏览器，浏览器能力不依赖 Node.js 或 Playwright。
+浏览器工具（`browser_session`、`browser_act`、`browser_snapshot`）使用 Go 原生 CDP。非 browser 镜像环境默认需要本机安装 Chrome、Chromium 或 Microsoft Edge；AgentDock 不自动下载浏览器，浏览器能力不依赖 Node.js 或 Playwright。
+
+也可以直接复用已经开启远程调试的 Chromium 系浏览器：`browser_session start` 的 `cdp_url` 只接受本机 loopback 地址；Docker 或其他远端场景请由用户通过环境变量或桌面设置配置 `AGENTDOCK_BROWSER_CDP_URL`。AgentDock 会在外部浏览器中创建并仅管理自己的目标页，关闭 AgentDock session 不会退出外部浏览器，也不会把既有用户标签页纳入 session。外部 session 不允许注入 Cookie 或 localStorage，避免修改用户现有浏览器 profile。
+
+`AGENTDOCK_BROWSER_REUSE_EXISTING_CDP=true` 可由用户配置开启本机自动复用，默认关闭，工具调用不能临时覆盖开启。发现逻辑只跟随 Chromium 系浏览器进程的 `--remote-debugging-port` 和对应 `DevToolsActivePort`，CDP HTTP 探测不会继承宿主机代理；没有候选时继续按原逻辑启动 AgentDock 自己的浏览器，唯一候选才自动连接，多个候选会要求用户显式配置 CDP 地址。Docker 容器无法枚举宿主机进程或 profile，因此容器接入宿主机已有浏览器时应显式配置可达的 CDP 地址。
 
 正式镜像同步发布到：
 

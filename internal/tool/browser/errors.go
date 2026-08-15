@@ -12,6 +12,7 @@ const (
 	ErrActionFailed    = "ACTION_FAILED"
 	ErrTimeout         = "TIMEOUT"
 	ErrCDPFailed       = "CDP_FAILED"
+	ErrCDPAmbiguous    = "CDP_AMBIGUOUS"
 )
 
 // ErrorDetails is deliberately typed so dynamic maps never cross the browser

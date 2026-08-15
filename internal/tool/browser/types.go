@@ -61,6 +61,7 @@ type StartRequest struct {
 	Headless                bool
 	Viewport                Viewport
 	ProfileID               string
+	CDPURL                  string
 	Cookies                 []Cookie
 	LocalStorage            map[string]map[string]string
 	ReloadAfterLocalStorage bool
@@ -233,12 +234,13 @@ type Snapshot struct {
 }
 
 type StartResult struct {
-	SessionID string        `json:"session_id"`
-	PageID    string        `json:"page_id"`
-	Pages     []PageSummary `json:"pages"`
-	URL       string        `json:"url"`
-	Title     string        `json:"title"`
-	ProfileID string        `json:"profile_id,omitempty"`
+	SessionID      string        `json:"session_id"`
+	PageID         string        `json:"page_id"`
+	Pages          []PageSummary `json:"pages"`
+	URL            string        `json:"url"`
+	Title          string        `json:"title"`
+	ProfileID      string        `json:"profile_id,omitempty"`
+	ConnectionMode string        `json:"connection_mode"`
 }
 
 type CloseResult struct {
@@ -272,6 +274,8 @@ type session struct {
 	profileID        string
 	profileDir       string
 	temporaryProfile bool
+	external         bool
+	ownedTargets     map[target.ID]struct{}
 	createdAt        time.Time
 	lastActivity     time.Time
 

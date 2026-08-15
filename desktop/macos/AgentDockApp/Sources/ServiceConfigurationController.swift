@@ -7,6 +7,8 @@ struct EditableServiceSettings {
     let nexusEndpoint: String
     let nexusTokenReplacement: String?
     let browserEnabled: Bool
+    let browserCDPURL: String
+    let browserReuseExistingCDP: Bool
     let acpEnabled: Bool
     let acpAgent: ACPAgentPreset
     let acpCommand: String
@@ -25,8 +27,9 @@ struct EditableServiceSettings {
             throw ValidationError("Nexus Token 必须是单行文本。")
         }
 
-        if browserEnabled, BrowserSupportController.detectExecutable() == nil {
-            throw ValidationError("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge。")
+        let browserCDPURL = try Self.normalizeBrowserCDPURL(browserCDPURL)
+        if browserEnabled, browserCDPURL.isEmpty, !browserReuseExistingCDP, BrowserSupportController.detectExecutable() == nil {
+            throw ValidationError("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge，且未配置外部 CDP。")
         }
 
         var command = ""
@@ -49,11 +52,30 @@ struct EditableServiceSettings {
             nexusEndpoint: endpoint,
             nexusTokenReplacement: nexusTokenReplacement,
             browserEnabled: browserEnabled,
+            browserCDPURL: browserCDPURL,
+            browserReuseExistingCDP: browserReuseExistingCDP,
             acpEnabled: acpEnabled,
             acpAgent: acpAgent,
             acpCommand: command,
             acpArgs: arguments
         )
+    }
+
+    private static func normalizeBrowserCDPURL(_ raw: String) throws -> String {
+        let candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return "" }
+        guard let components = URLComponents(string: candidate),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https", "ws", "wss"].contains(scheme),
+              components.host?.isEmpty == false else {
+            throw ValidationError("浏览器 CDP 地址必须是有效的 HTTP(S) 或 WS(S) 地址。")
+        }
+        guard components.user == nil,
+              components.password == nil,
+              components.fragment == nil else {
+            throw ValidationError("浏览器 CDP 地址不能包含账号信息或片段。")
+        }
+        return candidate
     }
 
     private static func normalizeNexusEndpoint(_ raw: String) throws -> String {
@@ -98,6 +120,8 @@ final class ServiceConfigurationController {
             "AGENTDOCK_LOG_LEVEL": settings.logLevel,
             "AGENTDOCK_NEXUS_ENDPOINT": settings.nexusEndpoint,
             "AGENTDOCK_BROWSER_ENABLED": settings.browserEnabled ? "true" : "false",
+            "AGENTDOCK_BROWSER_CDP_URL": settings.browserCDPURL,
+            "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP": settings.browserReuseExistingCDP ? "true" : "false",
             "AGENTDOCK_ACP_ENABLED": settings.acpEnabled ? "true" : "false",
             "AGENTDOCK_ACP_AGENT": settings.acpAgent.rawValue,
             "AGENTDOCK_ACP_COMMAND": settings.acpCommand,

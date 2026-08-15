@@ -59,9 +59,9 @@ func restoreSnapshots(snapshots []fileSnapshot) error {
 }
 
 func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) error {
-	if request.BrowserEnabled {
+	if request.BrowserEnabled && request.BrowserCDPURL == "" && !request.BrowserReuseExistingCDP {
 		if _, err := toolbrowser.FindExecutable("", toolbrowser.BrowserAuto); err != nil {
-			return fmt.Errorf("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge: %w", err)
+			return fmt.Errorf("未检测到受支持的 Chrome、Chromium 或 Microsoft Edge，且未配置外部 CDP: %w", err)
 		}
 	}
 	runtime, err := loadTunnelRuntime(request.RuntimeRoot)
@@ -118,14 +118,16 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	}
 
 	settings := controlPanelSettings{
-		Port:           request.Port,
-		LogLevel:       request.LogLevel,
-		NexusEndpoint:  request.NexusEndpoint,
-		BrowserEnabled: request.BrowserEnabled,
-		ACPEnabled:     request.ACPEnabled,
-		ACPAgent:       request.ACPAgent,
-		ACPCommand:     acpAdapter.Command,
-		ACPArgs:        append([]string(nil), acpAdapter.Args...),
+		Port:                    request.Port,
+		LogLevel:                request.LogLevel,
+		NexusEndpoint:           request.NexusEndpoint,
+		BrowserEnabled:          request.BrowserEnabled,
+		BrowserCDPURL:           request.BrowserCDPURL,
+		BrowserReuseExistingCDP: request.BrowserReuseExistingCDP,
+		ACPEnabled:              request.ACPEnabled,
+		ACPAgent:                request.ACPAgent,
+		ACPCommand:              acpAdapter.Command,
+		ACPArgs:                 append([]string(nil), acpAdapter.Args...),
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

@@ -310,7 +310,8 @@ func OutputSchema(name string) map[string]any {
 		props["url"] = stringProp("Active page URL after start.")
 		props["title"] = stringProp("Active page title after start.")
 		props["profile_id"] = stringProp("Normalized persistent profile id when configured.")
-		props["closed"] = boolProp("Whether action=close terminated the AgentDock-owned browser session.")
+		props["connection_mode"] = stringProp("How action=start obtained the browser: owned, external_explicit, external_configured, or external_discovered.")
+		props["closed"] = boolProp("Whether action=close closed the AgentDock browser session. External browsers remain running.")
 		props["removed_count"] = intProp("Number of current-process stale sessions terminated by cleanup_stale.")
 		props["removed_sessions"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Session ids terminated by cleanup_stale."}
 	case "browser_act", "browser_snapshot":

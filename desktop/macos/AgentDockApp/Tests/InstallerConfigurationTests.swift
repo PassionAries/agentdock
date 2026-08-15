@@ -44,6 +44,8 @@ struct InstallerConfigurationTests {
             "AGENTDOCK_PORT": "8877",
             "AGENTDOCK_LOG_LEVEL": "debug",
             "AGENTDOCK_NEXUS_TOKEN": "quote'and space",
+            "AGENTDOCK_BROWSER_CDP_URL": "http://127.0.0.1:9222",
+            "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP": "true",
         ])
         let updatedText = String(decoding: updatedData, as: UTF8.self)
         let updatedValues = ManagedEnvironment.parseValues(updatedText)
@@ -51,6 +53,8 @@ struct InstallerConfigurationTests {
         precondition(updatedValues["AGENTDOCK_AUTH_TOKEN"] == "secret-token")
         precondition(updatedValues["AGENTDOCK_LOG_LEVEL"] == "debug")
         precondition(updatedValues["AGENTDOCK_NEXUS_TOKEN"] == "quote'and space")
+        precondition(updatedValues["AGENTDOCK_BROWSER_CDP_URL"] == "http://127.0.0.1:9222")
+        precondition(updatedValues["AGENTDOCK_BROWSER_REUSE_EXISTING_CDP"] == "true")
         precondition(updatedText.components(separatedBy: "AGENTDOCK_PORT=").count == 2)
 
         let acpEnvironmentData = try environment.dataByUpdating([

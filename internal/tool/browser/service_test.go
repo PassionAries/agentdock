@@ -36,6 +36,20 @@ func TestFindExecutableUsesConfiguredPathAndRejectsMissing(t *testing.T) {
 	}
 }
 
+func TestExternalCDPRejectsProfileMutationsBeforeConnecting(t *testing.T) {
+	service := New(Config{AgentDockHome: t.TempDir()})
+	for _, req := range []StartRequest{
+		{CDPURL: "http://127.0.0.1:9", Cookies: []Cookie{{Name: "session", Value: "value"}}},
+		{CDPURL: "http://127.0.0.1:9", LocalStorage: map[string]map[string]string{"https://example.test": {"key": "value"}}},
+	} {
+		_, err := service.Start(context.Background(), req)
+		var browserErr *Error
+		if !errors.As(err, &browserErr) || browserErr.Code != ErrActionInvalid {
+			t.Fatalf("Start() error = %#v, want %s", err, ErrActionInvalid)
+		}
+	}
+}
+
 func TestBrowserErrorCodeContract(t *testing.T) {
 	tests := []struct {
 		name string
@@ -51,6 +65,7 @@ func TestBrowserErrorCodeContract(t *testing.T) {
 		{name: "action failed", got: ErrActionFailed, want: "ACTION_FAILED"},
 		{name: "timeout", got: ErrTimeout, want: "TIMEOUT"},
 		{name: "cdp failed", got: ErrCDPFailed, want: "CDP_FAILED"},
+		{name: "cdp ambiguous", got: ErrCDPAmbiguous, want: "CDP_AMBIGUOUS"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

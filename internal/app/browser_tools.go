@@ -20,7 +20,7 @@ func (r *Runtime) browserSession(ctx context.Context, args map[string]any) (Resu
 	}
 	switch action {
 	case "start":
-		if err := validateBrowserKeys(args, "action", "url", "browser", "headless", "viewport", "profile_id", "cookies", "local_storage", "reload_after_local_storage", "timeout_ms"); err != nil {
+		if err := validateBrowserKeys(args, "action", "url", "browser", "headless", "viewport", "profile_id", "cdp_url", "cookies", "local_storage", "reload_after_local_storage", "timeout_ms"); err != nil {
 			return browserFailure(err), nil
 		}
 		req, err := parseBrowserStart(args)
@@ -222,6 +222,10 @@ func parseBrowserStart(args map[string]any) (toolbrowser.StartRequest, error) {
 	if err != nil {
 		return toolbrowser.StartRequest{}, err
 	}
+	cdpURL, err := optionalString(args, "cdp_url", "")
+	if err != nil {
+		return toolbrowser.StartRequest{}, err
+	}
 	cookies, err := parseCookies(args["cookies"])
 	if err != nil {
 		return toolbrowser.StartRequest{}, err
@@ -240,7 +244,8 @@ func parseBrowserStart(args map[string]any) (toolbrowser.StartRequest, error) {
 	}
 	return toolbrowser.StartRequest{
 		URL: urlValue, Browser: kind, Headless: headless, Viewport: viewport,
-		ProfileID: profileID, Cookies: cookies, LocalStorage: storage,
+		ProfileID: profileID, CDPURL: cdpURL,
+		Cookies: cookies, LocalStorage: storage,
 		ReloadAfterLocalStorage: reload, Timeout: timeout,
 	}, nil
 }
