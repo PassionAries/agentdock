@@ -119,18 +119,27 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 	for _, want := range []string{
 		"## ACP 运行时",
 		"Agent Client Protocol",
+		"仅当用户提及时使用",
+		"独特见解",
+		"编排任务",
 		"不是动态 MCP",
 		"mcp_tool_*",
 		"- agent: helper",
-		"acp_session 管理会话",
-		"acp_prompt action=start",
-		"action=events",
+	} {
+		if !strings.Contains(enabledText, want) {
+			t.Fatalf("ACP context missing %q: %s", want, enabledText)
+		}
+	}
+	// 操作细节留给 acp_* 工具 description，rules 不再复述会话/事件/权限契约。
+	for _, operational := range []string{
+		"acp_session",
+		"acp_prompt",
 		"acp_interaction",
 		"option_id",
 		"always",
 	} {
-		if !strings.Contains(enabledText, want) {
-			t.Fatalf("ACP context missing %q: %s", want, enabledText)
+		if strings.Contains(enabledText, operational) {
+			t.Fatalf("ACP context should leave %q to tool descriptions: %s", operational, enabledText)
 		}
 	}
 	// section 已说明何时用 ACP；rules 不再重复选型话术。
@@ -138,6 +147,9 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 	for _, longForm := range []string{
 		"需要托管本地 Coding Agent 时走 ACP",
 		"按主机配置拉起 adapter",
+		"多轮编码或排障走当前 agent",
+		"只在需要子 Agent 独立完成一段编码任务时使用",
+		"不要用它编排主任务",
 		"Claude / Codex / Grok",
 		"JSON-RPC",
 		"wire protocol",

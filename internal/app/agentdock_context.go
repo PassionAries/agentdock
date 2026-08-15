@@ -24,16 +24,10 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 		{Title: "动态 MCP 索引", Lines: splitNonEmptyLines(dynamicMCPSummary)},
 	}
 	if requiresACP(r.cfg) {
-		// 只给选型与边界：是什么、何时用、不是 MCP、当前 agent。操作细节留给 acp_* 工具 description。
 		sections = append(sections, capabilitySection{Title: "ACP 运行时", Lines: []string{
-			"内置本地 Coding Agent 通道（Agent Client Protocol）：把多轮编码/排障交给主机配置的 adapter；不是动态 MCP，勿用 mcp_tool_*。",
+			"本机 Coding Agent 通道（Agent Client Protocol）。仅当用户明确要求时使用，可用来获取独特见解与编排任务；不是动态 MCP，不要用 mcp_tool_*。",
 			"- agent: " + r.cfg.ACPAgentName,
 		}})
-		// 只保留工具 description 不易单独压住的契约：异步观察、权限 option 白名单。
-		rules = append(rules,
-			"acp_session 管理会话；acp_prompt action=start 后用 action=events 增量观察，不要让单次调用长期等待完整 turn。",
-			"权限请求用 acp_interaction，仅选择当前请求明确提供的 option_id；本地策略不暴露 always 类长期授权。",
-		)
 	}
 
 	if requiresNexus(r.cfg) {
