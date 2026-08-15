@@ -224,6 +224,11 @@ Official and community Skill sources live in [uvwt/agentdock-skills](https://git
 
 AgentDock can optionally act as a native ACP client and host a local coding-agent adapter.
 
+- Desktop control panels provide presets for Codex, Claude, and Grok; host configuration controls whether ACP is enabled and which adapter is selected.
+- Use `acp_session` to create and manage sessions, `acp_prompt` to run and observe prompts, and `acp_interaction` to answer agent permission requests.
+- Optional ACP operations are available only when the connected adapter advertises the corresponding capability.
+- ACP working directories follow the host process or container security boundary rather than an AgentDock filesystem allowlist; see [Security model](#security-model).
+
 ### Browser and desktop automation
 
 - Start, close, and clean up browser sessions

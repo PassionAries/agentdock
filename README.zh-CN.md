@@ -226,6 +226,11 @@ agentdock update
 
 AgentDock 可以选择作为 ACP Client 原生托管本地 Coding Agent adapter。
 
+- 桌面控制面板提供 Codex、Claude 和 Grok 预设；是否启用 ACP 以及选择哪个 adapter 由宿主配置决定。
+- 使用 `acp_session` 创建和管理会话，使用 `acp_prompt` 发起并观察 prompt，使用 `acp_interaction` 响应 Agent 的权限请求。
+- 可选 ACP 操作只会在已连接 adapter 声明相应能力时开放。
+- ACP 工作目录遵循宿主进程或容器的安全边界，而不是 AgentDock 文件系统 allowlist；具体边界见下方“安全模型”。
+
 ### 浏览器与桌面自动化
 
 - 浏览器会话启动、关闭和清理
