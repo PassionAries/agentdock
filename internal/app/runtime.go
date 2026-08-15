@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -188,7 +189,39 @@ func (r *Runtime) Call(ctx context.Context, name string, args map[string]any) (R
 	if spec.Handler == nil {
 		return nil, toolErrorDetails("UNKNOWN_TOOL", "tool has no handler", "validation", map[string]any{"tool": name})
 	}
+	if err := validateTopLevelArguments(spec, args); err != nil {
+		return nil, err
+	}
 	return spec.Handler(ctx, r, args)
+}
+
+// validateTopLevelArguments 只兑现 schema 的顶层严格契约；字段类型和嵌套结构仍由各工具处理。
+func validateTopLevelArguments(spec ToolSpec, args map[string]any) error {
+	if spec.InputSchema == nil {
+		return nil
+	}
+	schema := spec.InputSchema()
+	allowsAdditionalProperties, ok := schema["additionalProperties"].(bool)
+	if !ok || allowsAdditionalProperties {
+		return nil
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	unknown := make([]string, 0)
+	for key := range args {
+		if _, allowed := properties[key]; !allowed {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return toolErrorDetails(
+		"INVALID_ARGUMENT",
+		"unknown tool arguments",
+		"validation",
+		map[string]any{"tool": spec.Name, "fields": unknown},
+	)
 }
 func (r *Runtime) serverInfo() Result {
 	names := r.ToolNames()

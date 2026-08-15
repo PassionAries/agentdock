@@ -119,7 +119,7 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 	for _, want := range []string{
 		"## ACP 运行时",
 		"Agent Client Protocol",
-		"仅当用户提及时使用",
+		"仅当用户明确要求时使用",
 		"独特见解",
 		"编排任务",
 		"不是动态 MCP",

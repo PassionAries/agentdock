@@ -344,8 +344,8 @@ AgentDock operates real host or container resources. Treat it as infrastructure 
 - Mount only necessary directories into Docker
 - Do not grant unnecessary root access, Docker Socket access, or host privileges
 - Store Skill and dynamic MCP secrets in their isolated environments
-- Configure the ACP executable, arguments, environment mappings, and allowed roots only on the host; remote tools cannot change them
-- ACP allowed roots are not an OS sandbox; still constrain the adapter with a dedicated user, ACLs, container mounts, and network policy
+- Configure the ACP executable, arguments, and environment mappings only on the host; remote tools cannot change them
+- ACP working directories are not restricted by an AgentDock allowlist; the security boundary is the AgentDock process user plus host or container controls such as ACLs, mounts, and network policy
 
 ### Execution verification
 

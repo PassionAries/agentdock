@@ -346,8 +346,8 @@ AgentDock 会直接操作宿主机或容器内的真实资源，应将其视为�
 - Docker 中只挂载需要访问的目录
 - 不授予不必要的 root、Docker Socket 或宿主机权限
 - Skill 与动态 MCP 的敏感变量使用独立环境存储
-- ACP executable、参数、环境映射和允许根目录只能由宿主机配置，不能通过远程工具修改
-- ACP 允许根目录不是 OS 沙箱；仍需使用独立系统用户、ACL、容器挂载和网络策略限制 adapter
+- ACP executable、参数和环境映射只能由宿主机配置，不能通过远程工具修改
+- ACP 工作目录不受 AgentDock 允许根目录限制；实际安全边界是 AgentDock 进程用户以及宿主机或容器的 ACL、挂载和网络策略
 
 ### 执行验证
 
