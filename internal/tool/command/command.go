@@ -417,8 +417,15 @@ func (svc *Service) baseCommandEnv() (map[string]string, error) {
 	}
 	env["AGENTDOCK_HOME"] = svc.config().AgentDockHome
 	env["AGENTDOCK_DEFAULT_DIR"] = svc.config().AgentDockDefaultDir
-	if hostHome, err := os.UserHomeDir(); err == nil && hostHome != "" {
-		env["HOME"] = hostHome
+	hostHome := ""
+	if resolvedHome, err := os.UserHomeDir(); err == nil && resolvedHome != "" {
+		hostHome = resolvedHome
+		env["HOME"] = resolvedHome
+	}
+	// macOS 的 launchd 默认只提供系统 PATH。命令工具需要补齐常见用户级可执行目录，
+	// 否则 Homebrew、~/.local/bin 中已安装的 CLI 在桌面服务里会表现为“未安装”。
+	if commandPath := platformCommandPath(env["PATH"], hostHome); commandPath != "" {
+		env["PATH"] = commandPath
 	}
 	env["TMPDIR"] = filepath.Join(svc.config().AgentDockHome, "tmp")
 	if err := os.MkdirAll(env["TMPDIR"], 0o755); err != nil {
