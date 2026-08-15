@@ -26,6 +26,7 @@ func registerRuntimeAPI(mux *http.ServeMux, server *mcp.Server, cfg config.Confi
 	mux.HandleFunc("/internal/runtime/skills/", h)
 	mux.HandleFunc("/internal/runtime/tasks", h)
 	mux.HandleFunc("/internal/runtime/tasks/", h)
+	mux.HandleFunc("/internal/runtime/evolve", h)
 	mux.HandleFunc("/internal/runtime/mcp", h)
 	mux.HandleFunc("/internal/runtime/mcp/", h)
 }
@@ -66,7 +67,7 @@ func runtimeAPIMethodAllowed(method, path string) bool {
 		_, ok := runtimeTaskID(cleanPath)
 		return ok
 	}
-	return method == http.MethodPost && (cleanPath == "/internal/runtime/capabilities" || cleanPath == "/internal/runtime/mcp")
+	return method == http.MethodPost && (cleanPath == "/internal/runtime/capabilities" || cleanPath == "/internal/runtime/mcp" || cleanPath == "/internal/runtime/evolve")
 }
 
 func runtimeAPIAllowHeader(path string) string {
@@ -76,6 +77,9 @@ func runtimeAPIAllowHeader(path string) string {
 	}
 	if cleanPath == "/internal/runtime/capabilities" || cleanPath == "/internal/runtime/mcp" {
 		return "GET, POST"
+	}
+	if cleanPath == "/internal/runtime/evolve" {
+		return "POST"
 	}
 	return "GET"
 }
@@ -111,6 +115,13 @@ func dispatchRuntimeAPI(ctx context.Context, server *mcp.Server, r *http.Request
 		default:
 			return nil, &app.ToolError{Code: "NOT_FOUND", Message: "runtime Skill API route not found", Category: "not_found"}
 		}
+	case path == "/internal/runtime/evolve" && r.Method == http.MethodPost:
+		args, err := decodeRuntimeEvolutionRequest(r)
+		if err != nil {
+			return nil, err
+		}
+		result, err := server.RuntimeEvolve(ctx, args)
+		return map[string]any(result), err
 	case path == "/internal/runtime/mcp" && r.Method == http.MethodPost:
 		args, err := decodeRuntimeMCPRequest(r)
 		if err != nil {

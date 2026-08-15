@@ -15,6 +15,7 @@ import (
 	"github.com/uvwt/agentdock/internal/buildinfo"
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/envstore"
+	"github.com/uvwt/agentdock/internal/evolution"
 	mcpclient "github.com/uvwt/agentdock/internal/mcp/client"
 	"github.com/uvwt/agentdock/internal/taskstate"
 	toolacp "github.com/uvwt/agentdock/internal/tool/acp"
@@ -46,6 +47,7 @@ type Runtime struct {
 	media         *toolmedia.Service
 	browser       *toolbrowser.Service
 	recall        *toolrecall.Service
+	evolution     *evolution.Service
 	taskTools     *tooltask.Service
 	acp           *toolacp.Service
 	lifecycleMu   sync.RWMutex
@@ -91,7 +93,8 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 	runtime.media = toolmedia.New(cfg, ws, runtime.command.InternalCommandEnv)
 	runtime.browser = toolbrowser.New(toolbrowser.Config{AgentDockHome: cfg.AgentDockHome, ExecutablePath: cfg.BrowserExecutablePath, CDPURL: cfg.BrowserCDPURL, ReuseExistingCDP: cfg.BrowserReuseExistingCDP})
 	runtime.recall = toolrecall.New(func() config.Config { return runtime.cfg })
-	runtime.taskTools = tooltask.New(func() config.Config { return runtime.cfg }, tasks)
+	runtime.evolution = evolution.New(func() config.Config { return runtime.cfg }, tasks)
+	runtime.taskTools = tooltask.New(func() config.Config { return runtime.cfg }, tasks, runtime.evolution)
 	if cfg.ACPEnabled {
 		acpEnvironment := make(map[string]string, len(cfg.ACPEnvFromEnv))
 		for childName, hostName := range cfg.ACPEnvFromEnv {

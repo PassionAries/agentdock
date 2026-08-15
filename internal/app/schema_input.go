@@ -107,6 +107,8 @@ func InputSchema(name string) map[string]any {
 		props["task_id"] = stringProp("Persistent task id for get, checkpoint, block, resume, final_review, or complete.")
 		props["title"] = stringProp("Short task title for create.")
 		props["goal"] = stringProp("Fixed task goal for create.")
+		props["project"] = stringProp("Optional project identifier used to hard-scope Evolution guidance and evidence candidates. Omit only for global tasks.")
+		props["device"] = stringProp("Optional device identifier used to hard-scope device-specific Evolution guidance and evidence candidates.")
 		props["completion_conditions"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "Conditions that must be true before final_review can pass."}
 		props["steps"] = map[string]any{
 			"type": "array", "maxItems": 12, "description": "Concrete task steps. Required when composing multiple source templates.",
@@ -123,6 +125,43 @@ func InputSchema(name string) map[string]any {
 		props["verified"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Facts verified during final_review. Required when status=pass."}
 		props["risks"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Remaining risks. Required when final_review status=failed."}
 		required = []string{"action"}
+
+	case "evolve":
+		props["intent"] = map[string]any{"type": "string", "description": "Evolution intent.", "enum": []string{"propose", "bind", "supersede", "retract"}}
+		props["candidate"] = map[string]any{
+			"type": "object", "description": "Candidate knowledge for propose. Lifecycle state and evidence counts are intentionally not accepted.", "additionalProperties": false,
+			"properties": map[string]any{
+				"type": map[string]any{
+					"type":        "string",
+					"description": "Knowledge type accepted by the Evolution policy.",
+					"enum": []string{
+						"preference", "user_preference", "decision", "explicit_decision", "constraint",
+						"runbook", "bug_pattern", "deploy_note", "project_trap", "architecture", "anti_pattern",
+						"operational_lesson", "technical_fact", "workflow_template", "skill",
+					},
+				},
+				"statement":     stringProp("Bounded reusable statement to learn."),
+				"scope":         stringProp("Knowledge scope such as user, shared, project or device."),
+				"project":       stringProp("Project identifier when scope is project."),
+				"device":        stringProp("Device identifier when scope is device."),
+				"canonical_key": stringProp("Optional stable exact-deduplication key."),
+				"source":        stringProp("Short provenance label; never include hidden prompts, secrets, or raw conversation transcripts."),
+				"tags":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required": []string{"type", "statement"},
+		}
+		props["evolution_id"] = stringProp("Stable evolution id for bind, supersede or retract.")
+		props["task_id"] = stringProp("Task id for bind. The learning check must be bound before Task execution begins.")
+		props["learning_check"] = map[string]any{
+			"type": "object", "description": "Required for bind. Predeclare what a later Task pass or failure means before execution; Task outcome has no learning meaning by itself.", "additionalProperties": false,
+			"properties": map[string]any{
+				"on_success": map[string]any{"type": "string", "enum": []string{"support", "contradict", "none"}},
+				"on_failure": map[string]any{"type": "string", "enum": []string{"support", "contradict", "none"}},
+			},
+			"required": []string{"on_success", "on_failure"},
+		}
+		props["superseded_by"] = stringProp("Replacement evolution_id for supersede when already known.")
+		required = []string{"intent"}
 
 	case "acp_session":
 		props["action"] = map[string]any{"type": "string", "description": "ACP session action.", "enum": []string{"info", "authenticate", "new", "load", "resume", "fork", "set_mode", "set_config", "list", "inspect", "close", "delete"}}

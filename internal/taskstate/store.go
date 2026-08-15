@@ -73,12 +73,13 @@ type FinalReviewInput struct {
 }
 
 type FinalReview struct {
-	Status        string    `json:"status"`
-	Summary       string    `json:"summary"`
-	VerifiedFacts []string  `json:"verified_facts,omitempty"`
-	OpenRisks     []string  `json:"open_risks,omitempty"`
-	MissingChecks []string  `json:"missing_checks,omitempty"`
-	ReviewedAt    time.Time `json:"reviewed_at"`
+	Status         string    `json:"status"`
+	Summary        string    `json:"summary"`
+	VerifiedFacts  []string  `json:"verified_facts,omitempty"`
+	OpenRisks      []string  `json:"open_risks,omitempty"`
+	MissingChecks  []string  `json:"missing_checks,omitempty"`
+	ReviewRevision string    `json:"review_revision"`
+	ReviewedAt     time.Time `json:"reviewed_at"`
 }
 
 type Event struct {
@@ -88,23 +89,29 @@ type Event struct {
 }
 
 type Task struct {
-	SchemaVersion   int                 `json:"schema_version"`
-	ID              string              `json:"id"`
-	Title           string              `json:"title"`
-	Goal            string              `json:"goal"`
-	Status          Status              `json:"status"`
-	Phase           Phase               `json:"phase"`
-	Conditions      []Condition         `json:"conditions"`
-	Template        *TemplateSelection  `json:"template,omitempty"` // 仅用于读取旧任务状态。
-	SourceTemplates []TemplateReference `json:"source_templates,omitempty"`
-	Steps           []TaskStep          `json:"steps,omitempty"`
-	Events          []Event             `json:"events"`
-	Blocker         string              `json:"blocker,omitempty"`
-	Summary         string              `json:"summary,omitempty"`
-	FinalReview     *FinalReview        `json:"final_review,omitempty"`
-	CreatedAt       time.Time           `json:"created_at"`
-	UpdatedAt       time.Time           `json:"updated_at"`
-	CompletedAt     *time.Time          `json:"completed_at,omitempty"`
+	SchemaVersion         int                    `json:"schema_version"`
+	ID                    string                 `json:"id"`
+	Title                 string                 `json:"title"`
+	Goal                  string                 `json:"goal"`
+	Project               string                 `json:"project,omitempty"`
+	Device                string                 `json:"device,omitempty"`
+	Status                Status                 `json:"status"`
+	Phase                 Phase                  `json:"phase"`
+	Conditions            []Condition            `json:"conditions"`
+	Template              *TemplateSelection     `json:"template,omitempty"` // 仅用于读取旧任务状态。
+	SourceTemplates       []TemplateReference    `json:"source_templates,omitempty"`
+	Steps                 []TaskStep             `json:"steps,omitempty"`
+	Events                []Event                `json:"events"`
+	Blocker               string                 `json:"blocker,omitempty"`
+	Summary               string                 `json:"summary,omitempty"`
+	GuidanceContext       []EvolutionContextItem `json:"guidance_context,omitempty"`
+	EvolutionGuidanceSeen []string               `json:"evolution_guidance_seen,omitempty"`
+	EvolutionCandidates   []EvolutionContextItem `json:"evolution_candidates,omitempty"`
+	EvolutionBindings     []EvolutionBinding     `json:"evolution_bindings,omitempty"`
+	FinalReview           *FinalReview           `json:"final_review,omitempty"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
+	CompletedAt           *time.Time             `json:"completed_at,omitempty"`
 }
 
 type Store struct {
@@ -147,6 +154,10 @@ func (s *Store) acquireStoreLock() (func(), error) {
 func (s *Store) Root() string { return s.root }
 
 func (s *Store) Create(title, goal string, conditionTexts []string, steps []TaskStepInput, sourceTemplates []TemplateReference) (Task, error) {
+	return s.CreateWithContext(title, goal, "", "", conditionTexts, steps, sourceTemplates)
+}
+
+func (s *Store) CreateWithContext(title, goal, project, device string, conditionTexts []string, steps []TaskStepInput, sourceTemplates []TemplateReference) (Task, error) {
 	release, err := s.acquireStoreLock()
 	if err != nil {
 		return Task{}, err
@@ -155,6 +166,8 @@ func (s *Store) Create(title, goal string, conditionTexts []string, steps []Task
 
 	title = strings.TrimSpace(title)
 	goal = strings.TrimSpace(goal)
+	project = strings.ToLower(strings.TrimSpace(project))
+	device = strings.TrimSpace(device)
 	if title == "" || goal == "" {
 		return Task{}, errors.New("task title and goal are required")
 	}
@@ -163,6 +176,9 @@ func (s *Store) Create(title, goal string, conditionTexts []string, steps []Task
 	}
 	if err := validateTextLimit("task goal", goal, maxTaskGoalBytes); err != nil {
 		return Task{}, err
+	}
+	if len(project) > 256 || len(device) > 256 {
+		return Task{}, errors.New("task project/device context is too long")
 	}
 	conditionTexts = normalizeTexts(conditionTexts)
 	if len(conditionTexts) == 0 {
@@ -199,6 +215,8 @@ func (s *Store) Create(title, goal string, conditionTexts []string, steps []Task
 		ID:              id,
 		Title:           title,
 		Goal:            goal,
+		Project:         project,
+		Device:          device,
 		Status:          StatusActive,
 		Phase:           phase,
 		Conditions:      make([]Condition, 0, len(conditionTexts)),
@@ -535,7 +553,12 @@ func applyFinalReview(task *Task, input FinalReviewInput, now time.Time) error {
 		return errors.New("failed final review requires at least one risk")
 	}
 
-	task.FinalReview = &FinalReview{Status: status, Summary: summary, VerifiedFacts: verifiedFacts, OpenRisks: openRisks, MissingChecks: missingChecks, ReviewedAt: now}
+	reviewRevision, err := newOpaqueID("rev_")
+	if err != nil {
+		return err
+	}
+	task.FinalReview = &FinalReview{Status: status, Summary: summary, VerifiedFacts: verifiedFacts, OpenRisks: openRisks, MissingChecks: missingChecks, ReviewRevision: reviewRevision, ReviewedAt: now}
+	task.EvolutionCandidates = nil
 	if status == FinalReviewPass {
 		task.Phase = PhaseCloseout
 	}
@@ -924,9 +947,13 @@ func validateID(id string) error {
 }
 
 func newID() (string, error) {
+	return newOpaqueID("tsk_")
+}
+
+func newOpaqueID(prefix string) (string, error) {
 	raw := make([]byte, 8)
 	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate task id: %w", err)
+		return "", fmt.Errorf("generate %sid: %w", prefix, err)
 	}
-	return "tsk_" + hex.EncodeToString(raw), nil
+	return prefix + hex.EncodeToString(raw), nil
 }

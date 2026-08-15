@@ -23,6 +23,8 @@ type taskManageInput struct {
 	Action               string
 	Title                string
 	Goal                 string
+	Project              string
+	Device               string
 	CompletionConditions []string
 	Steps                []taskstate.TaskStepInput
 	TemplateID           string
@@ -69,6 +71,8 @@ func parseTaskManageInput(args map[string]any) (taskManageInput, error) {
 		Action:               strings.ToLower(strings.TrimSpace(stringArg(args, "action", ""))),
 		Title:                stringArg(args, "title", ""),
 		Goal:                 stringArg(args, "goal", ""),
+		Project:              strings.ToLower(strings.TrimSpace(stringArg(args, "project", ""))),
+		Device:               strings.TrimSpace(stringArg(args, "device", "")),
 		CompletionConditions: stringSliceArg(args, "completion_conditions"),
 		TemplateID:           strings.TrimSpace(stringArg(args, "template_id", "")),
 		SourceTemplateIDs:    stringSliceArg(args, "source_template_ids"),
@@ -140,6 +144,7 @@ func (s *Service) Manage(ctx context.Context, args map[string]any) (Result, erro
 		return nil, err
 	}
 	var task taskstate.Task
+	var evolutionWarning string
 	switch input.Action {
 	case "create":
 		steps := append([]taskstate.TaskStepInput(nil), input.Steps...)
@@ -157,7 +162,7 @@ func (s *Service) Manage(ctx context.Context, args map[string]any) (Result, erro
 				steps = taskStepInputsFromTemplate(template)
 			}
 			conditions = append(append([]string{}, template.CompletionConditions...), conditions...)
-			sourceTemplates = []taskstate.TemplateReference{{ID: template.ID, Version: template.Version, Hash: template.Hash}}
+			sourceTemplates = []taskstate.TemplateReference{{ID: template.ID, Version: template.Version, Hash: template.Hash, SourceEvolutionID: template.SourceEvolutionID}}
 		}
 		if len(input.SourceTemplateIDs) > 0 {
 			if len(input.SourceTemplateIDs) < 2 || len(input.SourceTemplateIDs) > 3 {
@@ -172,14 +177,22 @@ func (s *Service) Manage(ctx context.Context, args map[string]any) (Result, erro
 			}
 			sourceTemplates = templateReferences(templates)
 		}
-		task, err = s.tasks.Create(input.Title, input.Goal, conditions, steps, sourceTemplates)
+		task, err = s.tasks.CreateWithContext(input.Title, input.Goal, input.Project, input.Device, conditions, steps, sourceTemplates)
 		if err != nil {
 			return nil, taskToolError(err)
 		}
-		return Result{
+		task, evolutionWarning = s.refreshGuidanceBestEffort(ctx, task)
+		result := Result{
 			"action": input.Action, "task_id": task.ID, "task_summary": compactTaskSummary(task), "state_dir": s.tasks.Root(),
 			"next_required_action": "Use checkpoint at meaningful recovery points; completed_step_ids/current_step_id can update several steps atomically. Use block only for a real blocker. After all steps and real verification are complete, call final_review, then complete.",
-		}, nil
+		}
+		if len(task.GuidanceContext) > 0 {
+			result["guidance_context"] = task.GuidanceContext
+		}
+		if evolutionWarning != "" {
+			result["evolution_warning"] = evolutionWarning
+		}
+		return result, nil
 	case "list":
 		status := taskstate.Status(input.Status)
 		if status != "" && status != taskstate.StatusActive && status != taskstate.StatusBlocked && status != taskstate.StatusCompleted {
@@ -218,9 +231,24 @@ func (s *Service) Manage(ctx context.Context, args map[string]any) (Result, erro
 		task, err = s.tasks.Block(input.TaskID, input.Summary)
 	case "resume":
 		task, err = s.tasks.Resume(input.TaskID, input.Summary)
+		if err == nil {
+			task, evolutionWarning = s.refreshGuidanceBestEffort(ctx, task)
+		}
 	case "final_review":
 		review := taskstate.FinalReviewInput{Status: input.Status, Summary: input.Summary, VerifiedFacts: input.Verified, OpenRisks: input.Risks}
 		task, err = s.tasks.FinalReview(input.TaskID, review)
+		if err == nil {
+			warnings := make([]string, 0, 2)
+			if warning := s.resolveBindingsBestEffort(ctx, task); warning != "" {
+				warnings = append(warnings, warning)
+			}
+			var warning string
+			task, warning = s.refreshCandidatesBestEffort(ctx, task)
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+			evolutionWarning = strings.Join(warnings, "; ")
+		}
 	case "complete":
 		task, err = s.tasks.Complete(input.TaskID)
 	default:
@@ -229,7 +257,20 @@ func (s *Service) Manage(ctx context.Context, args map[string]any) (Result, erro
 	if err != nil {
 		return nil, taskToolError(err)
 	}
-	return Result{"action": input.Action, "task_id": task.ID, "task_summary": compactTaskSummary(task), "state_dir": s.tasks.Root()}, nil
+	result := Result{"action": input.Action, "task_id": task.ID, "task_summary": compactTaskSummary(task), "state_dir": s.tasks.Root()}
+	if input.Action == "resume" && len(task.GuidanceContext) > 0 {
+		result["guidance_context"] = task.GuidanceContext
+	}
+	if input.Action == "final_review" && task.FinalReview != nil {
+		result["review_revision"] = task.FinalReview.ReviewRevision
+		if len(task.EvolutionCandidates) > 0 {
+			result["evolution_candidates"] = task.EvolutionCandidates
+		}
+	}
+	if evolutionWarning != "" {
+		result["evolution_warning"] = evolutionWarning
+	}
+	return result, nil
 }
 
 func (s *Service) WorkflowManage(ctx context.Context, args map[string]any) (Result, error) {
@@ -416,7 +457,7 @@ func taskStepInputsFromTemplate(template taskstate.Template) []taskstate.TaskSte
 func templateReferences(templates []taskstate.Template) []taskstate.TemplateReference {
 	refs := make([]taskstate.TemplateReference, 0, len(templates))
 	for _, template := range templates {
-		refs = append(refs, taskstate.TemplateReference{ID: template.ID, Version: template.Version, Hash: template.Hash})
+		refs = append(refs, taskstate.TemplateReference{ID: template.ID, Version: template.Version, Hash: template.Hash, SourceEvolutionID: template.SourceEvolutionID})
 	}
 	return refs
 }
