@@ -219,10 +219,6 @@
                           Content="以管理员权限运行 AgentDock 核心"
                           Margin="0,4,0,8"
                           Click="ElevatedCoreCheckBox_Click" />
-                <TextBlock Text="开启时使用 Windows Highest 计划任务运行核心；切换时会弹出 UAC，并保持当前运行状态和核心开机启动设置。"
-                           Foreground="#667085"
-                           TextWrapping="Wrap"
-                           Margin="24,-4,0,4" />
               </StackPanel>
             </GroupBox>
 
