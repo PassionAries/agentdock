@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agentdock-install-entry-test.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
 
@@ -12,7 +12,7 @@ RELEASE_DIR="$TMP_ROOT/release"
 FAKE_BIN="$TMP_ROOT/bin"
 ENTRY="$TMP_ROOT/install.sh"
 mkdir -p "$RELEASE_DIR" "$FAKE_BIN"
-cp "$ROOT_DIR/scripts/install.sh" "$ENTRY"
+cp "$ROOT_DIR/scripts/install/install.sh" "$ENTRY"
 chmod +x "$ENTRY"
 
 checksum_asset() {
@@ -149,7 +149,7 @@ SH
 }
 
 write_fake_platform install-linux-platform.sh
-cp "$ROOT_DIR/scripts/uninstall-linux.sh" "$RELEASE_DIR/uninstall-linux.sh"
+cp "$ROOT_DIR/scripts/install/uninstall-linux.sh" "$RELEASE_DIR/uninstall-linux.sh"
 chmod +x "$RELEASE_DIR/uninstall-linux.sh"
 checksum_asset uninstall-linux.sh
 
@@ -194,7 +194,7 @@ TEST_SERVICE_ENV_OUTPUT="$SERVICE_ENV_OUTPUT" \
     set -Eeuo pipefail
     source "$1"
     run_as_service_user "$(id -un)" "$2" "$3"
-  ' bash "$ROOT_DIR/scripts/install-linux-platform.sh" "$SERVICE_HOME_ROOT" "$FAKE_BIN/capture-service-env"
+  ' bash "$ROOT_DIR/scripts/install/install-linux-platform.sh" "$SERVICE_HOME_ROOT" "$FAKE_BIN/capture-service-env"
 assert_line "HOME=$SERVICE_HOME_ROOT" "$SERVICE_ENV_OUTPUT"
 assert_line "AGENTDOCK_HOME=$SERVICE_HOME_ROOT/.agentdock" "$SERVICE_ENV_OUTPUT"
 assert_line "AGENTDOCK_DEFAULT_DIR=$SERVICE_HOME_ROOT/AgentDock" "$SERVICE_ENV_OUTPUT"

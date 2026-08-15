@@ -35,14 +35,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Validate unified installer entry
-        run: |
-          sh -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
-          dash -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
-          bash -n scripts/install-linux-platform.sh
-          shellcheck scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh scripts/install-linux-platform.sh
-          ./scripts/test-install-entry.sh
-
       - name: Build and package
         env:
           CGO_ENABLED: '0'
@@ -57,7 +49,7 @@ jobs:
           go build -trimpath \
             -ldflags="-s -w -X github.com/uvwt/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/internal/buildinfo.BuildDate=${build_date}" \
             -o dist/bin/agentdock ./cmd/agentdock
-          python3 scripts/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
+          python3 packaging/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
           tar -C dist -czf "$asset" bin/agentdock share/agentdock/core-skills
           shasum -a 256 "$asset" > "$asset.sha256"
 
@@ -89,18 +81,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Validate macOS scripts
-        run: |
-          for path in \
-            scripts/install-macos-platform.sh \
-            scripts/uninstall-macos.sh \
-            scripts/sign-macos.sh \
-            scripts/deploy-macos-source.sh \
-            scripts/restart-macos.sh; do
-            zsh -n "$path"
-          done
-          ./scripts/test-install-macos.sh
-
       - name: Build and package
         env:
           CGO_ENABLED: '0'
@@ -115,7 +95,7 @@ jobs:
           go build -trimpath \
             -ldflags="-s -w -X github.com/uvwt/agentdock/internal/buildinfo.Commit=${source_commit} -X github.com/uvwt/agentdock/internal/buildinfo.BuildDate=${build_date}" \
             -o dist/bin/agentdock ./cmd/agentdock
-          python3 scripts/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
+          python3 packaging/build-core-skill-bundle.py --output dist/share/agentdock/core-skills
           tar -C dist -czf "$asset" bin/agentdock share/agentdock/core-skills
           shasum -a 256 "$asset" > "$asset.sha256"
 
@@ -191,11 +171,7 @@ jobs:
           )
 
       - name: Validate menu app
-        run: |
-          zsh -n \
-            packaging/macos/build-app.sh \
-            scripts/test-macos-app.sh
-          ./scripts/test-macos-app.sh
+        run: ./scripts/test/test-macos-app.sh
 
       - name: Build universal menu app
         env:
@@ -250,10 +226,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-downloaded.ps1'
-          $installerUrl = 'https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install.ps1'
-          & .\scripts\test-install-windows-download.ps1 `
+          $installerUrl = 'https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/scripts/install/install.ps1'
+          & .\scripts\test\test-install-windows-download.ps1 `
             -Url $installerUrl `
-            -ExpectedInstallerPath .\scripts\install.ps1 `
+            -ExpectedInstallerPath .\scripts\install\install.ps1 `
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
 
@@ -261,7 +237,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\test-install-windows.ps1 -InstallerPath $env:DOWNLOADED_INSTALLER
+          & .\scripts\test\test-install-windows.ps1 -InstallerPath $env:DOWNLOADED_INSTALLER
 
       - name: Require Authenticode configuration
         shell: pwsh
@@ -302,7 +278,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\test-windows-current-binary-as-standard-user.ps1 `
+          & .\scripts\test\test-windows-current-binary-as-standard-user.ps1 `
             -BinaryPath .\dist\agentdock.exe
 
       - name: Authenticode sign and verify
@@ -311,7 +287,7 @@ jobs:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
-          .\scripts\sign-windows.ps1 -Path @(
+          .\packaging\windows\sign-windows.ps1 -Path @(
             '.\dist\agentdock.exe',
             '.\dist\agentdock-tray.exe'
           )
@@ -323,9 +299,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $asset = "agentdock_windows_$env:GOARCH.zip"
-          python .\scripts\build-core-skill-bundle.py --output dist\share\agentdock\core-skills
+          python .\packaging\build-core-skill-bundle.py --output dist\share\agentdock\core-skills
           Copy-Item .\packaging\windows\assets\agentdock.ico dist\agentdock.ico -Force
-          Copy-Item .\scripts\manage-windows.ps1 dist\manage-windows.ps1 -Force
+          Copy-Item .\scripts\install\manage-windows.ps1 dist\manage-windows.ps1 -Force
           Compress-Archive -Path dist\agentdock.exe, dist\agentdock-tray.exe, dist\agentdock.ico, dist\manage-windows.ps1, dist\share -DestinationPath $asset -Force
           $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText("$asset.sha256", "$hash  $asset`n", [Text.UTF8Encoding]::new($false))
@@ -396,7 +372,7 @@ jobs:
           $tag = '${{ github.event.inputs.tag || github.ref_name }}'
           $version = $tag.TrimStart('v')
           $outputDir = Join-Path $PWD 'dist'
-          & .\scripts\build-windows-offline-setup.ps1 `
+          & .\packaging\windows\build-windows-offline-setup.ps1 `
             -Version $version `
             -Architecture '${{ matrix.goarch }}' `
             -AgentDockArchive '.\payload\agentdock_windows_${{ matrix.goarch }}.zip' `
@@ -435,13 +411,13 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          cp scripts/install.sh dist/install.sh
-          cp scripts/install-linux-platform.sh dist/install-linux-platform.sh
-          cp scripts/uninstall-linux.sh dist/uninstall-linux.sh
-          cp scripts/install-macos-platform.sh dist/install-macos-platform.sh
-          cp scripts/uninstall-macos.sh dist/uninstall-macos.sh
-          cp scripts/install.ps1 dist/install.ps1
-          cp scripts/uninstall-windows.ps1 dist/uninstall-windows.ps1
+          cp scripts/install/install.sh dist/install.sh
+          cp scripts/install/install-linux-platform.sh dist/install-linux-platform.sh
+          cp scripts/install/uninstall-linux.sh dist/uninstall-linux.sh
+          cp scripts/install/install-macos-platform.sh dist/install-macos-platform.sh
+          cp scripts/install/uninstall-macos.sh dist/uninstall-macos.sh
+          cp scripts/install/install.ps1 dist/install.ps1
+          cp scripts/install/uninstall-windows.ps1 dist/uninstall-windows.ps1
           python3 - <<'PY'
           import os
           import re
@@ -779,9 +755,9 @@ jobs:
           $tag = '${{ github.event.inputs.tag || github.ref_name }}'
           $downloadedInstaller = Join-Path $env:RUNNER_TEMP 'install-release.ps1'
           $installerUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/install.ps1"
-          & .\scripts\test-install-windows-download.ps1 `
+          & .\scripts\test\test-install-windows-download.ps1 `
             -Url $installerUrl `
-            -ExpectedInstallerPath .\scripts\install.ps1 `
+            -ExpectedInstallerPath .\scripts\install\install.ps1 `
             -OutputPath $downloadedInstaller
           "DOWNLOADED_INSTALLER=$downloadedInstaller" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
           "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
@@ -798,13 +774,13 @@ jobs:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
-          .\scripts\sign-windows.ps1 -Path $env:PUBLISHED_SETUP -VerifyOnly
+          .\packaging\windows\sign-windows.ps1 -Path $env:PUBLISHED_SETUP -VerifyOnly
 
       - name: Install and uninstall published Setup
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\test-windows-setup-e2e.ps1 `
+          & .\scripts\test\test-windows-setup-e2e.ps1 `
             -SetupPath $env:PUBLISHED_SETUP `
             -AllowLegacyTaskMutation
 
@@ -812,7 +788,7 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\run-windows-installer-e2e-as-standard-user.ps1 `
+          & .\scripts\test\run-windows-installer-e2e-as-standard-user.ps1 `
             -InstallerPath $env:DOWNLOADED_INSTALLER `
             -Version $env:RELEASE_TAG
 
@@ -847,7 +823,7 @@ jobs:
           AGENTDOCK_TEST_DEV_IMAGE: ghcr.io/${{ github.repository }}:dev-${{ github.event.inputs.tag || github.ref_name }}
           AGENTDOCK_TEST_BROWSER_IMAGE: ghcr.io/${{ github.repository }}:browser-${{ github.event.inputs.tag || github.ref_name }}
           AGENTDOCK_EXPECT_IMAGE_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
-        run: ./scripts/test-docker-images.sh
+        run: ./scripts/test/test-docker-images.sh
 
       - name: Run published Docker Hub images
         env:
@@ -857,4 +833,4 @@ jobs:
           AGENTDOCK_TEST_DEV_IMAGE: agentdockio/agentdock:dev-${{ github.event.inputs.tag || github.ref_name }}
           AGENTDOCK_TEST_BROWSER_IMAGE: agentdockio/agentdock:browser-${{ github.event.inputs.tag || github.ref_name }}
           AGENTDOCK_EXPECT_IMAGE_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
-        run: ./scripts/test-docker-images.sh
+        run: ./scripts/test/test-docker-images.sh

@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-ROOT_DIR="${0:A:h:h}"
+ROOT_DIR="${0:A:h:h:h}"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agentdock-macos-app-test.XXXXXX")"
 MOUNT_POINT="$TMP_ROOT/mount"
 MOUNTED=false
@@ -79,7 +79,7 @@ mkdir -p "$payload_dir" "$payload_build/bin" "$payload_build/share/agentdock"
   CGO_ENABLED=0 GOOS=darwin GOARCH="$release_arch" \
     go build -trimpath -o "$payload_build/bin/agentdock" ./cmd/agentdock
 )
-python3 "$ROOT_DIR/scripts/build-core-skill-bundle.py" \
+python3 "$ROOT_DIR/packaging/build-core-skill-bundle.py" \
   --output "$payload_build/share/agentdock/core-skills"
 agentdock_archive="agentdock_darwin_${release_arch}.tar.gz"
 tar -C "$payload_build" -czf "$payload_dir/$agentdock_archive" \

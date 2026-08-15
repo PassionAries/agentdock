@@ -7,14 +7,14 @@ EXECUTION_PATH="$PATH"
 [[ "$(uname -s)" == "Darwin" ]] || { print -u2 -- "ERROR: 此脚本只支持 macOS"; exit 1; }
 
 SCRIPT_DIR="${0:A:h}"
-SRC_DIR="${SCRIPT_DIR:h}"
+SRC_DIR="${SCRIPT_DIR:h:h}"
 LABEL="com.uvwt.agentdock"
 TARGET="$HOME/.local/bin/agentdock"
 BACKUP_DIR="$HOME/.agentdock/backups/bin"
 APP_SUPPORT_DIR="$HOME/Library/Application Support/AgentDock"
 AGENTDOCK_ENV="$APP_SUPPORT_DIR/agentdock.env"
 PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
-SIGN_SCRIPT="$SCRIPT_DIR/sign-macos.sh"
+SIGN_SCRIPT="$SRC_DIR/packaging/macos/sign-macos.sh"
 INSTALL_DIR="${TARGET:h}"
 STAMP="$(date +%Y%m%d%H%M%S)"
 TMP_BIN="$INSTALL_DIR/.agentdock.source.$STAMP.$$"
@@ -198,7 +198,7 @@ chmod 0755 "$TMP_BIN"
 printf '==> building official core Skill Bundle\n'
 CORE_SKILL_TEMP_DIR="$(mktemp -d)"
 CORE_SKILL_BUNDLE="$CORE_SKILL_TEMP_DIR/core-skills"
-python3 "$SCRIPT_DIR/build-core-skill-bundle.py" \
+python3 "$SRC_DIR/packaging/build-core-skill-bundle.py" \
   --repo-root "$SRC_DIR" \
   --output "$CORE_SKILL_BUNDLE"
 

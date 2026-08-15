@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $PSScriptRoot 'install.ps1'
+    $InstallerPath = Join-Path $PSScriptRoot '..\install\install.ps1'
 }
 $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
 

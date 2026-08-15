@@ -8,10 +8,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($InstallerPath)) {
-    $InstallerPath = Join-Path $PSScriptRoot 'install.ps1'
+    $InstallerPath = Join-Path $PSScriptRoot '..\install\install.ps1'
 }
 if ([string]::IsNullOrWhiteSpace($ManagerPath)) {
-    $ManagerPath = Join-Path $PSScriptRoot 'manage-windows.ps1'
+    $ManagerPath = Join-Path $PSScriptRoot '..\install\manage-windows.ps1'
 }
 
 $resolvedInstaller = Resolve-Path -LiteralPath $InstallerPath
@@ -231,7 +231,7 @@ $elevationProbe = [scriptblock]::Create(
 )
 & $elevationProbe
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $taskAdminSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\TaskAdminService.cs'
 $appSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\App.xaml.cs'
 $runtimeSourcePath = Join-Path $repoRoot 'desktop\windows\control-panel\Services\RuntimeService.cs'

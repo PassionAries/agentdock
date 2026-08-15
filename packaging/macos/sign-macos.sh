@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 用法：
-  AGENTDOCK_CODESIGN_IDENTITY=... scripts/sign-macos.sh /path/to/agentdock
+  AGENTDOCK_CODESIGN_IDENTITY=... packaging/macos/sign-macos.sh /path/to/agentdock
 
 可选环境变量：
   AGENTDOCK_CODESIGN_KEYCHAIN   指定代码签名钥匙串

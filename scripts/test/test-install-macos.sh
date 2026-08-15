@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 
-ROOT_DIR="${0:A:h:h}"
+ROOT_DIR="${0:A:h:h:h}"
 TEST_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 TMP_ROOT="$(PATH="$TEST_PATH" mktemp -d "${TMPDIR:-/tmp}/agentdock-macos-installer-test.XXXXXX")"
 trap 'PATH="$TEST_PATH" rm -rf "$TMP_ROOT"' EXIT
@@ -28,7 +28,7 @@ PYURI
   cd "$ROOT_DIR"
   CGO_ENABLED=0 GOOS=darwin GOARCH="$release_arch" \
     go build -trimpath -o "$build_dir/bin/agentdock" ./cmd/agentdock
-  python3 scripts/build-core-skill-bundle.py --output "$build_dir/share/agentdock/core-skills"
+  python3 packaging/build-core-skill-bundle.py --output "$build_dir/share/agentdock/core-skills"
 )
 
 tar -C "$build_dir" -czf "$release_dir/$asset" bin/agentdock share/agentdock/core-skills
@@ -43,7 +43,7 @@ run_installer() {
     PATH="$TEST_PATH" \
     TMPDIR="$TMP_ROOT" \
     AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-    zsh "$ROOT_DIR/scripts/install-macos-platform.sh" "$@"
+    zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" "$@"
 }
 
 mode_of() {
@@ -234,7 +234,7 @@ env -i \
   HOME="$offline_home" \
   PATH="$offline_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --offline \
     --agentdock-archive "$release_dir/$asset" \
     --agentdock-checksum-file "$release_dir/$asset.sha256" \
@@ -254,7 +254,7 @@ if env -i \
   HOME="$TMP_ROOT/offline bad checksum home" \
   PATH="$offline_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --offline \
     --agentdock-archive "$release_dir/$asset" \
     --agentdock-checksum-file "$bad_agentdock_checksum" \
@@ -271,7 +271,7 @@ if env -i \
   HOME="$TMP_ROOT/offline missing payload home" \
   PATH="$offline_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --offline \
     --register-service \
     --tunnel none \
@@ -290,7 +290,7 @@ if env -i \
   PATH="$fake_cloudflared_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --non-interactive \
     --tunnel named \
     --server-url https://agent.example.test \
@@ -309,7 +309,7 @@ env -i \
   PATH="$fake_cloudflared_bin:$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --non-interactive \
     --tunnel named \
     --server-url https://agent.example.test \
@@ -358,7 +358,7 @@ env -i \
     test "$(wait_for_tunnel "gui/501")" = 4321
     wait_for_tunnel_process "gui/501"
   ' _ \
-  "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
   "$binary" \
   "$home_dir/.local/bin/cloudflared" \
   "$tunnel_start" \
@@ -376,7 +376,7 @@ env -i \
   PATH="$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --register-service \
     --no-start
 assert_file_contains "$tunnel_env" 'TUNNEL_TOKEN=named-token-value'
@@ -391,7 +391,7 @@ env -i \
   PATH="$TEST_PATH" \
   TMPDIR="$TMP_ROOT" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --tunnel quick \
     --no-start
 assert_file_contains "$tunnel_env" 'AGENTDOCK_TUNNEL_MODE=quick'
@@ -515,7 +515,7 @@ if env -i \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
   AGENTDOCK_CLOUDFLARED_BINARY="$invalid_cloudflared" \
   AGENTDOCK_CLOUDFLARE_TUNNEL_TOKEN='must-not-survive' \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --tunnel named \
     --server-url https://broken.example.test \
     --no-start >/dev/null 2>&1; then
@@ -563,7 +563,7 @@ env -i \
     register_and_start_tunnel() { TUNNEL_PUBLIC_URL=https://fresh.trycloudflare.com; }
     register_and_start_service() { print -- restarted >> "$TEST_QUICK_REFRESH_STATE/restarts"; }
     configure_tunnel
-  ' _ "$ROOT_DIR/scripts/install-macos-platform.sh"
+  ' _ "$ROOT_DIR/scripts/install/install-macos-platform.sh"
 assert_file_contains "$quick_refresh_env" 'AGENTDOCK_SERVER_URL=https://fresh.trycloudflare.com'
 assert_file_contains "$quick_refresh_env" 'AGENTDOCK_OAUTH_ENABLED=true'
 assert_file_contains "$quick_refresh_env" 'AGENTDOCK_AUTH_TOKEN=stable-bearer-token'
@@ -581,7 +581,7 @@ fi
 invalid_home="$TMP_ROOT/invalid target home"
 mkdir -p "$invalid_home/.local/bin/agentdock"
 if env -i HOME="$invalid_home" PATH="$TEST_PATH" AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" >/dev/null 2>&1; then
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" >/dev/null 2>&1; then
   print -u2 -- "installer accepted a non-regular binary target"
   exit 1
 fi
@@ -676,7 +676,7 @@ if env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --register-service \
     --port 18767 >/dev/null 2>&1; then
   print -u2 -- "installer unexpectedly succeeded after simulated first-install kickstart failure"
@@ -696,7 +696,7 @@ env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --register-service \
     --port 18767 \
     --auth-token test-token
@@ -714,7 +714,7 @@ env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --register-service >/dev/null
 assert_file_contains "$fake_state/curl.calls" 'http://127.0.0.1:18767/healthz'
 assert_file_not_contains "$fake_state/curl.calls" 'http://127.0.0.1:8765/healthz'
@@ -761,7 +761,7 @@ if env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$rollback_release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --register-service \
     --host 127.0.0.8 \
     --port 18888 >/dev/null 2>&1; then
@@ -787,7 +787,7 @@ if env -i \
   TMPDIR="$TMP_ROOT" \
   TEST_LAUNCHCTL_STATE="$fake_state" \
   AGENTDOCK_RELEASE_BASE_URL="$rollback_release_url" \
-  zsh "$ROOT_DIR/scripts/install-macos-platform.sh" \
+  zsh "$ROOT_DIR/scripts/install/install-macos-platform.sh" \
     --register-service \
     --host 127.0.0.8 \
     --port 18888 >/dev/null 2>&1; then
@@ -804,7 +804,7 @@ assert_file_not_contains "$fake_state/curl.calls" 'http://127.0.0.8:18888/health
 
 # 无法停止已加载服务时，卸载器必须保留全部运行文件。
 if env -i HOME="$service_home" PATH="$fake_bin:$TEST_PATH" TEST_LAUNCHCTL_STATE="$fake_state" \
-  zsh "$ROOT_DIR/scripts/uninstall-macos.sh" >/dev/null 2>&1; then
+  zsh "$ROOT_DIR/scripts/install/uninstall-macos.sh" >/dev/null 2>&1; then
   print -u2 -- "uninstaller ignored a launchctl bootout failure"
   exit 1
 fi
@@ -817,7 +817,7 @@ rm -f "$fake_state/fail-bootout"
 
 # 默认卸载只删服务，保留二进制、状态和工作目录；launchctl 仍使用替身。
 env -i HOME="$home_dir" PATH="$fake_bin:$TEST_PATH" TEST_LAUNCHCTL_STATE="$fake_state" \
-  zsh "$ROOT_DIR/scripts/uninstall-macos.sh"
+  zsh "$ROOT_DIR/scripts/install/uninstall-macos.sh"
 test -x "$binary"
 test -d "$state_dir"
 test -d "$work_dir"
@@ -827,7 +827,7 @@ test ! -e "$log_dir"
 
 # 显式删除二进制仍保留数据。
 env -i HOME="$home_dir" PATH="$fake_bin:$TEST_PATH" TEST_LAUNCHCTL_STATE="$fake_state" \
-  zsh "$ROOT_DIR/scripts/uninstall-macos.sh" --remove-binary
+  zsh "$ROOT_DIR/scripts/install/uninstall-macos.sh" --remove-binary
 test ! -e "$binary"
 test -d "$state_dir"
 test -d "$work_dir"
@@ -836,7 +836,7 @@ test -d "$work_dir"
 mkdir -p "$home_dir/.local/bin" "$state_dir" "$work_dir"
 : > "$binary"
 env -i HOME="$home_dir" PATH="$fake_bin:$TEST_PATH" TEST_LAUNCHCTL_STATE="$fake_state" \
-  zsh "$ROOT_DIR/scripts/uninstall-macos.sh" --purge-data
+  zsh "$ROOT_DIR/scripts/install/uninstall-macos.sh" --purge-data
 test ! -e "$binary"
 test ! -e "$state_dir"
 test ! -e "$work_dir"
@@ -885,7 +885,7 @@ env -i \
   AGENTDOCK_CODESIGN_KEYCHAIN="$sign_keychain" \
   AGENTDOCK_CODESIGN_KEYCHAIN_PASSWORD='password with spaces' \
   AGENTDOCK_CODESIGN_IDENTIFIER=com.local.agentdock \
-  zsh "$ROOT_DIR/scripts/sign-macos.sh" "$sign_target"
+  zsh "$ROOT_DIR/packaging/macos/sign-macos.sh" "$sign_target"
 assert_file_contains "$sign_state/security.calls" "unlock-keychain|-p|password with spaces|$sign_keychain"
 assert_file_contains "$sign_state/security.calls" "find-identity|-v|-p|codesigning|$sign_keychain"
 assert_file_contains "$sign_state/codesign.calls" "--force|--keychain|$sign_keychain|--sign|test-identity"
@@ -898,7 +898,7 @@ if env -i \
   PATH="$sign_fake_bin:$TEST_PATH" \
   AGENTDOCK_CODESIGN_IDENTITY=test-identity \
   AGENTDOCK_CODESIGN_KEYCHAIN="$sign_keychain_link" \
-  zsh "$ROOT_DIR/scripts/sign-macos.sh" "$sign_target" >/dev/null 2>&1; then
+  zsh "$ROOT_DIR/packaging/macos/sign-macos.sh" "$sign_target" >/dev/null 2>&1; then
   print -u2 -- "sign script accepted a symlink keychain"
   exit 1
 fi

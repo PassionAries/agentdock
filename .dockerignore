@@ -8,9 +8,10 @@
 !internal/
 !internal/**
 !docker-entrypoint.sh
-!scripts/
-!scripts/docker-healthcheck.sh
-!scripts/build-core-skill-bundle.py
+!packaging/
+!packaging/build-core-skill-bundle.py
+!packaging/docker/
+!packaging/docker/docker-healthcheck.sh
 !core-skills/
 !core-skills/skill-authoring/
 !core-skills/skill-authoring/**

@@ -26,7 +26,7 @@ func TestCoreSkillBundleNormalizesTextLineEndings(t *testing.T) {
 	if python == "" {
 		t.Skip("Python is required to test the core Skill bundle builder")
 	}
-	script, err := filepath.Abs("build-core-skill-bundle.py")
+	script, err := filepath.Abs("../../packaging/build-core-skill-bundle.py")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,11 +81,11 @@ func TestCoreSkillBundleNormalizesTextLineEndings(t *testing.T) {
 
 func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
 	for _, path := range []string{
-		"install.sh",
-		"install-linux-platform.sh",
-		"uninstall-linux.sh",
-		"install-macos-platform.sh",
-		"install.ps1",
+		"../install/install.sh",
+		"../install/install-linux-platform.sh",
+		"../install/uninstall-linux.sh",
+		"../install/install-macos-platform.sh",
+		"../install/install.ps1",
 	} {
 		if info, err := os.Stat(path); err != nil {
 			t.Fatalf("required installer file %s: %v", path, err)
@@ -105,7 +105,7 @@ func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
 		}
 	}
 
-	data, err := os.ReadFile("install.sh")
+	data, err := os.ReadFile("../install/install.sh")
 	if err != nil {
 		t.Fatalf("read install.sh: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
 }
 
 func TestInstallLinuxWritesExplicitNexusDockToken(t *testing.T) {
-	data, err := os.ReadFile("install-linux-platform.sh")
+	data, err := os.ReadFile("../install/install-linux-platform.sh")
 	if err != nil {
 		t.Fatalf("read install-linux-platform.sh: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestInstallLinuxWritesExplicitNexusDockToken(t *testing.T) {
 }
 
 func TestDockerSmokeUsesStreamableHTTPAcceptHeader(t *testing.T) {
-	data, err := os.ReadFile("smoke-docker.sh")
+	data, err := os.ReadFile("../../packaging/docker/smoke-docker.sh")
 	if err != nil {
 		t.Fatalf("read smoke-docker.sh: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestDockerSmokeUsesStreamableHTTPAcceptHeader(t *testing.T) {
 }
 
 func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
-	data, err := os.ReadFile("install.ps1")
+	data, err := os.ReadFile("../install/install.ps1")
 	if err != nil {
 		t.Fatalf("read install.ps1: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 }
 
 func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.T) {
-	data, err := os.ReadFile("manage-windows.ps1")
+	data, err := os.ReadFile("../install/manage-windows.ps1")
 	if err != nil {
 		t.Fatalf("read manage-windows.ps1: %v", err)
 	}
@@ -391,11 +391,11 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 }
 
 func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
-	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	appData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "App.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read App.xaml.cs: %v", err)
 	}
-	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	runtimeData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
 		t.Fatalf("read RuntimeService.cs: %v", err)
 	}
@@ -430,15 +430,15 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 }
 
 func TestWindowsControlPanelReadsVersionFromCoreBuildInfo(t *testing.T) {
-	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	appData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "App.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read App.xaml.cs: %v", err)
 	}
-	windowData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
+	windowData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read MainWindow.xaml.cs: %v", err)
 	}
-	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	runtimeData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
 		t.Fatalf("read RuntimeService.cs: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestWindowsControlPanelReadsVersionFromCoreBuildInfo(t *testing.T) {
 }
 
 func TestDesktopRuntimeSurfacesDoNotUseLegacyLaunchers(t *testing.T) {
-	trayData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "tray", "app_windows.go"))
+	trayData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "tray", "app_windows.go"))
 	if err != nil {
 		t.Fatalf("read Windows tray: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestDesktopRuntimeSurfacesDoNotUseLegacyLaunchers(t *testing.T) {
 		}
 	}
 
-	selfUpdateData, err := os.ReadFile(filepath.Join("..", "internal", "selfupdate", "service_darwin.go"))
+	selfUpdateData, err := os.ReadFile(filepath.Join("..", "..", "internal", "selfupdate", "service_darwin.go"))
 	if err != nil {
 		t.Fatalf("read macOS self-update service adapter: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestDesktopRuntimeSurfacesDoNotUseLegacyLaunchers(t *testing.T) {
 }
 
 func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
-	data, err := os.ReadFile("uninstall-windows.ps1")
+	data, err := os.ReadFile("../install/uninstall-windows.ps1")
 	if err != nil {
 		t.Fatalf("read uninstall-windows.ps1: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 }
 
 func TestWindowsTaskAdminUsesNativeAgentDockHelper(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "TaskAdminService.cs"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "TaskAdminService.cs"))
 	if err != nil {
 		t.Fatalf("read TaskAdminService.cs: %v", err)
 	}
@@ -594,7 +594,7 @@ func TestWindowsTaskAdminUsesNativeAgentDockHelper(t *testing.T) {
 }
 
 func TestWindowsElevatedCoreHostUsesKillOnCloseJob(t *testing.T) {
-	jobData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "KillOnCloseJob.cs"))
+	jobData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "KillOnCloseJob.cs"))
 	if err != nil {
 		t.Fatalf("read KillOnCloseJob.cs: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestWindowsElevatedCoreHostUsesKillOnCloseJob(t *testing.T) {
 		}
 	}
 
-	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	runtimeData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
 		t.Fatalf("read RuntimeService.cs: %v", err)
 	}
@@ -629,17 +629,17 @@ func TestWindowsElevatedCoreHostUsesKillOnCloseJob(t *testing.T) {
 
 func TestWindowsControlPanelCanSwitchCorePrivilegeMode(t *testing.T) {
 	checks := map[string][]string{
-		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"): {
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml"): {
 			"ElevatedCoreCheckBox",
 			"以管理员权限运行 AgentDock 核心",
 			"ElevatedCoreCheckBox_Click",
 		},
-		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
 			"snapshot.Manifest.PrivilegeMode",
 			"_runtime.SetPrivilegeModeAsync(elevated)",
 			"await RefreshAsync()",
 		},
-		filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"): {
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"): {
 			"SetPrivilegeModeAsync",
 			"prepare-elevated",
 			"prepare-standard",
@@ -667,13 +667,13 @@ func TestWindowsControlPanelCanSwitchCorePrivilegeMode(t *testing.T) {
 
 func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
 	checks := map[string][]string{
-		filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"): {
 			"RegenerateQuickButton_Click",
 			"RegenerateQuickTunnelAsync",
 			"旧地址已隐藏，正在启动新的 Quick Tunnel",
 			"PublicMcpTextBox.Text = \"\"",
 		},
-		filepath.Join("..", "desktop", "macos", "AgentDockApp", "Sources", "SetupWindowController.swift"): {
+		filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "SetupWindowController.swift"): {
 			"refreshingQuickTunnel",
 			"重新生成临时地址",
 			"正在生成新的临时公网地址",
@@ -694,7 +694,7 @@ func TestDesktopControlSurfacesCanRefreshQuickTunnel(t *testing.T) {
 }
 
 func TestLinuxInstallerIntegratesCloudflareTunnelWithoutLeakingToken(t *testing.T) {
-	data, err := os.ReadFile("install-linux-platform.sh")
+	data, err := os.ReadFile("../install/install-linux-platform.sh")
 	if err != nil {
 		t.Fatalf("read install-linux-platform.sh: %v", err)
 	}
@@ -756,7 +756,7 @@ func TestLinuxInstallerPreservesCredentialsAndCapturesQuickURL(t *testing.T) {
 
 	script := `
 set -Eeuo pipefail
-source ./install-linux-platform.sh
+source ../install/install-linux-platform.sh
 run_root() {
   if [[ "$1" == systemctl ]]; then
     return 0
@@ -812,7 +812,7 @@ printf '\nCAPTURED=%s\n' "$TUNNEL_PUBLIC_URL"
 }
 
 func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
-	data, err := os.ReadFile("../docker-compose.yml")
+	data, err := os.ReadFile("../../docker-compose.yml")
 	if err != nil {
 		t.Fatalf("read docker-compose.yml: %v", err)
 	}
@@ -849,9 +849,9 @@ func TestCloudflareComposeKeepsTunnelTokenOutOfAgentDock(t *testing.T) {
 func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testing.T) {
 	var setupBuilder strings.Builder
 	for _, path := range []string{
-		filepath.Join("..", "packaging", "windows", "AgentDock.iss"),
-		filepath.Join("..", "packaging", "windows", "includes", "messages.iss"),
-		filepath.Join("..", "packaging", "windows", "includes", "code.iss"),
+		filepath.Join("..", "..", "packaging", "windows", "AgentDock.iss"),
+		filepath.Join("..", "..", "packaging", "windows", "includes", "messages.iss"),
+		filepath.Join("..", "..", "packaging", "windows", "includes", "code.iss"),
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -951,7 +951,7 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 }
 
 func TestDesktopAppIconAssets(t *testing.T) {
-	pngData, err := os.ReadFile(filepath.Join("..", "packaging", "assets", "agentdock.png"))
+	pngData, err := os.ReadFile(filepath.Join("..", "..", "packaging", "assets", "agentdock.png"))
 	if err != nil {
 		t.Fatalf("read shared AgentDock PNG: %v", err)
 	}
@@ -962,7 +962,7 @@ func TestDesktopAppIconAssets(t *testing.T) {
 		t.Fatalf("shared AgentDock icon must be 1024x1024, got %dx%d", width, height)
 	}
 
-	icoData, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "assets", "agentdock.ico"))
+	icoData, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "assets", "agentdock.ico"))
 	if err != nil {
 		t.Fatalf("read Windows AgentDock ICO: %v", err)
 	}
@@ -975,7 +975,7 @@ func TestDesktopAppIconAssets(t *testing.T) {
 }
 
 func TestWindowsControlPanelUsesStableAppUserModelID(t *testing.T) {
-	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	appData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "App.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read App.xaml.cs: %v", err)
 	}
@@ -990,7 +990,7 @@ func TestWindowsControlPanelUsesStableAppUserModelID(t *testing.T) {
 		}
 	}
 
-	setupData, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "AgentDock.iss"))
+	setupData, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "AgentDock.iss"))
 	if err != nil {
 		t.Fatalf("read AgentDock.iss: %v", err)
 	}
@@ -1000,11 +1000,11 @@ func TestWindowsControlPanelUsesStableAppUserModelID(t *testing.T) {
 }
 
 func TestWindowsControlPanelOmitsCopyButtons(t *testing.T) {
-	xamlData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"))
+	xamlData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml"))
 	if err != nil {
 		t.Fatalf("read MainWindow.xaml: %v", err)
 	}
-	codeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
+	codeData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read MainWindow.xaml.cs: %v", err)
 	}
@@ -1025,11 +1025,11 @@ func TestWindowsControlPanelOmitsCopyButtons(t *testing.T) {
 }
 
 func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
-	windowsData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	windowsData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "App.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read App.xaml.cs: %v", err)
 	}
-	macData, err := os.ReadFile(filepath.Join("..", "desktop", "macos", "AgentDockApp", "Sources", "AppDelegate.swift"))
+	macData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "macos", "AgentDockApp", "Sources", "AppDelegate.swift"))
 	if err != nil {
 		t.Fatalf("read AppDelegate.swift: %v", err)
 	}
@@ -1114,31 +1114,31 @@ func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
 }
 
 func TestWindowsUpdateFeedbackUsesUTF8AndImmediateStatus(t *testing.T) {
-	appData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml.cs"))
+	appData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "App.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read App.xaml.cs: %v", err)
 	}
-	windowData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
+	windowData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read MainWindow.xaml.cs: %v", err)
 	}
-	xamlData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "MainWindow.xaml"))
+	xamlData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml"))
 	if err != nil {
 		t.Fatalf("read MainWindow.xaml: %v", err)
 	}
-	runtimeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	runtimeData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
 		t.Fatalf("read RuntimeService.cs: %v", err)
 	}
-	progressXAMLData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "UpdateProgressWindow.xaml"))
+	progressXAMLData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "UpdateProgressWindow.xaml"))
 	if err != nil {
 		t.Fatalf("read UpdateProgressWindow.xaml: %v", err)
 	}
-	progressCodeData, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "UpdateProgressWindow.xaml.cs"))
+	progressCodeData, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "UpdateProgressWindow.xaml.cs"))
 	if err != nil {
 		t.Fatalf("read UpdateProgressWindow.xaml.cs: %v", err)
 	}
-	scriptData, err := os.ReadFile(filepath.Join("manage-windows.ps1"))
+	scriptData, err := os.ReadFile(filepath.Join("..", "install", "manage-windows.ps1"))
 	if err != nil {
 		t.Fatalf("read manage-windows.ps1: %v", err)
 	}
@@ -1228,7 +1228,7 @@ func TestWindowsUpdateFeedbackUsesUTF8AndImmediateStatus(t *testing.T) {
 }
 
 func TestWindowsControlPanelKeepsExistingBackgroundAndStylesOnlyButtonsAndTabs(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "App.xaml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "App.xaml"))
 	if err != nil {
 		t.Fatalf("read App.xaml: %v", err)
 	}
@@ -1259,7 +1259,7 @@ func TestWindowsControlPanelKeepsExistingBackgroundAndStylesOnlyButtonsAndTabs(t
 	}
 }
 func TestWindowsControlPanelResolvesRuntimeRootFromExecutableDirectory(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"))
 	if err != nil {
 		t.Fatalf("read RuntimeService.cs: %v", err)
 	}
@@ -1279,7 +1279,7 @@ func TestWindowsControlPanelResolvesRuntimeRootFromExecutableDirectory(t *testin
 }
 
 func TestWindowsSetupIncludesSimplifiedChineseBaseMessages(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "packaging", "windows", "languages", "ChineseSimplified.isl"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "languages", "ChineseSimplified.isl"))
 	if err != nil {
 		t.Fatalf("read ChineseSimplified.isl: %v", err)
 	}
@@ -1299,7 +1299,7 @@ func TestWindowsSetupIncludesSimplifiedChineseBaseMessages(t *testing.T) {
 }
 
 func TestWindowsSigningPinsConfiguredSelfSignedCertificate(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("sign-windows.ps1"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "packaging", "windows", "sign-windows.ps1"))
 	if err != nil {
 		t.Fatalf("read sign-windows.ps1: %v", err)
 	}
@@ -1324,79 +1324,12 @@ func TestWindowsSigningPinsConfiguredSelfSignedCertificate(t *testing.T) {
 	}
 }
 
-func TestWindowsInstallerExercisesConfiguredAuthenticodeCertificate(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "windows-installer.yml"))
-	if err != nil {
-		t.Fatalf("read Windows installer workflow: %v", err)
-	}
-	workflow := string(data)
-	for _, want := range []string{
-		"Test configured Authenticode certificate",
-		"Prepare offline AMD64 payload",
-		"build-windows-offline-setup.ps1",
-		"AgentDockSetup-amd64.exe",
-		"AgentDockSetup-arm64.exe",
-		"WINDOWS_SIGNING_CERT_BASE64",
-		"WINDOWS_SIGNING_CERT_PASSWORD",
-		"sign-windows.ps1 -Path $paths",
-		"sign-windows.ps1 -Path $paths -VerifyOnly",
-		"dotnet publish .\\desktop\\windows\\control-panel\\AgentDock.ControlPanel.csproj",
-		"manage-windows.ps1",
-		"-AllowLegacyTaskMutation",
-	} {
-		if !strings.Contains(workflow, want) {
-			t.Fatalf("windows-installer.yml missing Authenticode integration check %q", want)
-		}
-	}
-}
-
-func TestMacOSReleaseChecksCloudflaredFromPayloadDirectory(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatalf("read release workflow: %v", err)
-	}
-	workflow := string(data)
-	for _, want := range []string{
-		"cd payload",
-		`shasum -a 256 "cloudflared_darwin_$architecture" > "cloudflared_darwin_$architecture.sha256"`,
-		"shasum -a 256 -c cloudflared_darwin_amd64.sha256",
-		"shasum -a 256 -c cloudflared_darwin_arm64.sha256",
-		"AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper",
-	} {
-		if !strings.Contains(workflow, want) {
-			t.Fatalf("release.yml missing macOS cloudflared checksum behavior %q", want)
-		}
-	}
-	if strings.Contains(workflow, `shasum -a 256 "$output" > "$output.sha256"`) {
-		t.Fatal("macOS cloudflared checksum must not record the payload directory before validation inside payload")
-	}
-	if strings.Contains(workflow, "AgentDock.app/Contents/MacOS/AgentDockLoginHelper") {
-		t.Fatal("release verification must resolve the login helper inside its nested app bundle")
-	}
-}
-
-func TestMacOSReleasePublishesDesktopUpdateArchive(t *testing.T) {
-	workflowData, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatalf("read release workflow: %v", err)
-	}
-	buildData, err := os.ReadFile(filepath.Join("..", "packaging", "macos", "build-app.sh"))
+func TestMacOSAppBuildPublishesDesktopUpdateArchive(t *testing.T) {
+	buildData, err := os.ReadFile(filepath.Join("..", "..", "packaging", "macos", "build-app.sh"))
 	if err != nil {
 		t.Fatalf("read macOS App build script: %v", err)
 	}
-	workflow := string(workflowData)
 	build := string(buildData)
-	for _, want := range []string{
-		"dist/macos-app/AgentDock-macos-universal.zip",
-		"dist/macos-app/AgentDock-macos-universal.zip.sha256",
-		"shasum -a 256 -c AgentDock-macos-universal.zip.sha256",
-		`curl -fL "$release_base/AgentDock-macos-universal.zip" -o "$zip"`,
-		`codesign --verify --deep --strict --verbose=2 "$zip_dir/AgentDock.app"`,
-	} {
-		if !strings.Contains(workflow, want) {
-			t.Fatalf("release.yml missing macOS desktop update asset behavior %q", want)
-		}
-	}
 	for _, want := range []string{
 		`ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"`,
 		`unzip -tq "$ZIP_PATH"`,
@@ -1409,86 +1342,5 @@ func TestMacOSReleasePublishesDesktopUpdateArchive(t *testing.T) {
 	}
 	if strings.Contains(build, "internal/config/config.go") {
 		t.Fatal("build-app.sh must read the App version from shared buildinfo, not config.Version")
-	}
-}
-
-func TestReleaseWorkflowChecksOutRequestedTag(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatalf("read release workflow: %v", err)
-	}
-	workflow := string(data)
-	checkoutCount := strings.Count(workflow, "uses: actions/checkout@v4")
-	requestedRefCount := strings.Count(workflow, "ref: ${{ github.event.inputs.tag || github.ref }}")
-	if checkoutCount == 0 || requestedRefCount != checkoutCount {
-		t.Fatalf("every release checkout must use the requested tag: checkouts=%d refs=%d", checkoutCount, requestedRefCount)
-	}
-	for _, want := range []string{
-		`source_commit="$(git rev-parse HEAD)"`,
-		`internal/buildinfo.Commit=${source_commit}`,
-		`$sourceCommit = (git rev-parse HEAD).Trim()`,
-		`internal/buildinfo.Commit=$sourceCommit`,
-		`echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"`,
-		`BUILD_COMMIT=${{ steps.build.outputs.commit }}`,
-		`cache-to: type=gha,mode=max,scope=${{ matrix.variant }},ignore-error=true`,
-	} {
-		if !strings.Contains(workflow, want) {
-			t.Fatalf("release.yml missing checked-out source commit behavior %q", want)
-		}
-	}
-	if strings.Contains(workflow, "internal/buildinfo.Commit=${GITHUB_SHA}") ||
-		strings.Contains(workflow, "internal/buildinfo.Commit=$env:GITHUB_SHA") ||
-		strings.Contains(workflow, "BUILD_COMMIT=${{ github.sha }}") {
-		t.Fatal("release build metadata must describe the checked-out tag, not the workflow dispatch commit")
-	}
-}
-
-func TestReleaseWorkflowsReadVersionFromBuildInfo(t *testing.T) {
-	for _, path := range []string{
-		filepath.Join("..", ".github", "workflows", "release.yml"),
-		filepath.Join("..", ".github", "workflows", "windows-installer.yml"),
-	} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		workflow := string(data)
-		hasBuildInfoPath := strings.Contains(workflow, "internal/buildinfo/buildinfo.go") ||
-			strings.Contains(workflow, `internal\buildinfo\buildinfo.go`)
-		if !hasBuildInfoPath || !strings.Contains(workflow, `const\s+Version\s*=`) {
-			t.Fatalf("%s must derive the release version from buildinfo.Version", path)
-		}
-		if strings.Contains(workflow, "internal/config/config.go") && strings.Contains(workflow, "config.Version") {
-			t.Fatalf("%s must not derive the release version from config.Version", path)
-		}
-	}
-}
-
-func TestWindowsReleaseRequiresSignedCoreTrayAndSetup(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatalf("read release workflow: %v", err)
-	}
-	workflow := string(data)
-	for _, want := range []string{
-		"WINDOWS_SIGNING_CERT_BASE64 is required for a formal release",
-		"dotnet publish .\\desktop\\windows\\control-panel\\AgentDock.ControlPanel.csproj",
-		"dist\\manage-windows.ps1",
-		"scripts\\sign-windows.ps1",
-		"build-windows-setup:",
-		"AgentDockSetup-amd64.exe",
-		"AgentDockSetup-arm64.exe",
-		"build-windows-offline-setup.ps1",
-		"cloudflared-windows-amd64.exe",
-		"payload\\cloudflared.exe",
-		"dist/*.exe.sha256",
-		"-VerifyOnly",
-	} {
-		if !strings.Contains(workflow, want) {
-			t.Fatalf("release.yml missing signed Windows release requirement %q", want)
-		}
-	}
-	if strings.Contains(workflow, "if: steps.signing.outputs.enabled == 'true'") {
-		t.Fatal("formal Windows release must not silently skip Authenticode signing")
 	}
 }

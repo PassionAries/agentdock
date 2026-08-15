@@ -44,50 +44,20 @@ jobs:
       - name: Build
         run: go build ./cmd/agentdock
 
-      - name: Check Linux installer entry
+      - name: Check Linux scripts
         if: runner.os == 'Linux'
-        run: |
-          sh -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
-          dash -n scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh
-          bash -n scripts/install-linux-platform.sh scripts/test-docker-images.sh
-          shellcheck scripts/install.sh scripts/uninstall-linux.sh scripts/test-install-entry.sh scripts/install-linux-platform.sh
-          ./scripts/test-install-entry.sh
+        run: make test-scripts
 
       - name: Test macOS scripts
         if: runner.os == 'macOS'
-        run: |
-          for path in \
-            packaging/macos/build-app.sh \
-            scripts/install-macos-platform.sh \
-            scripts/test-macos-app.sh \
-            scripts/uninstall-macos.sh \
-            scripts/sign-macos.sh \
-            scripts/deploy-macos-source.sh \
-            scripts/restart-macos.sh; do
-            zsh -n "$path"
-          done
-          ./scripts/test-install-macos.sh
-          ./scripts/test-macos-app.sh
+        run: make test-scripts-macos
 
-      - name: Check Windows PowerShell installer syntax
+      - name: Check Windows PowerShell installer
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $failed = $false
-          foreach ($path in @('scripts/install.ps1', 'scripts/uninstall-windows.ps1')) {
-            $tokens = $null
-            $errors = $null
-            [void] [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $path),
-              [ref] $tokens,
-              [ref] $errors
-            )
-            if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "${path}: $($_.Message)" }
-              $failed = $true
-            }
-          }
-          if ($failed) { exit 1 }
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\test\test-install-windows.ps1
 
       - name: Test Windows PowerShell DPAPI round trip
         if: runner.os == 'Windows'
@@ -149,4 +119,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build and verify images
-        run: ./scripts/test-docker-images.sh
+        run: ./scripts/test/test-docker-images.sh

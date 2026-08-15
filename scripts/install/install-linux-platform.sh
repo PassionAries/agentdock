@@ -1202,7 +1202,7 @@ local_health_host() {
 repo_root_from_script() {
   local script_dir root
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-  root="$(cd "$script_dir/.." >/dev/null 2>&1 && pwd)"
+  root="$(cd "$script_dir/../.." >/dev/null 2>&1 && pwd)"
   if [[ -d "$root/cmd/agentdock" && -f "$root/go.mod" ]]; then
     printf '%s' "$root"
   fi
@@ -1469,7 +1469,7 @@ SUMMARY
     command -v python3 >/dev/null 2>&1 || die "源码安装需要 python3 构建核心 Skill Bundle"
     CORE_SKILL_TEMP_DIR="$(mktemp -d)"
     CORE_SKILL_BUNDLE="$CORE_SKILL_TEMP_DIR/core-skills"
-    python3 "$source_dir/scripts/build-core-skill-bundle.py" \
+    python3 "$source_dir/packaging/build-core-skill-bundle.py" \
       --repo-root "$source_dir" \
       --output "$CORE_SKILL_BUNDLE"
   fi
@@ -1504,11 +1504,11 @@ SUMMARY
     curl -fsS "$smoke_url/healthz"
     printf '\n'
 
-    if [[ -x "$source_dir/scripts/smoke-docker.sh" ]]; then
+    if [[ -x "$source_dir/packaging/docker/smoke-docker.sh" ]]; then
       log "验证 MCP smoke"
-      AGENTDOCK_SMOKE_URL="$smoke_url" AGENTDOCK_AUTH_TOKEN="$token" "$source_dir/scripts/smoke-docker.sh"
+      AGENTDOCK_SMOKE_URL="$smoke_url" AGENTDOCK_AUTH_TOKEN="$token" "$source_dir/packaging/docker/smoke-docker.sh"
     else
-      warn "未找到 smoke 脚本，跳过 MCP smoke：$source_dir/scripts/smoke-docker.sh"
+      warn "未找到 smoke 脚本，跳过 MCP smoke：$source_dir/packaging/docker/smoke-docker.sh"
     fi
   else
     log "未配置系统服务，跳过运行时健康检查。"

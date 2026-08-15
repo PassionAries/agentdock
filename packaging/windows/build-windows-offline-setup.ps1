@@ -92,7 +92,7 @@ try {
         $arguments += '/DSignedBuild=1'
         $arguments += "/Sagentdock-sign=$signCommand"
     }
-    $arguments += (Join-Path $PSScriptRoot '..\packaging\windows\AgentDock.iss')
+    $arguments += (Join-Path $PSScriptRoot 'AgentDock.iss')
 
     & $iscc @arguments
     if ($LASTEXITCODE -ne 0) {

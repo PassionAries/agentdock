@@ -214,7 +214,7 @@ AGENTDOCK_SMOKE_URL="http://127.0.0.1:$browser_port" \
 AGENTDOCK_AUTH_TOKEN="$browser_token" \
 AGENTDOCK_SMOKE_BROWSER=true \
 AGENTDOCK_SMOKE_TIMEOUT_SECONDS=30 \
-  ./scripts/smoke-docker.sh
+  ./packaging/docker/smoke-docker.sh
 
 docker rm -f "$browser_container" >/dev/null
 browser_container=""

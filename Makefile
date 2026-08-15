@@ -1,4 +1,4 @@
-.PHONY: fmt test test-scripts vet race build check run docker-build docker-dev-build docker-browser-build docker-up docker-browser-up docker-down smoke-docker logs clean clean-local-artifacts install install-linux install-macos uninstall-macos test-install-macos deploy-macos-source restart-macos
+.PHONY: fmt test test-scripts test-scripts-macos vet race build check run docker-build docker-dev-build docker-browser-build docker-up docker-browser-up docker-down smoke-docker logs clean clean-local-artifacts install install-linux install-macos uninstall-macos test-install-macos deploy-macos-source restart-macos
 
 APP := agentdock
 IMAGE := agentdock:local
@@ -19,9 +19,10 @@ test:
 	go test ./...
 
 test-scripts:
-	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test_recall_backup_export.py
-	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test_shell_variable_boundaries.py
-	./scripts/test-install-entry.sh
+	./scripts/test/check-scripts.sh
+
+test-scripts-macos:
+	./scripts/test/check-scripts.sh --macos
 
 vet:
 	go vet ./...
@@ -38,25 +39,25 @@ run:
 	go run ./cmd/agentdock --host $(HOST) --port $(PORT) --log-level $(LOG_LEVEL)
 
 install:
-	AGENTDOCK_USE_LOCAL_PLATFORM_INSTALLER=true ./scripts/install.sh
+	AGENTDOCK_USE_LOCAL_PLATFORM_INSTALLER=true ./scripts/install/install.sh
 
 install-linux:
-	./scripts/install-linux-platform.sh
+	./scripts/install/install-linux-platform.sh
 
 install-macos:
-	./scripts/install-macos-platform.sh
+	./scripts/install/install-macos-platform.sh
 
 uninstall-macos:
-	./scripts/uninstall-macos.sh
+	./scripts/install/uninstall-macos.sh
 
 test-install-macos:
-	./scripts/test-install-macos.sh
+	./scripts/test/test-install-macos.sh
 
 deploy-macos-source:
-	./scripts/deploy-macos-source.sh
+	./packaging/macos/deploy-macos-source.sh
 
 restart-macos:
-	./scripts/restart-macos.sh
+	./packaging/macos/restart-macos.sh
 
 docker-build:
 	docker build $(DOCKER_BUILD_ARGS) --target runtime -t $(IMAGE) .
@@ -77,7 +78,7 @@ docker-down:
 	docker compose down
 
 smoke-docker:
-	./scripts/smoke-docker.sh
+	./packaging/docker/smoke-docker.sh
 
 logs:
 	docker compose logs -f

@@ -6,7 +6,7 @@ import re
 import subprocess
 import unittest
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 UNBRACED_VARIABLE_BEFORE_NON_ASCII = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x7f])")
 
 
