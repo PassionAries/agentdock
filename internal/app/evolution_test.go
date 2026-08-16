@@ -93,17 +93,14 @@ func TestTaskFinalReviewAutomaticallyResolvesPreboundLearningCheck(t *testing.T)
 	created, err := runtime.taskManage(t.Context(), map[string]any{
 		"action": "create", "title": "验证自动解析", "goal": "验证预绑定经验", "project": "agentdock",
 		"completion_conditions": []string{"有真实结果"},
+		"learning_checks": []map[string]any{{
+			"evolution_id": evolutionID, "on_success": "support", "on_failure": "contradict",
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	taskID := created["task_id"].(string)
-	if _, err := runtime.evolve(t.Context(), map[string]any{
-		"intent": "bind", "evolution_id": evolutionID, "task_id": taskID,
-		"learning_check": map[string]any{"on_success": "support", "on_failure": "contradict"},
-	}); err != nil {
-		t.Fatal(err)
-	}
 	final, err := runtime.taskManage(t.Context(), map[string]any{
 		"action": "final_review", "task_id": taskID, "status": "pass", "summary": "真实验证通过",
 		"verified": []string{"目标行为真实发生"},

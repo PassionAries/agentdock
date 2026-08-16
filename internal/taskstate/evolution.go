@@ -69,17 +69,10 @@ func (s *Store) SetEvolutionCandidates(id, reviewRevision string, items []Evolut
 }
 
 func (s *Store) BindEvolution(id string, binding EvolutionBinding) (Task, error) {
-	binding.EvolutionID = strings.TrimSpace(binding.EvolutionID)
-	binding.OnSuccess = strings.ToLower(strings.TrimSpace(binding.OnSuccess))
-	binding.OnFailure = strings.ToLower(strings.TrimSpace(binding.OnFailure))
-	if binding.EvolutionID == "" {
-		return Task{}, errors.New("evolution_id is required")
-	}
-	if !validLearningOutcome(binding.OnSuccess) || !validLearningOutcome(binding.OnFailure) {
-		return Task{}, errors.New("learning check outcomes must be support, contradict or none")
-	}
-	if binding.OnSuccess == "none" && binding.OnFailure == "none" {
-		return Task{}, errors.New("learning check must produce evidence for at least one outcome")
+	var err error
+	binding, err = normalizeEvolutionBinding(binding)
+	if err != nil {
+		return Task{}, err
 	}
 	return s.mutate(id, func(task *Task, now time.Time) error {
 		for _, existing := range task.EvolutionBindings {
@@ -99,6 +92,23 @@ func (s *Store) BindEvolution(id string, binding EvolutionBinding) (Task, error)
 		task.UpdatedAt = now
 		return nil
 	})
+}
+
+func normalizeEvolutionBinding(binding EvolutionBinding) (EvolutionBinding, error) {
+	binding.EvolutionID = strings.TrimSpace(binding.EvolutionID)
+	binding.OnSuccess = strings.ToLower(strings.TrimSpace(binding.OnSuccess))
+	binding.OnFailure = strings.ToLower(strings.TrimSpace(binding.OnFailure))
+	binding.BoundAt = time.Time{}
+	if binding.EvolutionID == "" {
+		return EvolutionBinding{}, errors.New("evolution_id is required")
+	}
+	if !validLearningOutcome(binding.OnSuccess) || !validLearningOutcome(binding.OnFailure) {
+		return EvolutionBinding{}, errors.New("learning check outcomes must be support, contradict or none")
+	}
+	if binding.OnSuccess == "none" && binding.OnFailure == "none" {
+		return EvolutionBinding{}, errors.New("learning check must produce evidence for at least one outcome")
+	}
+	return binding, nil
 }
 
 func validLearningOutcome(value string) bool {

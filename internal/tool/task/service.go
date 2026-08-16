@@ -12,6 +12,7 @@ type ConfigProvider func() config.Config
 type EvolutionProvider interface {
 	Guidance(context.Context, taskstate.Task) ([]taskstate.EvolutionContextItem, error)
 	Candidates(context.Context, taskstate.Task) ([]taskstate.EvolutionContextItem, error)
+	ValidateBindings(context.Context, taskstate.Task, []taskstate.EvolutionBinding) ([]taskstate.EvolutionBinding, error)
 	ResolveBindings(context.Context, taskstate.Task) error
 }
 

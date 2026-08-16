@@ -29,6 +29,7 @@ type taskManageInput struct {
 	Steps                []taskstate.TaskStepInput
 	TemplateID           string
 	SourceTemplateIDs    []string
+	LearningChecks       []taskstate.EvolutionBinding
 	Status               string
 	Limit                int
 	TaskID               string
@@ -90,6 +91,14 @@ func parseTaskManageInput(args map[string]any) (taskManageInput, error) {
 	if raw := args["steps"]; raw != nil {
 		if err := remarshal(raw, &input.Steps); err != nil {
 			return input, toolErrorDetails("VALIDATION_ERROR", "steps must be an array of task steps", "validation", map[string]any{"field": "steps", "reason": err.Error()})
+		}
+	}
+	if raw := args["learning_checks"]; raw != nil {
+		if err := remarshal(raw, &input.LearningChecks); err != nil {
+			return input, toolErrorDetails("VALIDATION_ERROR", "learning_checks must be an array of pre-execution evolution checks", "validation", map[string]any{"field": "learning_checks", "reason": err.Error()})
+		}
+		if len(input.LearningChecks) > 3 {
+			return input, toolErrorDetails("VALIDATION_ERROR", "learning_checks cannot exceed 3", "validation", map[string]any{"field": "learning_checks"})
 		}
 	}
 	return input, nil
@@ -177,7 +186,18 @@ func (s *Service) Manage(ctx context.Context, args map[string]any) (Result, erro
 			}
 			sourceTemplates = templateReferences(templates)
 		}
-		task, err = s.tasks.CreateWithContext(input.Title, input.Goal, input.Project, input.Device, conditions, steps, sourceTemplates)
+		bindings := append([]taskstate.EvolutionBinding(nil), input.LearningChecks...)
+		if len(bindings) > 0 {
+			if s.evolution == nil || s.config().NexusEndpoint == "" {
+				return nil, taskToolError(fmt.Errorf("learning_checks require Evolution with Nexus configured"))
+			}
+			preflightTask := taskstate.Task{Project: input.Project, Device: input.Device, SourceTemplates: sourceTemplates}
+			bindings, err = s.evolution.ValidateBindings(ctx, preflightTask, bindings)
+			if err != nil {
+				return nil, taskToolError(err)
+			}
+		}
+		task, err = s.tasks.CreateWithContext(input.Title, input.Goal, input.Project, input.Device, conditions, steps, sourceTemplates, bindings...)
 		if err != nil {
 			return nil, taskToolError(err)
 		}

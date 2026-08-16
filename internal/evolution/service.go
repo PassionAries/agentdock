@@ -54,7 +54,7 @@ func (s *Service) Guidance(ctx context.Context, task taskstate.Task) ([]taskstat
 	}
 	items := make([]taskstate.EvolutionContextItem, 0, 5)
 	for _, record := range records {
-		if !recordAppliesToTask(record, task) {
+		if !recordAppliesToTask(record, task) || taskWithholdsGuidance(task, record.EvolutionID) {
 			continue
 		}
 		item := contextItem(record, true, "")
@@ -303,41 +303,79 @@ func (s *Service) retire(ctx context.Context, req Request, supersededBy string) 
 	return Result{}, ErrRevisionConflict
 }
 
+// ValidateBindings validates create-time learning checks before a Task is persisted.
+// A support-bearing check is an explicit blinded validation: the target Evolution will be
+// withheld from this Task's Guidance for its whole lifetime, while the normal anti-self-proof
+// rule still rejects any target the Task has already seen or derives from.
+func (s *Service) ValidateBindings(ctx context.Context, task taskstate.Task, bindings []taskstate.EvolutionBinding) ([]taskstate.EvolutionBinding, error) {
+	if len(bindings) > 3 {
+		return nil, errors.New("learning_checks cannot exceed 3")
+	}
+	out := make([]taskstate.EvolutionBinding, 0, len(bindings))
+	seen := make(map[string]taskstate.EvolutionBinding, len(bindings))
+	for _, binding := range bindings {
+		_, normalized, err := s.validateBinding(ctx, task, binding.EvolutionID, &LearningCheck{OnSuccess: binding.OnSuccess, OnFailure: binding.OnFailure})
+		if err != nil {
+			return nil, err
+		}
+		if existing, ok := seen[normalized.EvolutionID]; ok {
+			if existing.OnSuccess == normalized.OnSuccess && existing.OnFailure == normalized.OnFailure {
+				continue
+			}
+			return nil, errors.New("evolution is already bound with different learning check semantics")
+		}
+		seen[normalized.EvolutionID] = normalized
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+func (s *Service) validateBinding(ctx context.Context, task taskstate.Task, evolutionID string, learningCheck *LearningCheck) (Record, taskstate.EvolutionBinding, error) {
+	if strings.TrimSpace(evolutionID) == "" {
+		return Record{}, taskstate.EvolutionBinding{}, errors.New("evolution_id is required")
+	}
+	check, err := normalizeLearningCheck(learningCheck)
+	if err != nil {
+		return Record{}, taskstate.EvolutionBinding{}, err
+	}
+	record, err := s.get(ctx, strings.TrimSpace(evolutionID))
+	if err != nil {
+		return Record{}, taskstate.EvolutionBinding{}, err
+	}
+	if record.Status == StatusRetired {
+		return Record{}, taskstate.EvolutionBinding{}, errors.New("retired evolution record cannot be bound")
+	}
+	if !recordAppliesToTask(record, task) {
+		return Record{}, taskstate.EvolutionBinding{}, errors.New("evolution record scope does not apply to this task")
+	}
+	if (check.OnSuccess == RelationSupport || check.OnFailure == RelationSupport) && (taskGuided(task, record.EvolutionID) || taskDerivedFromEvolution(task, record.EvolutionID)) {
+		return Record{}, taskstate.EvolutionBinding{}, ErrSelfProof
+	}
+	return record, taskstate.EvolutionBinding{EvolutionID: record.EvolutionID, OnSuccess: check.OnSuccess, OnFailure: check.OnFailure}, nil
+}
+
 func (s *Service) bind(ctx context.Context, req Request) (Result, error) {
 	if strings.TrimSpace(req.TaskID) == "" || strings.TrimSpace(req.EvolutionID) == "" {
 		return Result{}, errors.New("task_id and evolution_id are required for bind")
-	}
-	check, err := normalizeLearningCheck(req.LearningCheck)
-	if err != nil {
-		return Result{}, err
 	}
 	task, err := s.tasks.Get(strings.TrimSpace(req.TaskID))
 	if err != nil {
 		return Result{}, err
 	}
-	record, err := s.get(ctx, strings.TrimSpace(req.EvolutionID))
+	record, binding, err := s.validateBinding(ctx, task, req.EvolutionID, req.LearningCheck)
 	if err != nil {
 		return Result{}, err
-	}
-	if record.Status == StatusRetired {
-		return Result{}, errors.New("retired evolution record cannot be bound")
-	}
-	if !recordAppliesToTask(record, task) {
-		return Result{}, errors.New("evolution record scope does not apply to this task")
-	}
-	if (check.OnSuccess == RelationSupport || check.OnFailure == RelationSupport) && (taskGuided(task, record.EvolutionID) || taskDerivedFromEvolution(task, record.EvolutionID)) {
-		return Result{}, ErrSelfProof
 	}
 	for _, existing := range task.EvolutionBindings {
 		if existing.EvolutionID != record.EvolutionID {
 			continue
 		}
-		if existing.OnSuccess == check.OnSuccess && existing.OnFailure == check.OnFailure {
+		if existing.OnSuccess == binding.OnSuccess && existing.OnFailure == binding.OnFailure {
 			return Result{Intent: "bind", Changed: false, Idempotent: true, Message: "learning check already bound"}, nil
 		}
 		return Result{}, errors.New("evolution is already bound with different learning check semantics")
 	}
-	if _, err := s.tasks.BindEvolution(req.TaskID, taskstate.EvolutionBinding{EvolutionID: record.EvolutionID, OnSuccess: check.OnSuccess, OnFailure: check.OnFailure}); err != nil {
+	if _, err := s.tasks.BindEvolution(req.TaskID, binding); err != nil {
 		return Result{}, err
 	}
 	return Result{Intent: "bind", Changed: true, Message: "pre-execution learning check stored on task"}, nil
@@ -571,6 +609,18 @@ func relationForReview(binding taskstate.EvolutionBinding, reviewStatus string) 
 		return "", errors.New("stored learning check has invalid outcome semantics")
 	}
 	return relation, nil
+}
+
+func taskWithholdsGuidance(task taskstate.Task, evolutionID string) bool {
+	for _, binding := range task.EvolutionBindings {
+		if strings.TrimSpace(binding.EvolutionID) != strings.TrimSpace(evolutionID) {
+			continue
+		}
+		if binding.OnSuccess == RelationSupport || binding.OnFailure == RelationSupport {
+			return true
+		}
+	}
+	return false
 }
 
 func taskGuided(task taskstate.Task, evolutionID string) bool {

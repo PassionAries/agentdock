@@ -535,3 +535,98 @@ func TestClientDecodesNexusLifecycleOperationMetadata(t *testing.T) {
 		t.Fatalf("applied operation = %#v", got)
 	}
 }
+
+func TestBlindedCreateTimeValidationCanPromoteActiveToVerified(t *testing.T) {
+	service, tasks, server := newTestService(t)
+	defer server.Close()
+	// 让 fake lifecycle query 能在普通 Task 上精确命中这条经验。
+	proposed, err := service.Manage(t.Context(), Request{Intent: "propose", Candidate: &Candidate{
+		Type: "runbook", Statement: "验证经验 验证一条经验 有真实结果", Project: "agentdock",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := proposed.Record.EvolutionID
+
+	for i := 0; i < 2; i++ {
+		task := newLearningTask(t, tasks)
+		bindLearningCheck(t, service, task, id, RelationSupport, RelationContradict)
+		task = passLearningTask(t, tasks, task, "独立支持")
+		if err := service.ResolveBindings(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record, err := service.get(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusActive || record.SupportCount != 2 {
+		t.Fatalf("precondition record = %#v", record)
+	}
+
+	// 普通第三个 Task 会收到 active Guidance，因此仍然不能 support 自证。
+	ordinary := newLearningTask(t, tasks)
+	guidance, err := service.Guidance(t.Context(), ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guidance) != 1 || guidance[0].EvolutionID != id {
+		t.Fatalf("ordinary task guidance = %#v", guidance)
+	}
+	ordinary, err = tasks.SetGuidanceContext(ordinary.ID, guidance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Manage(t.Context(), Request{
+		Intent: "bind", EvolutionID: id, TaskID: ordinary.ID,
+		LearningCheck: &LearningCheck{OnSuccess: RelationSupport, OnFailure: RelationContradict},
+	})
+	if !errors.Is(err, ErrSelfProof) {
+		t.Fatalf("ordinary guided task support bind err=%v", err)
+	}
+
+	// 显式验证 Task 在创建前完成 learning check 预检并原子落盘。
+	bindings, err := service.ValidateBindings(t.Context(), taskstate.Task{Project: "agentdock"}, []taskstate.EvolutionBinding{{
+		EvolutionID: id, OnSuccess: RelationSupport, OnFailure: RelationContradict,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blind, err := tasks.CreateWithContext("验证经验", "验证一条经验", "agentdock", "", []string{"有真实结果"}, nil, nil, bindings...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidance, err = service.Guidance(t.Context(), blind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guidance) != 0 {
+		t.Fatalf("blinded validation leaked target guidance: %#v", guidance)
+	}
+	blind, err = tasks.SetGuidanceContext(blind.ID, guidance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Resume/refresh 语义仍由 durable binding 驱动，目标不会在后续刷新时重新注入。
+	guidance, err = service.Guidance(t.Context(), blind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guidance) != 0 {
+		t.Fatalf("blinded target leaked on later guidance refresh: %#v", guidance)
+	}
+	blind = passLearningTask(t, tasks, blind, "第三次独立盲测通过")
+	if err := service.ResolveBindings(t.Context(), blind); err != nil {
+		t.Fatal(err)
+	}
+	record, err = service.get(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusVerified || record.SupportCount != 3 {
+		t.Fatalf("blinded third support record = %#v", record)
+	}
+	if taskGuided(blind, id) {
+		t.Fatalf("blinded validation task unexpectedly marked target as guided: %#v", blind.EvolutionGuidanceSeen)
+	}
+}

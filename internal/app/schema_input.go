@@ -116,6 +116,17 @@ func InputSchema(name string) map[string]any {
 		}
 		props["template_id"] = stringProp("Single active workflow template to apply. Its current active version is resolved automatically.")
 		props["source_template_ids"] = map[string]any{"type": "array", "minItems": 2, "maxItems": 3, "items": map[string]any{"type": "string"}, "description": "Two or three templates already composed by the model into steps and completion_conditions."}
+		props["learning_checks"] = map[string]any{
+			"type": "array", "maxItems": 3, "description": "Advanced create-only blinded validation checks. Bind these Evolution ids before Guidance is generated; support-bearing targets are withheld from this Task's Guidance and may be assessed only from its frozen final_review.",
+			"items": map[string]any{
+				"type": "object", "additionalProperties": false, "required": []string{"evolution_id", "on_success", "on_failure"},
+				"properties": map[string]any{
+					"evolution_id": stringProp("Evolution id intentionally selected for this pre-execution validation."),
+					"on_success":   map[string]any{"type": "string", "enum": []string{"support", "contradict", "none"}},
+					"on_failure":   map[string]any{"type": "string", "enum": []string{"support", "contradict", "none"}},
+				},
+			},
+		}
 		props["step_id"] = stringProp("Task step id for a single-step checkpoint.")
 		props["completed_step_ids"] = map[string]any{"type": "array", "minItems": 1, "maxItems": 12, "uniqueItems": true, "items": map[string]any{"type": "string"}, "description": "Task step ids to mark completed in one atomic batch checkpoint."}
 		props["current_step_id"] = stringProp("Single task step id to mark in_progress in a batch checkpoint.")

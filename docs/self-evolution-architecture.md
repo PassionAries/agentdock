@@ -33,7 +33,7 @@ Stage 1 / Stage 2 利用的是**当前正在与 AgentDock 交互、已经拥有�
 
 一句话定义：
 
-> Stage 1 当前 Agent 从会话中帮 AgentDock 捕获经验；Stage 2 AgentDock 自动把成熟经验用于指导，并在任务完成后找出可能被真实结果验证的经验，由当前 Agent 做最小语义判断；Stage 3 Nexus 外部模型跨历史补漏。知识生命周期和最终裁决始终只属于 AgentDock。
+> Stage 1 当前 Agent 从会话中帮 AgentDock 捕获经验；Stage 2 AgentDock 自动把成熟经验用于指导，并用执行前预声明的 learning check 与冻结后的 final_review 自动结算独立证据；Stage 3 Nexus 外部模型跨历史补漏。知识生命周期和最终裁决始终只属于 AgentDock。
 
 ---
 
@@ -55,16 +55,18 @@ Stage 1 / Stage 2 利用的是**当前正在与 AgentDock 交互、已经拥有�
 evolve
 ```
 
-常规 intent：
+模型侧 intent：
 
 ```text
 propose
-assess
+bind
 supersede
 retract
 ```
 
-`bind` 保留为高级可选能力，只用于刻意设计的实验任务；普通 Task 不要求提前 bind。
+`assess` 不是模型侧 intent。它只存在于 AgentDock `EvolutionService` 内部，由 `final_review` 后的 `ResolveBindings` 使用。
+
+`bind` 是高级可选能力，只用于执行前预声明 learning check；普通 Task 不要求 bind。需要让一个已经 `active` 的经验继续获得独立 support 时，应在 `task_manage create` 的 `learning_checks` 中预绑定，使该目标在本 Task 执行期间保持盲测、不进入 Guidance。
 
 ### 2.1 `propose`
 
@@ -172,11 +174,28 @@ Task pass  ≠ 自动 support
 Task fail  ≠ 自动 contradict
 ```
 
-Evolution 绝不阻塞 Task。即使本次没有任何 `assess`，Task 也必须可以正常 `complete`。
+Evolution 绝不阻塞 Task。即使本次没有 learning check、没有产生任何 Evolution 证据，Task 也必须可以正常 `complete`.
 
 ### 3.3 执行后：Evaluation
 
-`final_review` 成功保存后，AgentDock 才根据已经固化的：
+当前实现不允许模型在看到 Task 结果后再自由决定 `support` / `contradict`。证据关系必须在执行前通过 learning check 预声明：
+
+```text
+执行前：
+bind / task_manage create.learning_checks
+↓
+Task 执行
+↓
+final_review 冻结 verified facts / risks / review_revision
+↓
+AgentDock ResolveBindings
+↓
+内部 assess
+↓
+support / contradict / none
+```
+
+`final_review` 保存后，AgentDock 仍可根据已经固化的：
 
 ```text
 goal
@@ -186,52 +205,44 @@ risks
 outcome
 ```
 
-去 Recall 查询少量“可能被这次真实事实验证到”的历史经验，并在 `final_review` 响应中只读返回：
+返回少量只读：
 
 ```text
 evolution_candidates
+review_revision
 ```
 
-模型只需要判断眼前候选与已经发生的事实之间是什么关系：
+这些 candidate 用来帮助后续任务设计新的 learning check，不能对刚结束的 Task 进行事后投票。
 
-```text
-support
-contradict
-not_applicable
-uncertain
-```
-
-真正登记证据时才调用：
-
-```text
-evolve(intent=assess)
-```
-
-示意：
+`final_review(pass|failed)` 只负责选择**执行前已经声明**的 `on_success` / `on_failure` 分支，本身没有学习语义。例如：
 
 ```json
 {
-  "intent": "assess",
+  "intent": "bind",
   "evolution_id": "evo_xxx",
   "task_id": "tsk_xxx",
-  "review_revision": "rev_xxx",
-  "relation": "support|contradict|not_applicable|uncertain",
-  "evidence_refs": ["..."],
-  "rationale": "..."
+  "learning_check": {
+    "on_success": "support",
+    "on_failure": "contradict"
+  }
 }
 ```
 
-当前模型负责**语义判断**；AgentDock 负责：
+真正写入生命周期证据的是 AgentDock 内部 `assess`；模型侧工具 schema 不暴露该 intent，也不能提交 maturity、计数或 next state。
 
+AgentDock 负责：
+
+- learning check 必须在执行前绑定；
+- final_review / review_revision 快照校验；
 - evidence ref 归属校验；
 - scope 校验；
-- 去重；
+- 去重与同 Task 单票；
 - 证据独立性；
 - 防自证；
 - deterministic lifecycle policy；
 - 最终状态迁移。
 
-AgentDock 本身不尝试从任意 Task success/failure 猜业务语义。
+AgentDock 本身不从任意 Task success/failure 猜业务语义。
 
 ### 3.4 防自证硬规则
 
@@ -255,23 +266,28 @@ AgentDock 本身不尝试从任意 Task success/failure 猜业务语义。
 rejected_self_proof
 ```
 
-但 guided 条目的 `contradict` 可以允许，因为真实反例仍然有价值。必须同时满足：
+guided 条目的真实反例仍然可以形成 `contradict`，但关系也必须在执行前通过 learning check 预声明，并引用本 Task 冻结后的失败/反例事实。`Task fail` 本身绝不自动成为 contradiction。
 
-- 当前模型显式 `assess`；
-- 引用本 Task 已固化的真实失败/反例事实；
-- 当前模型明确判断这些事实构成该经验的反例。
+#### active → verified 的独立验证路径
 
-`Task fail` 本身绝不自动成为 contradiction。
-
-`evolution_candidates` 可以继续返回 `guided=true` 的条目，让模型有机会提交：
+经验达到 `support=2` 后进入 `active`，普通相似 Task 会自然收到它作为 Guidance，因此不能再用该 Task 为它追加 support。第三份独立支持必须走显式盲测：
 
 ```text
-contradict
-not_applicable
-uncertain
+task_manage create
++ learning_checks(evolution_id, on_success/on_failure)
+↓
+AgentDock 在生成 Guidance 前完成绑定
+↓
+凡可能产生 support 的目标 evolution_id 本 Task 全程不注入 Guidance
+↓
+真实执行 + final_review
+↓
+ResolveBindings 内部结算
+↓
+support=3 → verified
 ```
 
-但 `support` 始终拒绝。
+这个规则不清空 `EvolutionGuidanceSeen`，也不允许创建后再把“已经看过”的 Guidance 伪装成盲测。一旦某 ID 真正进入过本 Task 的 `guidance_context` / `EvolutionGuidanceSeen`，该 Task 永远不能 support 它。resume 时也继续根据 durable binding 屏蔽盲测目标。
 
 ### 3.5 `review_revision`
 
@@ -283,7 +299,7 @@ review_revision
 
 或等价的不可变 review id。
 
-`evolution_candidates` 必须携带该 revision；`evolve(assess)` 也必须提交同一个 revision。AgentDock 只接受属于该 review 快照的 evidence refs。
+`evolution_candidates` 携带该 revision；`ResolveBindings` 内部 assessment 也只消费当前同一个 revision 的 evidence refs。模型不提交 `assess`。
 
 这样可以避免：
 
@@ -300,6 +316,8 @@ review 后来被改成 B
 ---
 
 ## 4. Stage 3：NexusDock 外部模型低频补漏
+
+Stage 3 启用后或从 disabled→enabled 时立即尝试一次，之后按配置 interval 低频执行；配置 wake 只重读配置，不能把下一次执行不断顺延，也不能触发重复即时执行。
 
 Stage 3 负责 Stage 1 / Stage 2 容易漏掉的长周期模式：
 
@@ -522,22 +540,26 @@ projection
 evolve
 ```
 
-常规 intent：
+模型侧 intent：
 
 ```text
 propose
-assess
+bind
 supersede
 retract
 ```
 
-高级可选：
-
-```text
-bind
-```
+`assess` 仅为 `EvolutionService` 内部操作，不出现在 MCP `evolve` schema。
 
 ### AgentDock Task 扩展
+
+高级验证 Task 可在 `task_manage create` 提交最多 3 个：
+
+```text
+learning_checks
+```
+
+它们在 Guidance 生成前绑定；可能产生 support 的目标会被该 Task 持续屏蔽，不进入 `guidance_context`。
 
 Task start / resume 可返回：
 
@@ -634,9 +656,10 @@ evolve
 
 ```text
 Task guidance_context
++ create-time learning_checks / bind
 + final_review review_revision
++ ResolveBindings internal assess
 + evolution_candidates
-+ evolve(assess)
 + anti-self-proof
 ```
 
