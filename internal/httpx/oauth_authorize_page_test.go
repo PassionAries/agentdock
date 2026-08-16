@@ -60,24 +60,21 @@ func TestAuthorizePageShowsClientIdentityAndRedirectHost(t *testing.T) {
 	}
 }
 
-func TestAuthorizationFormCSPAllowsOnlyRegisteredRedirectOrigin(t *testing.T) {
+func TestAuthorizationPageCSPDoesNotRestrictOAuthRedirectChain(t *testing.T) {
 	values := url.Values{"redirect_uri": {"https://client.example:8443/oauth/callback?source=test"}}
 	response := httptest.NewRecorder()
 	writeAuthorizeForm(response, values, "", "Test Client")
 
-	want := "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://client.example:8443; base-uri 'none'; frame-ancestors 'none'"
-	if got := response.Header().Get("Content-Security-Policy"); got != want {
-		t.Fatalf("Content-Security-Policy = %q, want %q", got, want)
+	got := response.Header().Get("Content-Security-Policy")
+	if got != authorizationPageCSP {
+		t.Fatalf("Content-Security-Policy = %q, want %q", got, authorizationPageCSP)
 	}
-}
-
-func TestAuthorizationFormCSPFallsBackToSelfForInvalidRedirect(t *testing.T) {
-	values := url.Values{"redirect_uri": {"javascript:alert(1)"}}
-	response := httptest.NewRecorder()
-	writeAuthorizeForm(response, values, "", "Test Client")
-
-	want := "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
-	if got := response.Header().Get("Content-Security-Policy"); got != want {
-		t.Fatalf("Content-Security-Policy = %q, want %q", got, want)
+	if strings.Contains(got, "form-action") {
+		t.Fatalf("authorization page CSP must not constrain the OAuth redirect chain: %q", got)
+	}
+	for _, directive := range []string{"default-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"} {
+		if !strings.Contains(got, directive) {
+			t.Fatalf("authorization page CSP missing security directive %q: %q", directive, got)
+		}
 	}
 }

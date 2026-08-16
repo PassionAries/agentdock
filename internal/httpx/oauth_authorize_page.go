@@ -33,15 +33,12 @@ type authorizePageData struct {
 	CancelURL           string
 }
 
-func authorizationFormCSP(redirectURI string) string {
-	formAction := "'self'"
-	parsed, err := url.Parse(redirectURI)
-	if err == nil && validOAuthRedirectURI(redirectURI) {
-		// 浏览器会把表单提交后的 302 回调也纳入 form-action 校验，因此只放行已验证 redirect_uri 的来源。
-		formAction += " " + parsed.Scheme + "://" + parsed.Host
-	}
-	return "default-src 'none'; style-src 'unsafe-inline'; form-action " + formAction + "; base-uri 'none'; frame-ancestors 'none'"
-}
+// 不设置 form-action。Chromium 会把表单提交后的整条 HTTP 重定向链都纳入该指令校验，
+// 而 OAuth 客户端的已注册 callback 仍可能继续跳转到另一个来源。AgentDock 无法也不应枚举
+// 客户端 callback 后续的导航目标；真正的 redirect_uri 安全边界由服务端注册信息校验负责。
+// 授权页本身没有脚本，表单 action 固定为同源 /oauth/authorize，其余 CSP 继续禁止外部资源、
+// base URL 改写和第三方嵌入。
+const authorizationPageCSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
 
 func writeAuthorizeForm(w http.ResponseWriter, values url.Values, errorText, clientName string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -51,7 +48,7 @@ func writeAuthorizeForm(w http.ResponseWriter, values url.Values, errorText, cli
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-	w.Header().Set("Content-Security-Policy", authorizationFormCSP(values.Get("redirect_uri")))
+	w.Header().Set("Content-Security-Policy", authorizationPageCSP)
 
 	message := ""
 	if errorText != "" {
