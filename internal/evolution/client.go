@@ -54,9 +54,9 @@ func (c client) post(ctx context.Context, path string, payload any, out any) err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	token := strings.TrimSpace(cfg.NexusEvolutionToken)
+	token := strings.TrimSpace(cfg.NexusToken)
 	if token == "" {
-		return errors.New("AGENTDOCK_NEXUS_EVOLUTION_TOKEN is not configured")
+		return errors.New("AGENTDOCK_NEXUS_TOKEN is not configured")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	httpClient := &http.Client{
