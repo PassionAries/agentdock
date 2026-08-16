@@ -683,16 +683,30 @@ func handleAuthorize(w http.ResponseWriter, r *http.Request, cfg config.Config, 
 		return
 	}
 	expectedResource := issuerFor(cfg, r) + "/mcp"
-	resource := strings.TrimSpace(values.Get("resource"))
-	if len(values["resource"]) != 1 || resource == "" {
+	resourceValues := values["resource"]
+	if len(resourceValues) > 1 {
 		redirectOAuthError(w, r, redirectURI, state, "invalid_target")
 		return
 	}
-	if !auth.EquivalentResourceURI(resource, expectedResource) {
+	resource := expectedResource
+	if len(resourceValues) == 1 {
+		resource = strings.TrimSpace(resourceValues[0])
+	}
+	if resource == "" || !auth.EquivalentResourceURI(resource, expectedResource) {
 		redirectOAuthError(w, r, redirectURI, state, "invalid_target")
 		return
 	}
+	// AgentDock 只暴露当前 issuer 下唯一的 MCP protected resource。客户端省略
+	// RFC 8707 resource 时直接绑定到这个固定资源；显式提供时仍必须严格匹配。
+	// 同时把请求规范化，确保授权码内始终保存实际绑定的 protected resource。
 	resource = expectedResource
+	values.Set("resource", resource)
+	if r.Method == http.MethodGet {
+		r.URL.RawQuery = values.Encode()
+	} else {
+		r.PostForm.Set("resource", resource)
+		r.Form.Set("resource", resource)
+	}
 	loginPassword := auth.ConfiguredLoginValue()
 	registration, _ := codes.ClientRegistration(clientID)
 	if loginPassword != "" && r.Method == http.MethodGet {

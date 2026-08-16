@@ -64,7 +64,6 @@ func TestOAuthDynamicRegistrationAuthorizationCodeAndRefreshFlow(t *testing.T) {
 		"redirect_uri":          {oauthTestRedirect},
 		"code_challenge":        {oauthTestChallenge},
 		"code_challenge_method": {"S256"},
-		"resource":              {resource},
 		"state":                 {"state-value"},
 	}
 	authorizeResponse := httptest.NewRecorder()
@@ -436,7 +435,7 @@ func TestOAuthAuthorizeRedirectsProtocolErrorsWithState(t *testing.T) {
 	}
 }
 
-func TestOAuthAuthorizeRequiresResourceAndRejectsRepeatedParameters(t *testing.T) {
+func TestOAuthAuthorizeDefaultsResourceAndRejectsInvalidParameters(t *testing.T) {
 	t.Setenv("AGENTDOCK_OAUTH_PASSWORD", "")
 	cfg := oauthTestConfig(t)
 	store := auth.NewOAuthStore()
@@ -449,8 +448,8 @@ func TestOAuthAuthorizeRequiresResourceAndRejectsRepeatedParameters(t *testing.T
 		mutate func(url.Values)
 		error  string
 	}{
-		"missing resource": {func(url.Values) {}, "invalid_target"},
-		"repeated state":   {func(v url.Values) { v["state"] = []string{"strict", "duplicate"} }, "invalid_request"},
+		"empty resource": {func(v url.Values) { v.Set("resource", "") }, "invalid_target"},
+		"repeated state": {func(v url.Values) { v["state"] = []string{"strict", "duplicate"} }, "invalid_request"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			values := cloneValues(base)
