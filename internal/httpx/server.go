@@ -764,8 +764,10 @@ func handleToken(w http.ResponseWriter, r *http.Request, cfg config.Config, stor
 		writeJSONStatus(w, status, map[string]any{"error": "invalid_client"})
 		return
 	}
+	// resource 已在授权码或 Refresh Grant 中绑定；客户端在 Token 请求中省略时沿用原绑定，
+	// 显式提供时仍由 TokenStore 校验是否与原绑定一致。
 	resource := strings.TrimSpace(r.PostForm.Get("resource"))
-	if len(r.PostForm["resource"]) != 1 || resource == "" {
+	if len(r.PostForm["resource"]) == 1 && resource == "" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid_target"})
 		return
 	}
@@ -788,7 +790,7 @@ func parseOAuthTokenForm(r *http.Request) error {
 	if len(r.URL.Query()["resource"]) != 0 {
 		return errors.New("parameter resource must be supplied in the request body")
 	}
-	singleValueFields := []string{"grant_type", "code", "redirect_uri", "client_id", "code_verifier", "refresh_token", "client_secret"}
+	singleValueFields := []string{"grant_type", "code", "redirect_uri", "client_id", "code_verifier", "refresh_token", "client_secret", "resource"}
 	for _, name := range singleValueFields {
 		if len(r.URL.Query()[name]) != 0 {
 			return fmt.Errorf("parameter %s must be supplied in the request body", name)

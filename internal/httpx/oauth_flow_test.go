@@ -92,7 +92,6 @@ func TestOAuthDynamicRegistrationAuthorizationCodeAndRefreshFlow(t *testing.T) {
 		"redirect_uri":  {oauthTestRedirect},
 		"client_id":     {registration.ClientID},
 		"code_verifier": {oauthTestVerifier},
-		"resource":      {resource},
 	}
 	tokenResponse := postTokenRequest(t, cfg, store, tokenValues)
 	if tokenResponse.Code != http.StatusOK {
@@ -141,7 +140,6 @@ func TestOAuthDynamicRegistrationAuthorizationCodeAndRefreshFlow(t *testing.T) {
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {tokenPayload.RefreshToken},
 		"client_id":     {registration.ClientID},
-		"resource":      {resource},
 	}
 	refreshResponse := postTokenRequest(t, cfg, store, refreshValues)
 	if refreshResponse.Code != http.StatusOK {
@@ -498,21 +496,21 @@ func TestOAuthAuthorizeRequiresResourceAndRejectsRepeatedParameters(t *testing.T
 	}
 }
 
-func TestOAuthTokenGrantsRequireResource(t *testing.T) {
+func TestOAuthTokenRejectsEmptyResource(t *testing.T) {
 	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-signing-secret")
 	cfg := oauthTestConfig(t)
 	store := auth.NewOAuthStore()
 	clientID := oauthRegisteredClientID(t, store, oauthTestRedirect)
-	missingCodeResource := url.Values{
+	emptyCodeResource := url.Values{
 		"grant_type": {"authorization_code"}, "code": {"unused-code"}, "client_id": {clientID},
-		"redirect_uri": {oauthTestRedirect}, "code_verifier": {oauthTestVerifier},
+		"redirect_uri": {oauthTestRedirect}, "code_verifier": {oauthTestVerifier}, "resource": {""},
 	}
-	assertOAuthError(t, postTokenRequest(t, cfg, store, missingCodeResource), http.StatusBadRequest, "invalid_target")
+	assertOAuthError(t, postTokenRequest(t, cfg, store, emptyCodeResource), http.StatusBadRequest, "invalid_target")
 
-	missingRefreshResource := url.Values{
-		"grant_type": {"refresh_token"}, "refresh_token": {"unused"}, "client_id": {clientID},
+	emptyRefreshResource := url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {"unused"}, "client_id": {clientID}, "resource": {""},
 	}
-	assertOAuthError(t, postTokenRequest(t, cfg, store, missingRefreshResource), http.StatusBadRequest, "invalid_target")
+	assertOAuthError(t, postTokenRequest(t, cfg, store, emptyRefreshResource), http.StatusBadRequest, "invalid_target")
 }
 
 func TestOAuthTokenRejectsNonFormQueryAndDuplicateParameters(t *testing.T) {
@@ -525,7 +523,8 @@ func TestOAuthTokenRejectsNonFormQueryAndDuplicateParameters(t *testing.T) {
 		"resource query": formRequest(url.Values{
 			"grant_type": {"authorization_code"}, "resource": {resource},
 		}),
-		"duplicate": formRequest(url.Values{"grant_type": {"authorization_code", "refresh_token"}}),
+		"duplicate grant":    formRequest(url.Values{"grant_type": {"authorization_code", "refresh_token"}}),
+		"duplicate resource": formRequest(url.Values{"grant_type": {"authorization_code"}, "resource": {resource, resource}}),
 	} {
 		if name == "query" {
 			request.URL.RawQuery = "client_id=query-client"
