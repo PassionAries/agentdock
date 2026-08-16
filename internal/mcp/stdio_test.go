@@ -2,11 +2,15 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/uvwt/agentdock/internal/app"
 	"github.com/uvwt/agentdock/internal/config"
 )
 
@@ -79,6 +83,76 @@ func TestServeStdioAdvertisesInstructions(t *testing.T) {
 	if result == nil || result.Instructions != "Use absolute paths under /srv." {
 		t.Fatalf("InitializeResult() = %#v, want instructions", result)
 	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case err := <-serverDone:
+		if err != nil {
+			t.Fatalf("ServeStdio() error = %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("ServeStdio() did not stop after client close")
+	}
+}
+
+func TestServeStdioHidesNexusExtensionsWithoutNexus(t *testing.T) {
+	cfg := config.Config{
+		AgentDockDefaultDir: t.TempDir(),
+		AgentDockHome:       filepath.Join(t.TempDir(), ".agentdock"),
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := app.NewRuntime(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runtime.Close() }()
+
+	server := NewServer(runtime, cfg)
+	clientInput, serverOutput := io.Pipe()
+	serverInput, clientOutput := io.Pipe()
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.ServeStdio(serverInput, serverOutput) }()
+
+	client := mcpsdk.NewClient(
+		&mcpsdk.Implementation{Name: "agentdock-schema-test", Version: "1.0.0"},
+		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
+	)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	session, err := client.Connect(ctx, &mcpsdk.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+
+	var taskManage *mcpsdk.Tool
+	for tool, listErr := range session.Tools(ctx, nil) {
+		if listErr != nil {
+			t.Fatalf("Tools() error = %v", listErr)
+		}
+		if tool.Name == "evolve" || strings.HasPrefix(tool.Name, "recall_") || tool.Name == "workflow_template_manage" {
+			t.Fatalf("Nexus-only tool leaked without Nexus: %s", tool.Name)
+		}
+		if tool.Name == "task_manage" {
+			taskManage = tool
+		}
+	}
+	if taskManage == nil {
+		t.Fatal("task_manage should remain available without Nexus")
+	}
+	encoded, err := json.Marshal(taskManage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	for _, leaked := range []string{"learning_checks", "source_template_ids", "template_id", "guidance_context", "review_revision", "evolution_candidates", "evolution_warning", "Evolution", "evolution"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("task_manage schema leaked %q without Nexus: %s", leaked, text)
+		}
+	}
+
 	if err := session.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}

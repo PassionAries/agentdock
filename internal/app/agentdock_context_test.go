@@ -174,8 +174,10 @@ func TestNexusUnavailableHidesWorkflowTemplateCapability(t *testing.T) {
 	}
 
 	toolNames := strings.Join(rt.ToolNames(), "\n")
-	if strings.Contains(toolNames, "workflow_template_manage") {
-		t.Fatalf("workflow_template_manage should be hidden without Nexus: %s", toolNames)
+	for _, hiddenTool := range []string{"workflow_template_manage", "evolve", "recall_bootstrap", "recall_search", "recall_read", "recall_write", "recall_maintain"} {
+		if strings.Contains(toolNames, hiddenTool) {
+			t.Fatalf("%s should be hidden without Nexus: %s", hiddenTool, toolNames)
+		}
 	}
 	if !strings.Contains(toolNames, "task_manage") {
 		t.Fatalf("task_manage should remain available without Nexus: %s", toolNames)
@@ -192,7 +194,11 @@ func TestNexusUnavailableHidesWorkflowTemplateCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	contextText := result["context"].(string)
-	for _, hidden := range []string{"任务模板", "workflow_template_manage", "source_template_ids"} {
+	for _, hidden := range []string{
+		"任务模板", "workflow_template_manage", "source_template_ids",
+		"记忆精简摘要", "recall_search", "recall_read", "NexusDock Recall 未配置",
+		"Evolution", "自进化",
+	} {
 		if strings.Contains(contextText, hidden) {
 			t.Fatalf("context should hide %q without Nexus: %s", hidden, contextText)
 		}

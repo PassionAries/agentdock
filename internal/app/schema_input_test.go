@@ -1,6 +1,62 @@
 package app
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/uvwt/agentdock/internal/config"
+)
+
+func TestTaskManageSchemaHidesNexusExtensionsWithoutNexus(t *testing.T) {
+	inputProps := InputSchemaForConfig("task_manage", config.Config{})["properties"].(map[string]any)
+	for _, hidden := range []string{"template_id", "source_template_ids", "learning_checks"} {
+		if _, ok := inputProps[hidden]; ok {
+			t.Fatalf("task_manage input schema should hide %s without Nexus", hidden)
+		}
+	}
+	for _, field := range []string{"project", "device", "steps"} {
+		description, _ := inputProps[field].(map[string]any)["description"].(string)
+		if description == "" || containsNexusExtensionTerm(description) {
+			t.Fatalf("task_manage %s description should stay neutral without Nexus: %q", field, description)
+		}
+	}
+
+	outputProps := OutputSchemaForConfig("task_manage", config.Config{})["properties"].(map[string]any)
+	for _, hidden := range []string{"guidance_context", "review_revision", "evolution_candidates", "evolution_warning"} {
+		if _, ok := outputProps[hidden]; ok {
+			t.Fatalf("task_manage output schema should hide %s without Nexus", hidden)
+		}
+	}
+	nextDescription, _ := outputProps["next_required_action"].(map[string]any)["description"].(string)
+	if nextDescription == "" || containsNexusExtensionTerm(nextDescription) {
+		t.Fatalf("task_manage next_required_action description should stay neutral without Nexus: %q", nextDescription)
+	}
+}
+
+func TestTaskManageSchemaKeepsNexusExtensionsWithNexus(t *testing.T) {
+	cfg := config.Config{NexusEndpoint: "http://127.0.0.1:18777"}
+	inputProps := InputSchemaForConfig("task_manage", cfg)["properties"].(map[string]any)
+	for _, field := range []string{"template_id", "source_template_ids", "learning_checks"} {
+		if _, ok := inputProps[field]; !ok {
+			t.Fatalf("task_manage input schema should expose %s with Nexus", field)
+		}
+	}
+	outputProps := OutputSchemaForConfig("task_manage", cfg)["properties"].(map[string]any)
+	for _, field := range []string{"guidance_context", "review_revision", "evolution_candidates", "evolution_warning"} {
+		if _, ok := outputProps[field]; !ok {
+			t.Fatalf("task_manage output schema should expose %s with Nexus", field)
+		}
+	}
+}
+
+func containsNexusExtensionTerm(value string) bool {
+	for _, term := range []string{"Evolution", "evolution", "template"} {
+		if strings.Contains(value, term) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestInputSchemaPublishesRuntimeBounds(t *testing.T) {
 	tests := []struct {

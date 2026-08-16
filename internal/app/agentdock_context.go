@@ -12,7 +12,6 @@ import (
 func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 	_, skillSummary, _ := r.skillCapabilityIndex()
 	_, dynamicMCPSummary := r.dynamicMCPCapabilityIndex()
-	memorySummary, _, _ := r.memoryCapabilitySummary(ctx)
 
 	rules := []string{
 		"需要真实执行命令或检查环境时，先用 exec_command 查看现状，再修改，修改后真实验证。",
@@ -31,6 +30,7 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 	}
 
 	if requiresNexus(r.cfg) {
+		memorySummary, _, _ := r.memoryCapabilitySummary(ctx)
 		_, templateSummary, _ := r.templateCapabilityIndex(ctx)
 		sections = append(sections, capabilitySection{Title: "任务模板索引", Lines: splitNonEmptyLines(templateSummary)})
 		rules = append(rules,
@@ -38,16 +38,14 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 			"当多个 Workflow 模板同时适合当前任务时，调用 workflow_template_manage get_many 读取详情；模型必须结合用户目标裁剪、去重、排序并生成最终 steps 和 completion_conditions，再用 source_template_ids 创建任务，服务端不会自动拼接模板。",
 			"普通项目记忆走 recall_*；private_note_manage 只在用户明确要求私密笔记，或内容明显包含 secret、凭据、个人敏感信息时使用。私密检索只返回名称、简介、标签、分类和路径等元数据；正文必须显式 read，Git 只备份 age 密文。",
 		)
+		sections = append(sections, capabilitySection{Title: "记忆精简摘要", Lines: splitNonEmptyLines(memorySummary)})
 	}
 
-	rules = append(rules,
-		"任务执行过程中，在形成有恢复价值的断点时调用 task_manage checkpoint；可用 completed_step_ids/current_step_id 原子批量更新，final_review=pass 不会自动补全未完成步骤。",
-		"记忆摘要只提供高优先级规则；具体历史事实不确定时，再用 recall_search 或 recall_read 精确召回。",
-	)
-	sections = append(sections,
-		capabilitySection{Title: "记忆精简摘要", Lines: splitNonEmptyLines(memorySummary)},
-		capabilitySection{Title: "使用规则", Lines: rules},
-	)
+	rules = append(rules, "任务执行过程中，在形成有恢复价值的断点时调用 task_manage checkpoint；可用 completed_step_ids/current_step_id 原子批量更新，final_review=pass 不会自动补全未完成步骤。")
+	if requiresNexus(r.cfg) {
+		rules = append(rules, "记忆摘要只提供高优先级规则；具体历史事实不确定时，再用 recall_search 或 recall_read 精确召回。")
+	}
+	sections = append(sections, capabilitySection{Title: "使用规则", Lines: rules})
 
 	return Result{"context": renderAgentDockContext(sections)}, nil
 }

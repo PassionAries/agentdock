@@ -36,7 +36,7 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	)
 	if runtime != nil {
 		for _, name := range runtime.ToolNames() {
-			server.registerTool(name)
+			server.registerTool(name, cfg)
 		}
 	}
 	server.httpHandler = mcpsdk.NewStreamableHTTPHandler(
@@ -72,7 +72,7 @@ func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
 	})
 }
 
-func (s *Server) registerTool(name string) {
+func (s *Server) registerTool(name string, cfg config.Config) {
 	def, ok := toolDefinition(name)
 	if !ok {
 		return
@@ -82,8 +82,8 @@ func (s *Server) registerTool(name string) {
 		Name:         name,
 		Title:        def.Title,
 		Description:  def.Description,
-		InputSchema:  inputSchema(name),
-		OutputSchema: outputSchema(name),
+		InputSchema:  app.InputSchemaForConfig(name, cfg),
+		OutputSchema: app.OutputSchemaForConfig(name, cfg),
 	}
 	if def.Annotations != nil {
 		tool.Annotations = &mcpsdk.ToolAnnotations{
