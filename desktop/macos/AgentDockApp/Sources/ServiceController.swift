@@ -199,9 +199,10 @@ final class ServiceController: @unchecked Sendable {
         }
     }
 
-    func backgroundServiceRecoveryWarnings(coreEnabled: Bool, tunnelEnabled: Bool) async -> [String] {
+    func recoverBackgroundServicesAfterUpdate(coreEnabled: Bool, tunnelEnabled: Bool) async -> [String] {
         // App Bundle 刚替换后，SMAppService 的注册状态可能已经生效，但 launchd 真正拉起
-        // Core/Tunnel 仍需要更长时间。ready 只用于提示，不能把正常的系统传播延迟升级成更新失败。
+        // Core/Tunnel 仍需要更长时间。先给系统一个正常传播窗口，再做一次有界自愈；
+        // 自愈仍失败时只提示，不把已经完成 handoff 的 App 更新回滚掉。
         var warnings: [String] = []
         if tunnelEnabled,
            tunnelService.status == .enabled,
@@ -211,15 +212,23 @@ final class ServiceController: @unchecked Sendable {
         if coreEnabled,
            coreService.status == .enabled,
            let configuration = ServiceConfiguration.load(from: paths.environment),
-           !(await waitForHealth(configuration: configuration)) {
-            warnings.append("AgentDock Core 已恢复后台注册，但健康检查仍在等待服务启动。")
+           !(await waitForHealth(configuration: configuration, timeout: 10)) {
+            // 实机更新后可能出现“SMAppService 显示 enabled，但 Core 进程没有真正拉起”的状态。
+            // 控制面板“重启”之所以能恢复，是因为它会完整 unregister/register；这里复用同一路径，
+            // 避免用户在每次 App 更新后手动点击重启。
+            NSLog("AgentDock Core 注册显示 enabled 但健康检查未通过，开始自动重新注册。")
+            do {
+                try await restart()
+            } catch {
+                warnings.append("AgentDock Core 已恢复后台注册，但自动重启仍未通过健康检查：\(error.localizedDescription)")
+            }
         }
         return warnings
     }
 
     func reregisterBackgroundServices(coreEnabled: Bool, tunnelEnabled: Bool) async throws -> [String] {
         try restoreBackgroundServiceRegistrations(coreEnabled: coreEnabled, tunnelEnabled: tunnelEnabled)
-        return await backgroundServiceRecoveryWarnings(coreEnabled: coreEnabled, tunnelEnabled: tunnelEnabled)
+        return await recoverBackgroundServicesAfterUpdate(coreEnabled: coreEnabled, tunnelEnabled: tunnelEnabled)
     }
 
     func openBackgroundItemsSettings() {

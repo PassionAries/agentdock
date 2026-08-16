@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     handoffAcknowledged = true
                 }
 
-                let recoveryWarnings = await service.backgroundServiceRecoveryWarnings(
+                let recoveryWarnings = await service.recoverBackgroundServicesAfterUpdate(
                     coreEnabled: serviceState.coreEnabled,
                     tunnelEnabled: serviceState.tunnelEnabled
                 )
