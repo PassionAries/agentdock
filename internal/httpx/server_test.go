@@ -409,7 +409,7 @@ func TestOAuthMetadataUsesPublicPKCEClients(t *testing.T) {
 	}
 }
 
-func TestValidClientAuthenticationRequiresRegisteredPublicClient(t *testing.T) {
+func TestClientAuthenticationFailureReasonRequiresRegisteredPublicClient(t *testing.T) {
 	t.Setenv("AGENTDOCK_OAUTH_TOKEN_SECRET", "token-secret")
 	redirectURI := "https://client.example/callback"
 	store := auth.NewOAuthStore()
@@ -422,25 +422,35 @@ func TestValidClientAuthenticationRequiresRegisteredPublicClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	values := url.Values{"client_id": {clientID}, "redirect_uri": {redirectURI}}
-	valid := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
-	valid.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if !validClientAuthentication(valid, "authorization_code", store) {
-		t.Fatal("registered public client rejected")
+	request := func(values url.Values) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return r
+	}
+	validValues := url.Values{"client_id": {clientID}, "redirect_uri": {redirectURI}}
+	if reason := clientAuthenticationFailureReason(request(validValues), "authorization_code", store); reason != "" {
+		t.Fatalf("registered public client rejected: %s", reason)
 	}
 
-	values.Set("client_secret", "not-allowed")
-	withSecret := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(values.Encode()))
-	withSecret.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if validClientAuthentication(withSecret, "authorization_code", store) {
-		t.Fatal("client_secret_post accepted for public client")
+	withAuthorization := request(validValues)
+	withAuthorization.Header.Set("Authorization", "Bearer redacted")
+	if reason := clientAuthenticationFailureReason(withAuthorization, "authorization_code", store); reason != "authorization_header_present" {
+		t.Fatalf("authorization header reason = %q", reason)
+	}
+
+	withEmptySecretValues := url.Values{"client_id": {clientID}, "redirect_uri": {redirectURI}, "client_secret": {""}}
+	if reason := clientAuthenticationFailureReason(request(withEmptySecretValues), "authorization_code", store); reason != "client_secret_present" {
+		t.Fatalf("empty client_secret field reason = %q", reason)
+	}
+
+	unknownClientValues := url.Values{"client_id": {"unknown-client"}, "redirect_uri": {redirectURI}}
+	if reason := clientAuthenticationFailureReason(request(unknownClientValues), "authorization_code", store); reason != "client_id_unregistered" {
+		t.Fatalf("unknown client reason = %q", reason)
 	}
 
 	wrongRedirectValues := url.Values{"client_id": {clientID}, "redirect_uri": {"https://other.example/callback"}}
-	wrongRedirect := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(wrongRedirectValues.Encode()))
-	wrongRedirect.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if validClientAuthentication(wrongRedirect, "authorization_code", store) {
-		t.Fatal("unregistered redirect URI accepted")
+	if reason := clientAuthenticationFailureReason(request(wrongRedirectValues), "authorization_code", store); reason != "redirect_uri_mismatch" {
+		t.Fatalf("redirect mismatch reason = %q", reason)
 	}
 }
 

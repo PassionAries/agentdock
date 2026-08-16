@@ -753,7 +753,9 @@ func handleToken(w http.ResponseWriter, r *http.Request, cfg config.Config, stor
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "unsupported_grant_type"})
 		return
 	}
-	if !validClientAuthentication(r, grantType, store) {
+	if reason := clientAuthenticationFailureReason(r, grantType, store); reason != "" {
+		// 这里只记录固定枚举原因，避免把 client secret、授权码、令牌或回调地址写入日志。
+		slog.Warn("OAuth token client rejected", "reason", reason, "grant_type", grantType)
 		status := http.StatusBadRequest
 		if _, _, ok := r.BasicAuth(); ok {
 			status = http.StatusUnauthorized
@@ -896,23 +898,33 @@ func validOAuthRedirectURI(raw string) bool {
 }
 
 func validClientAuthentication(r *http.Request, grantType string, store *auth.OAuthStore) bool {
+	return clientAuthenticationFailureReason(r, grantType, store) == ""
+}
+
+func clientAuthenticationFailureReason(r *http.Request, grantType string, store *auth.OAuthStore) string {
 	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
-		return false
+		return "authorization_header_present"
 	}
 	if err := r.ParseForm(); err != nil {
-		return false
+		return "form_parse_failed"
 	}
 	if len(r.PostForm["client_secret"]) != 0 {
-		return false
+		return "client_secret_present"
 	}
 	clientID := strings.TrimSpace(r.PostForm.Get("client_id"))
-	if !store.ValidateClientID(clientID) || !store.ClientAllowsGrant(clientID, grantType) {
-		return false
+	if !store.ValidateClientID(clientID) {
+		return "client_id_unregistered"
 	}
-	if grantType == "authorization_code" {
-		return store.ValidateClientRedirect(clientID, strings.TrimSpace(r.PostForm.Get("redirect_uri")))
+	if !store.ClientAllowsGrant(clientID, grantType) {
+		return "grant_not_allowed"
 	}
-	return grantType == "refresh_token"
+	if grantType == "authorization_code" && !store.ValidateClientRedirect(clientID, strings.TrimSpace(r.PostForm.Get("redirect_uri"))) {
+		return "redirect_uri_mismatch"
+	}
+	if grantType != "authorization_code" && grantType != "refresh_token" {
+		return "unsupported_grant_type"
+	}
+	return ""
 }
 
 func serverCard(cfg config.Config, r *http.Request) map[string]any {
