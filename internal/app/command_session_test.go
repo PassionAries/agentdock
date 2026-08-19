@@ -434,8 +434,12 @@ func TestSessionActWritesInputAndReturnsFinalOutput(t *testing.T) {
 	}
 
 	var stdout strings.Builder
-	if value, _ := result["stdout"].(string); value != "" {
-		stdout.WriteString(value)
+	// writeStdin 在会话仍运行时返回 Peek 预览，不推进输出游标。
+	// 只有它已经直接返回最终结果时才消费这段输出，否则交给 sessionStatus 读取，避免重复累计。
+	if result["status"] == "exited" {
+		if value, _ := result["stdout"].(string); value != "" {
+			stdout.WriteString(value)
+		}
 	}
 	deadline := time.Now().Add(time.Second)
 	for result["status"] != "exited" && time.Now().Before(deadline) {
