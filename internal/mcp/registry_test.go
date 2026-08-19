@@ -81,14 +81,14 @@ func TestRuntimeExposesSingleToolSet(t *testing.T) {
 	for _, name := range rt.ToolNames() {
 		seen[name] = true
 	}
-	for _, name := range []string{"agentdock_context", "git_read", "git_write", "session_observe", "session_act", "recall_read", "recall_write", "skill_package", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call"} {
+	for _, name := range []string{"agentdock_context", "session_observe", "session_act", "recall_read", "recall_write", "skill_package", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call"} {
 		if !seen[name] {
 			t.Fatalf("single tool set missing %s: %#v", name, seen)
 		}
 	}
-	for _, removed := range []string{"skill_read", "skill_run", "skill_env_manage"} {
+	for _, removed := range []string{"git_read", "git_write", "skill_read", "skill_run", "skill_env_manage"} {
 		if seen[removed] {
-			t.Fatalf("removed model-facing Skill tool still exposed: %s", removed)
+			t.Fatalf("removed model-facing tool still exposed: %s", removed)
 		}
 	}
 }
@@ -282,7 +282,7 @@ func TestTaskManageSchemaExposesLifecycleActions(t *testing.T) {
 	}
 }
 
-func TestFileEditAndGitUnifiedSchemas(t *testing.T) {
+func TestFileEditUnifiedSchema(t *testing.T) {
 	fileProps := schemaProperties(t, "file_edit")
 	assertSameStrings(t, enumStrings(t, fileProps["action"]), []string{"replace", "patch", "add", "delete", "move"})
 	for _, name := range []string{"path", "old", "new", "patch", "dry_run", "expected_matches", "replace_all", "content", "new_path", "overwrite", "recursive"} {
@@ -290,26 +290,16 @@ func TestFileEditAndGitUnifiedSchemas(t *testing.T) {
 			t.Fatalf("file_edit input schema missing %q", name)
 		}
 	}
+}
 
-	gitReadProps := schemaProperties(t, "git_read")
-	assertSameStrings(t, enumStrings(t, gitReadProps["action"]), []string{"repos", "status", "diff", "log", "show", "blame", "github_repo_access"})
-	for _, name := range []string{"repo_path", "path", "paths", "rev", "limit", "max_bytes", "repo", "timeout_ms"} {
-		if _, ok := gitReadProps[name]; !ok {
-			t.Fatalf("git_read input schema missing %q", name)
-		}
-	}
-
-	gitWriteProps := schemaProperties(t, "git_write")
-	assertSameStrings(t, enumStrings(t, gitWriteProps["action"]), []string{"clone", "commit", "fetch", "pull", "push"})
-	for _, name := range []string{"repo_path", "url", "dest", "message", "remote", "branch", "max_bytes"} {
-		if _, ok := gitWriteProps[name]; !ok {
-			t.Fatalf("git_write input schema missing %q", name)
-		}
+func TestExecCommandSchemaOmitsUnsupportedRedaction(t *testing.T) {
+	if _, ok := schemaProperties(t, "exec_command")["redact_patterns"]; ok {
+		t.Fatal("exec_command should not expose unsupported redact_patterns")
 	}
 }
 
 func TestLegacyModelEntrypointsAreRemoved(t *testing.T) {
-	for _, name := range []string{"apply_patch", "edit_file", "workspace_repos", "git_status", "git_diff", "git_log", "git_inspect", "git_remote", "git_clone", "git_commit", "check_github_repo_access", "browser_profile", "private_notes_search", "private_notes_read", "private_notes_write", "private_notes_status", "private_notes_maintain"} {
+	for _, name := range []string{"apply_patch", "edit_file", "workspace_repos", "git_read", "git_write", "git_status", "git_diff", "git_log", "git_inspect", "git_remote", "git_clone", "git_commit", "check_github_repo_access", "browser_profile", "private_notes_search", "private_notes_read", "private_notes_write", "private_notes_status", "private_notes_maintain"} {
 		if _, ok := toolDefinition(name); ok {
 			t.Fatalf("legacy tool should not be model-facing: %s", name)
 		}

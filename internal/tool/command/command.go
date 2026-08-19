@@ -148,7 +148,6 @@ func (svc *Service) Exec(ctx context.Context, args map[string]any) (Result, erro
 	if err != nil {
 		result["command_error"] = err.Error()
 	}
-	svc.addCommandDiagnostics(result)
 	return result, nil
 }
 
@@ -231,7 +230,6 @@ func (svc *Service) consumeCompletedSession(s *session.Session, maxBytes int) Re
 	if err != nil {
 		result["command_error"] = err.Error()
 	}
-	svc.addCommandDiagnostics(result)
 	return result
 }
 
@@ -261,7 +259,6 @@ func (svc *Service) killSession(args map[string]any) (Result, error) {
 		result["command_error"] = err.Error()
 	}
 	result["kill_operation_ms"] = time.Since(started).Milliseconds()
-	svc.addCommandDiagnostics(result)
 	return result, nil
 }
 
@@ -370,16 +367,6 @@ func (svc *Service) listSessions() (Result, error) {
 		items = append(items, item)
 	}
 	return Result{"sessions": items, "count": len(items)}, nil
-}
-
-func (svc *Service) addCommandDiagnostics(result Result) {
-	if svc.diagnose == nil {
-		return
-	}
-	combined := fmt.Sprint(result["stdout"]) + "\n" + fmt.Sprint(result["stderr"])
-	if diagnostic := svc.diagnose(combined); diagnostic != nil {
-		result["diagnostic"] = diagnostic
-	}
 }
 
 func (svc *Service) commandEnv(skillName string, extra map[string]any) ([]string, error) {

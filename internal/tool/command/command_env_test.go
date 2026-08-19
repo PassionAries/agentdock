@@ -21,7 +21,6 @@ func TestCommandEnvExplicitPathOverridesPlatformDefault(t *testing.T) {
 		NewSessionStore(),
 		nil,
 		nil,
-		nil,
 	)
 
 	t.Setenv("PATH", "/usr/bin:/bin")

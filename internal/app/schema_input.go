@@ -3,7 +3,6 @@ package app
 import (
 	toolcommand "github.com/uvwt/agentdock/internal/tool/command"
 	toolfile "github.com/uvwt/agentdock/internal/tool/file"
-	toolgit "github.com/uvwt/agentdock/internal/tool/git"
 	toolrecall "github.com/uvwt/agentdock/internal/tool/recall"
 )
 
@@ -91,7 +90,6 @@ func InputSchema(name string) map[string]any {
 		props["max_output_bytes"] = boundedIntProp("Maximum output bytes. Defaults to 65536 and is capped at 4194304.", 1, toolcommand.MaxOutputBytes)
 		props["stdin"] = stringProp("Initial stdin.")
 		props["tty"] = boolProp("Keep stdin open.")
-		props["redact_patterns"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Additional regex patterns to redact from stdout/stderr/error."}
 		required = []string{"cmd"}
 	case "session_observe":
 		props["action"] = map[string]any{"type": "string", "description": "Read-only session action.", "enum": []string{"list", "status"}}
@@ -376,32 +374,6 @@ func InputSchema(name string) map[string]any {
 		props["close_after"] = boolProp("Close the session only after snapshot and screenshot Artifact publication succeed.")
 		props["timeout_ms"] = boundedIntProp("Operation timeout in milliseconds. Defaults to 30000 and is capped at 300000.", 1, 300000)
 		required = []string{"session_id"}
-	case "git_read":
-		props["action"] = map[string]any{"type": "string", "description": "Read action.", "enum": toolgit.ReadActions()}
-		props["path"] = stringProp("Directory path for repos or file path for blame.")
-		props["repo_path"] = stringProp("Repository path.")
-		props["paths"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
-		props["rev"] = stringProp("Revision for show.")
-		props["limit"] = intProp("Maximum commits for log.")
-		props["max_depth"] = intProp("Maximum scan depth for repos.")
-		props["max_bytes"] = intProp("Maximum output bytes.")
-		props["repo"] = stringProp("GitHub repository as owner/name or https://github.com/owner/name.git; used by action=github_repo_access.")
-		props["timeout_ms"] = boundedIntProp("HTTP timeout in milliseconds for github_repo_access. Defaults to 15000 and is capped at 120000.", 1, 120000)
-		required = []string{"action"}
-	case "git_write":
-		props["action"] = map[string]any{"type": "string", "description": "Write action.", "enum": []string{"clone", "commit", "fetch", "pull", "push"}}
-		props["repo_path"] = stringProp("Repository path.")
-		props["url"] = stringProp("Repository URL for clone.")
-		props["dest"] = stringProp("Destination directory for clone.")
-		props["message"] = stringProp("Commit message.")
-		props["paths"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
-		props["all"] = boolProp("Stage all changes before commit.")
-		props["remote"] = stringProp("Remote name. Defaults to origin.")
-		props["branch"] = stringProp("Branch name where applicable.")
-		props["depth"] = intProp("Shallow clone depth.")
-		props["max_bytes"] = intProp("Maximum output bytes.")
-		required = []string{"action"}
-
 	case "view_image":
 		props["artifact_id"] = stringProp("Artifact id returned by an AgentDock image-producing tool.")
 		props["path"] = stringProp("Host image path. Relative paths resolve from ~/AgentDock.")

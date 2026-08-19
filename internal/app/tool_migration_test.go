@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -57,32 +56,9 @@ func TestFileEditAddMoveDelete(t *testing.T) {
 	}
 }
 
-func TestGitReadStatus(t *testing.T) {
-	rt, root := newCodeToolsRuntime(t)
-	initGitRepo(t, root)
-	result, err := rt.Call(context.Background(), "git_read", map[string]any{"action": "status", "repo_path": "."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result["action"] != "status" || result["clean"] != true {
-		t.Fatalf("unexpected git_read status result: %#v", result)
-	}
-}
-
-func TestGitReadGitHubRepoAccessMissingCredential(t *testing.T) {
-	rt, _ := newCodeToolsRuntime(t)
-	result, err := rt.Call(context.Background(), "git_read", map[string]any{"action": "github_repo_access", "repo": "owner/repo"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result["action"] != "github_repo_access" || result["credential_found"] != false {
-		t.Fatalf("unexpected git_read github_repo_access result: %#v", result)
-	}
-}
-
 func TestLegacyModelEntrypointsRemovedFromRuntime(t *testing.T) {
 	rt, _ := newCodeToolsRuntime(t)
-	for _, name := range []string{"apply_patch", "edit_file", "workspace_repos", "git_status", "git_diff", "git_log", "git_inspect", "git_remote", "git_clone", "git_commit", "check_github_repo_access", "browser_profile"} {
+	for _, name := range []string{"apply_patch", "edit_file", "workspace_repos", "git_read", "git_write", "git_status", "git_diff", "git_log", "git_inspect", "git_remote", "git_clone", "git_commit", "check_github_repo_access", "browser_profile"} {
 		if _, err := rt.Call(context.Background(), name, map[string]any{}); err == nil {
 			t.Fatalf("legacy tool should not be callable: %s", name)
 		}
@@ -100,26 +76,5 @@ func TestWorkflowTemplateMatchIsOnlyTemplateDiscoveryEntrypoint(t *testing.T) {
 	}
 	if _, err := rt.Call(context.Background(), "task_manage", map[string]any{"action": "template_match", "goal": "deploy AgentDock"}); err == nil {
 		t.Fatal("task_manage template_match should not be callable")
-	}
-}
-
-func initGitRepo(t *testing.T, root string) {
-	t.Helper()
-	for _, args := range [][]string{{"init"}, {"config", "user.name", "AgentDock Test"}, {"config", "user.email", "agentdock@example.test"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, output)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"add", "README.md"}, {"commit", "-m", "init"}} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = root
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v failed: %v\n%s", args, err, output)
-		}
 	}
 }

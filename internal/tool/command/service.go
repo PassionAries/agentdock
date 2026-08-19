@@ -12,7 +12,6 @@ import (
 type ConfigProvider func() config.Config
 type SkillResolver func(skill string) (string, error)
 type CommandContext func() (context.Context, error)
-type Diagnostic func(output string) map[string]any
 
 type Service struct {
 	config         ConfigProvider
@@ -21,13 +20,12 @@ type Service struct {
 	sessions       *session.Store
 	resolveSkill   SkillResolver
 	commandContext CommandContext
-	diagnose       Diagnostic
 }
 
-func New(configProvider ConfigProvider, ws *workspace.Workspace, envs *envstore.Store, sessions *session.Store, resolveSkill SkillResolver, commandContext CommandContext, diagnose Diagnostic) *Service {
+func New(configProvider ConfigProvider, ws *workspace.Workspace, envs *envstore.Store, sessions *session.Store, resolveSkill SkillResolver, commandContext CommandContext) *Service {
 	return &Service{
 		config: configProvider, ws: ws, envs: envs, sessions: sessions,
-		resolveSkill: resolveSkill, commandContext: commandContext, diagnose: diagnose,
+		resolveSkill: resolveSkill, commandContext: commandContext,
 	}
 }
 

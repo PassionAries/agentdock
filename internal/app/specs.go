@@ -165,12 +165,6 @@ func allToolSpecs() []ToolSpec {
 		{Name: "mcp_tool_call", Title: "Call a dynamic MCP tool", Description: "Call one previously discovered dynamic MCP tool identified as <server>:<tool>. Arguments are validated against the discovered tool schema before forwarding.", Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.dynamicMCP.Call(ctx, args)
 		}},
-		{Name: "git_read", Title: "Read Git repository state", Description: "Read Git repository information through one action-based entrypoint: repos, status, diff, log, show, blame, or github_repo_access.", Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
-			return r.git.Read(ctx, args)
-		}},
-		{Name: "git_write", Title: "Write Git repository state", Description: "Run mutating Git operations through one action-based entrypoint: clone, commit, fetch, pull, or push.", Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
-			return r.git.Write(ctx, args)
-		}},
 		{Name: "view_image", Title: "View image", Description: "Load an image by AgentDock artifact_id, Host path, or HTTP(S) URL and return it as standard MCP image content.", Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.media.ViewImage(ctx, args)
 		}},

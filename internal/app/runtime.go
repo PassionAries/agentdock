@@ -23,7 +23,6 @@ import (
 	toolcommand "github.com/uvwt/agentdock/internal/tool/command"
 	toolcore "github.com/uvwt/agentdock/internal/tool/core"
 	toolfile "github.com/uvwt/agentdock/internal/tool/file"
-	toolgit "github.com/uvwt/agentdock/internal/tool/git"
 	toolmcp "github.com/uvwt/agentdock/internal/tool/mcp"
 	toolmedia "github.com/uvwt/agentdock/internal/tool/media"
 	toolrecall "github.com/uvwt/agentdock/internal/tool/recall"
@@ -42,7 +41,6 @@ type Runtime struct {
 	tasks         *taskstate.Store
 	command       *toolcommand.Service
 	files         *toolfile.Service
-	git           *toolgit.Service
 	dynamicMCP    *toolmcp.Service
 	media         *toolmedia.Service
 	browser       *toolbrowser.Service
@@ -86,9 +84,8 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 		cfg: cfg, ws: ws, skills: skills,
 		mcpClients: mcpClients, tasks: tasks, commandCtx: commandCtx, commandCancel: commandCancel,
 	}
-	runtime.command = toolcommand.New(func() config.Config { return runtime.cfg }, ws, envs, sessions, skills.ResolveActive, runtime.commandExecutionContext, toolgit.DiagnoseOutput)
+	runtime.command = toolcommand.New(func() config.Config { return runtime.cfg }, ws, envs, sessions, skills.ResolveActive, runtime.commandExecutionContext)
 	runtime.files = toolfile.New(ws, skills.ResolveResource, runtime.command.CommandEnv)
-	runtime.git = toolgit.New(ws, runtime.command.CommandEnv)
 	runtime.dynamicMCP = toolmcp.New(mcpClients, envs)
 	runtime.media = toolmedia.New(cfg, ws, runtime.command.InternalCommandEnv)
 	runtime.browser = toolbrowser.New(toolbrowser.Config{AgentDockHome: cfg.AgentDockHome, ExecutablePath: cfg.BrowserExecutablePath, CDPURL: cfg.BrowserCDPURL, ReuseExistingCDP: cfg.BrowserReuseExistingCDP})
