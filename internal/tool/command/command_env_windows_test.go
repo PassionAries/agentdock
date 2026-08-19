@@ -23,7 +23,6 @@ func TestCommandEnvPreservesWindowsProgramFilesVariables(t *testing.T) {
 		NewSessionStore(),
 		nil,
 		nil,
-		nil,
 	)
 
 	t.Setenv("PROGRAMFILES", `C:\Program Files`)
