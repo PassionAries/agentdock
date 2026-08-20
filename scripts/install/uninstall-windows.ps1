@@ -169,6 +169,7 @@ foreach ($name in @(
     'auth-token.dpapi',
     'oauth-password.dpapi',
     'oauth-token-secret.dpapi',
+    'oauth-access-token-ttl.txt',
     'server-url.txt',
     'named-server-url.txt',
     'control-panel-settings.json',

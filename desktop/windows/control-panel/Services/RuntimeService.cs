@@ -1095,7 +1095,8 @@ public sealed class RuntimeService : IDisposable
             var enabledElement = XDocument.Parse(taskXml)
                 .Descendants()
                 .FirstOrDefault(element => element.Name.LocalName == "Enabled");
-            return enabledElement is not null && bool.TryParse(enabledElement.Value, out var enabled) && enabled;
+            // Task Scheduler 省略 Enabled 时使用 schema 默认值 true。
+            return enabledElement is null || bool.TryParse(enabledElement.Value, out var enabled) && enabled;
         }
         catch
         {

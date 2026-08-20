@@ -540,6 +540,7 @@ func TestWindowsUninstallerCleansManagedTunnelState(t *testing.T) {
 		"'control-panel-settings.json'",
 		"'oauth-password.dpapi'",
 		"'oauth-token-secret.dpapi'",
+		"'oauth-access-token-ttl.txt'",
 		"'cloudflared-token.dpapi'",
 		"'cloudflared.out.log'",
 		"'cloudflared.err.log'",

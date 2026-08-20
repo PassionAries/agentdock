@@ -284,6 +284,8 @@ After you save the plugin, the browser opens the AgentDock authorization page. C
 
 A public endpoint must use HTTPS. `AGENTDOCK_SERVER_URL` must contain only the origin, without `/mcp`. See [Connect ChatGPT to AgentDock](https://uvwt.github.io/agentdock-docs/docs/guides/chatgpt) for the complete procedure, endpoint checks, and troubleshooting.
 
+On Windows desktop installs, create `oauth-access-token-ttl.txt` in the runtime root to persist the access-token lifetime using the same syntax as `AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL`. The file overrides an inherited environment variable; for example, `never` keeps standard startup and elevated scheduled-task startup consistent. The desktop runtime also normalizes an accidentally pasted `https://agentdock.example.com/mcp` URL back to its origin.
+
 ## Image variants
 
 | Image tag | Purpose |
