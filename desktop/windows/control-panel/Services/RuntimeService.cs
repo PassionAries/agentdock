@@ -227,6 +227,7 @@ public sealed class RuntimeService : IDisposable
             "--port", settings.Port.ToString(),
             "--log-level", settings.LogLevel,
             "--nexus-endpoint", settings.NexusEndpoint ?? "",
+            "--oauth-access-token-ttl", settings.OAuthAccessTokenTtl ?? "",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
             "--browser-cdp-url", settings.BrowserCdpUrl ?? "",
             $"--browser-reuse-existing-cdp={settings.BrowserReuseExistingCdp.ToString().ToLowerInvariant()}",

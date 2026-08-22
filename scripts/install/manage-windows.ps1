@@ -536,58 +536,10 @@ function Invoke-LaunchCore {
     if (-not (Test-Path -LiteralPath $AgentDockBinary -PathType Leaf)) {
         throw "找不到 AgentDock 核心程序：$AgentDockBinary"
     }
+
     Ensure-Credentials
-    $settings = Get-ControlPanelSettings
-
-    $env:AGENTDOCK_AUTH_TOKEN = Read-ProtectedText -Path $AuthTokenPath -Entropy 'agentdock.startup.v1'
-    $env:AGENTDOCK_HOST = '127.0.0.1'
-    $env:AGENTDOCK_PORT = [string] $settings.port
-    $env:AGENTDOCK_LOG_LEVEL = [string] $settings.log_level
-    $env:AGENTDOCK_BROWSER_ENABLED = ([bool] $settings.browser_enabled).ToString().ToLowerInvariant()
-    $env:AGENTDOCK_ACP_ENABLED = ([bool] $settings.acp_enabled).ToString().ToLowerInvariant()
-
-    foreach ($name in @(
-        'AGENTDOCK_NEXUS_ENDPOINT',
-        'AGENTDOCK_NEXUS_TOKEN',
-        'AGENTDOCK_ACP_AGENT',
-        'AGENTDOCK_ACP_COMMAND',
-        'AGENTDOCK_ACP_ARGS_JSON',
-        'AGENTDOCK_ACP_ENV_FROM_ENV_JSON',
-        'AGENTDOCK_ACP_ALLOWED_ROOTS',
-        'AGENTDOCK_ACP_MAX_CONCURRENT_PROMPTS',
-        'AGENTDOCK_ACP_INTERACTION_TIMEOUT_MS',
-        'AGENTDOCK_SERVER_URL',
-        'AGENTDOCK_OAUTH_ENABLED',
-        'AGENTDOCK_OAUTH_PASSWORD',
-        'AGENTDOCK_OAUTH_TOKEN_SECRET'
-    )) {
-        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace([string] $settings.nexus_endpoint)) {
-        $env:AGENTDOCK_NEXUS_ENDPOINT = [string] $settings.nexus_endpoint
-    }
-    if (Test-Path -LiteralPath $NexusTokenPath -PathType Leaf) {
-        $env:AGENTDOCK_NEXUS_TOKEN = Read-ProtectedText -Path $NexusTokenPath -Entropy 'agentdock.nexus.token.v1'
-    }
-    if ([bool] $settings.acp_enabled) {
-        if (-not (Test-Path -LiteralPath ([string] $settings.acp_command) -PathType Leaf)) {
-            throw "找不到 Coding Agent 命令：$($settings.acp_command)"
-        }
-        $env:AGENTDOCK_ACP_AGENT = [string] $settings.acp_agent
-        $env:AGENTDOCK_ACP_COMMAND = [string] $settings.acp_command
-        $env:AGENTDOCK_ACP_ARGS_JSON = ConvertTo-Json -InputObject @($settings.acp_args) -Compress
-    }
-
-    $activeServerUrl = Read-TextFile -Path $ServerUrlPath
-    if (-not [string]::IsNullOrWhiteSpace($activeServerUrl)) {
-        $env:AGENTDOCK_SERVER_URL = $activeServerUrl
-        $env:AGENTDOCK_OAUTH_ENABLED = 'true'
-        $env:AGENTDOCK_OAUTH_PASSWORD = Read-ProtectedText -Path $OAuthPasswordPath -Entropy 'agentdock.oauth.password.v1'
-        $env:AGENTDOCK_OAUTH_TOKEN_SECRET = Read-ProtectedText -Path $OAuthSecretPath -Entropy 'agentdock.oauth.secret.v1'
-    }
-
-    & $AgentDockBinary
+    # 兼容入口也统一交给原生 launch-core 恢复设置和 DPAPI 凭据，避免形成第二套启动配置逻辑。
+    & $AgentDockBinary service launch-core --runtime-root $RuntimeRoot
     return $LASTEXITCODE
 }
 

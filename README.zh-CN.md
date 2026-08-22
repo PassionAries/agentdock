@@ -286,7 +286,7 @@ https://agentdock.example.com/mcp
 
 公网入口必须使用 HTTPS，`AGENTDOCK_SERVER_URL` 只填写 Origin，不附加 `/mcp`。完整步骤、端点验证和常见问题见 [ChatGPT 接入教程](https://uvwt.github.io/agentdock-docs/zh-CN/docs/guides/chatgpt)。
 
-Windows 桌面服务可在运行目录创建 `oauth-access-token-ttl.txt` 持久化 Access Token 有效期，内容语法与 `AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL` 相同。文件值优先于继承的环境变量；例如写入 `never` 可确保普通启动和管理员计划任务使用一致的不失效策略。桌面端也会把误填的 `https://agentdock.example.com/mcp` 自动规范为 Origin。
+Windows 桌面端可在控制面板“高级设置”中配置 OAuth Access Token TTL，支持 `1h`、`30d`、`never` 等与 `AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL` 相同的语法。保存后普通启动和管理员计划任务都会读取同一份 `control-panel-settings.json`；留空时才继承启动环境里的 `AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL`，两者都未设置则使用核心默认的 `1h`。桌面端也会把误填的 `https://agentdock.example.com/mcp` 自动规范为 Origin。
 
 ## 镜像版本
 

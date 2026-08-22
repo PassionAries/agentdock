@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/url"
 	"strings"
+
+	agentconfig "github.com/uvwt/agentdock/internal/config"
 )
 
 // ConfigUpdateRequest 是桌面端保存日常运行设置时使用的结构化请求。
@@ -17,6 +19,7 @@ type ConfigUpdateRequest struct {
 	LogLevel                string
 	NexusEndpoint           string
 	NexusTokenFile          string
+	OAuthAccessTokenTTL     string
 	BrowserEnabled          bool
 	BrowserCDPURL           string
 	BrowserReuseExistingCDP bool
@@ -37,6 +40,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		logLevel := flags.String("log-level", "info", "日志级别")
 		nexusEndpoint := flags.String("nexus-endpoint", "", "Nexus endpoint")
 		nexusTokenFile := flags.String("nexus-token-file", "", "Nexus Token 临时文件")
+		oauthAccessTokenTTL := flags.String("oauth-access-token-ttl", "", "OAuth Access Token 有效期；留空表示继承环境变量或使用默认值")
 		browserEnabled := flags.Bool("browser-enabled", false, "启用浏览器")
 		browserCDPURL := flags.String("browser-cdp-url", "", "已有 Chromium CDP 地址")
 		browserReuseExistingCDP := flags.Bool("browser-reuse-existing-cdp", false, "自动发现并复用唯一已有 CDP")
@@ -54,6 +58,7 @@ func RunConfigCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			LogLevel:                strings.ToLower(strings.TrimSpace(*logLevel)),
 			NexusEndpoint:           strings.TrimSpace(*nexusEndpoint),
 			NexusTokenFile:          strings.TrimSpace(*nexusTokenFile),
+			OAuthAccessTokenTTL:     strings.TrimSpace(*oauthAccessTokenTTL),
 			BrowserEnabled:          *browserEnabled,
 			BrowserCDPURL:           strings.TrimSpace(*browserCDPURL),
 			BrowserReuseExistingCDP: *browserReuseExistingCDP,
@@ -87,6 +92,11 @@ func validateConfigUpdate(request ConfigUpdateRequest) error {
 	}
 	if strings.ContainsAny(request.NexusEndpoint, "\r\n") {
 		return errors.New("配置值不能包含换行符")
+	}
+	if request.OAuthAccessTokenTTL != "" {
+		if err := agentconfig.ValidateOAuthAccessTokenTTL(request.OAuthAccessTokenTTL); err != nil {
+			return fmt.Errorf("OAuth Access Token 有效期无效: %w", err)
+		}
 	}
 	if request.BrowserCDPURL != "" {
 		parsed, err := url.Parse(request.BrowserCDPURL)
