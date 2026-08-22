@@ -219,7 +219,10 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"runtime.json",
 		"desktop-version.txt",
 		"$destinationBinary version --json",
-		"New-ItemProperty -Path $runKey -Name $trayRunValueName",
+		"function Set-RunValue",
+		"Unable to prepare current-user startup registry key",
+		"Unable to write current-user startup registry value",
+		"Set-RunValue -RegistryPath $runKey -Name $trayRunValueName",
 		"cloudflared-windows-$Architecture.exe",
 		"Get-Sha256Hex -Path $archivePath",
 		"[System.Security.Cryptography.SHA256]::Create()",
@@ -252,8 +255,8 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"Copy-Item -LiteralPath $binaryBackup -Destination $destinationBinary -Force",
 		"DataProtectionScope]::CurrentUser",
 		"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-		"New-ItemProperty -Path $runKey -Name $runValueName",
-		"New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName",
+		"Set-RunValue -RegistryPath $runKey -Name $runValueName",
+		"Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName",
 		"service launch-core --runtime-root",
 		"--start-core --runtime-root",
 		"& $destinationBinary service start --runtime-root $runtimeDir",
@@ -286,6 +289,18 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("install.ps1 must not persist the AgentDock version in runtime.json: %q", forbidden)
 		}
+	}
+	for _, forbidden := range []string{
+		"New-Item -Path $runKey -Force",
+		"New-Item -Path $RegistryPath -Force",
+		"New-ItemProperty -Path $runKey",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("install.ps1 must route current-user startup writes through Set-RunValue instead of %q", forbidden)
+		}
+	}
+	if got := strings.Count(script, "Set-RunValue -RegistryPath $runKey"); got != 6 {
+		t.Fatalf("install.ps1 must use Set-RunValue for all startup writes in install and rollback paths; got %d calls", got)
 	}
 	stopCall := strings.Index(script, "Stop-AgentDockForUpgrade -BinaryPath $destinationBinary")
 	replaceCall := strings.Index(script, "Install-AgentDockBinary -SourceBinary $sourceBinary -DestinationBinary $destinationBinary")

@@ -904,6 +904,35 @@ function Get-RunValue {
     }
 }
 
+function Set-RunValue {
+    param(
+        [string] $RegistryPath,
+        [string] $Name,
+        [string] $Value
+    )
+
+    try {
+        # The standard Run key usually exists; recreating it with -Force can fail in restricted environments.
+        if (-not (Test-Path -LiteralPath $RegistryPath -ErrorAction Stop)) {
+            New-Item -Path $RegistryPath -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        throw "Unable to prepare current-user startup registry key '$RegistryPath' for value '$Name': $($_.Exception.Message)"
+    }
+
+    try {
+        New-ItemProperty `
+            -Path $RegistryPath `
+            -Name $Name `
+            -Value $Value `
+            -PropertyType String `
+            -Force `
+            -ErrorAction Stop | Out-Null
+    } catch {
+        throw "Unable to write current-user startup registry value '$Name' at '$RegistryPath': $($_.Exception.Message)"
+    }
+}
+
 if ($Port -lt 1 -or $Port -gt 65535) {
     throw 'Port must be between 1 and 65535.'
 }
@@ -1277,13 +1306,12 @@ exit `$LASTEXITCODE
             -RuntimePublicUrl $manifestPublicUrl `
             -Channel $InstallChannel
 
-        New-Item -Path $runKey -Force | Out-Null
         if ($effectivePrivilegeMode -eq 'elevated') {
             Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             Enable-And-StartAgentDockTask
         } else {
             $startupCommand = "`"$destinationTrayBinary`" --start-core --runtime-root `"$runtimeDir`""
-            New-ItemProperty -Path $runKey -Name $runValueName -Value $startupCommand -PropertyType String -Force | Out-Null
+            Set-RunValue -RegistryPath $runKey -Name $runValueName -Value $startupCommand
             & $destinationBinary service start --runtime-root $runtimeDir
             if ($LASTEXITCODE -ne 0) {
                 throw "AgentDock native service start failed with exit code $LASTEXITCODE."
@@ -1291,7 +1319,7 @@ exit `$LASTEXITCODE
         }
         $startupRegistrationChanged = $true
         $trayStartupCommand = "`"$destinationTrayBinary`" --background"
-        New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $trayStartupCommand -PropertyType String -Force | Out-Null
+        Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $trayStartupCommand
         $trayStartupRegistrationChanged = $true
         Wait-AgentDockHealth -HealthPort $Port
 
@@ -1490,7 +1518,7 @@ exit `$process.ExitCode
             [IO.File]::WriteAllText($cloudflaredStderrLogPath, '', $Utf8NoBom)
 
             $cloudflaredStartupCommand = "`"$destinationTrayBinary`" --start-tunnel --runtime-root `"$runtimeDir`""
-            New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName -Value $cloudflaredStartupCommand -PropertyType String -Force | Out-Null
+            Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $cloudflaredStartupCommand
             $tunnelStartupRegistrationChanged = $true
             & $destinationBinary tunnel start --runtime-root $runtimeDir
             if ($LASTEXITCODE -ne 0) {
@@ -1680,19 +1708,18 @@ exit `$process.ExitCode
                 Restore-FileState -Path $item.Path -Name $item.Name -BackupDirectory $runtimeBackupDir
             }
 
-            New-Item -Path $runKey -Force | Out-Null
             if ($null -ne $previousRunValue) {
-                New-ItemProperty -Path $runKey -Name $runValueName -Value $previousRunValue -PropertyType String -Force | Out-Null
+                Set-RunValue -RegistryPath $runKey -Name $runValueName -Value $previousRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             }
             if ($null -ne $previousTrayRunValue) {
-                New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $previousTrayRunValue -PropertyType String -Force | Out-Null
+                Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $previousTrayRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $trayRunValueName -ErrorAction SilentlyContinue
             }
             if ($null -ne $previousTunnelRunValue) {
-                New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName -Value $previousTunnelRunValue -PropertyType String -Force | Out-Null
+                Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $previousTunnelRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
             }
