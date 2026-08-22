@@ -238,15 +238,25 @@ func waitForSelection(
 ) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
+	var lastReadErr error
 	for time.Now().Before(deadline) {
 		selection, err := state.Snapshot(skill)
 		if err != nil {
-			t.Fatal(err)
+			// Windows 在原子替换状态文件的极短窗口内可能返回 sharing violation。
+			// 这里本来就在等待并发事务推进，因此把读取失败视为“尚未就绪”，
+			// 但保留最后一次错误，超时后仍能给出真实失败证据。
+			lastReadErr = err
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
+		lastReadErr = nil
 		if ready(selection) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if lastReadErr != nil {
+		t.Fatalf("timed out waiting for %s; last state read error: %v", description, lastReadErr)
 	}
 	t.Fatalf("timed out waiting for %s", description)
 }
