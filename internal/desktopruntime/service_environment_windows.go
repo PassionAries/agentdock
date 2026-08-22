@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unsafe"
 
+	agentconfig "github.com/uvwt/agentdock/internal/config"
 	"golang.org/x/sys/windows"
 )
 
@@ -45,6 +46,7 @@ type controlPanelSettings struct {
 	Port                    int      `json:"port"`
 	LogLevel                string   `json:"log_level"`
 	NexusEndpoint           string   `json:"nexus_endpoint"`
+	OAuthAccessTokenTTL     string   `json:"oauth_access_token_ttl,omitempty"`
 	BrowserEnabled          bool     `json:"browser_enabled"`
 	BrowserCDPURL           string   `json:"browser_cdp_url"`
 	BrowserReuseExistingCDP bool     `json:"browser_reuse_existing_cdp"`
@@ -63,7 +65,7 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	if err != nil {
 		return err
 	}
-	oauthAccessTokenTTL := strings.TrimSpace(os.Getenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL"))
+	inheritedOAuthAccessTokenTTL := strings.TrimSpace(os.Getenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL"))
 
 	for _, name := range managedCoreEnvironment {
 		if err := os.Unsetenv(name); err != nil {
@@ -141,13 +143,7 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		managed["AGENTDOCK_OAUTH_PASSWORD"] = oauthPassword
 		managed["AGENTDOCK_OAUTH_TOKEN_SECRET"] = oauthSecret
 	}
-	storedOAuthAccessTokenTTL, err := readTrimmedText(filepath.Join(root, "oauth-access-token-ttl.txt"))
-	if err != nil {
-		return err
-	}
-	if storedOAuthAccessTokenTTL != "" {
-		oauthAccessTokenTTL = storedOAuthAccessTokenTTL
-	}
+	oauthAccessTokenTTL := effectiveOAuthAccessTokenTTL(settings.OAuthAccessTokenTTL, inheritedOAuthAccessTokenTTL)
 	if oauthAccessTokenTTL != "" {
 		managed["AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL"] = oauthAccessTokenTTL
 	}
@@ -183,6 +179,12 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 		return controlPanelSettings{}, fmt.Errorf("不支持的日志级别: %s", settings.LogLevel)
 	}
 	settings.NexusEndpoint = strings.TrimSpace(settings.NexusEndpoint)
+	settings.OAuthAccessTokenTTL = strings.TrimSpace(settings.OAuthAccessTokenTTL)
+	if settings.OAuthAccessTokenTTL != "" {
+		if err := agentconfig.ValidateOAuthAccessTokenTTL(settings.OAuthAccessTokenTTL); err != nil {
+			return controlPanelSettings{}, fmt.Errorf("OAuth Access Token 有效期无效: %w", err)
+		}
+	}
 	settings.ACPAgent = strings.ToLower(strings.TrimSpace(settings.ACPAgent))
 	if settings.ACPAgent == "" {
 		settings.ACPAgent = "codex"
@@ -202,6 +204,13 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 		}
 	}
 	return settings, nil
+}
+
+func effectiveOAuthAccessTokenTTL(configured, inherited string) string {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		return configured
+	}
+	return strings.TrimSpace(inherited)
 }
 
 func readOptionalProtectedText(path, entropy string) (string, error) {

@@ -394,6 +394,7 @@ func TestWindowsManagerKeepsTunnelTransitionsAndManualTaskStartValid(t *testing.
 		"-FilePath $TrayBinary",
 		"'start-tunnel'",
 		"'stop-tunnel'",
+		"& $AgentDockBinary service launch-core --runtime-root $RuntimeRoot",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("manage-windows.ps1 missing %q", want)
@@ -447,6 +448,37 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 	} {
 		if strings.Contains(runtimeService, forbidden) {
 			t.Fatalf("Windows control panel still invokes PowerShell for Tunnel lifecycle %q", forbidden)
+		}
+	}
+}
+
+func TestWindowsControlPanelPersistsOAuthAccessTokenTTLThroughNativeConfig(t *testing.T) {
+	files := []string{
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "Models", "RuntimeModels.cs"),
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml"),
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml.cs"),
+		filepath.Join("..", "..", "desktop", "windows", "control-panel", "Services", "RuntimeService.cs"),
+		filepath.Join("..", "..", "internal", "desktopruntime", "config_windows.go"),
+		filepath.Join("..", "..", "internal", "desktopruntime", "service_environment_windows.go"),
+	}
+	var source strings.Builder
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		source.Write(data)
+	}
+	for _, want := range []string{
+		`oauth_access_token_ttl`,
+		`OAuthAccessTokenTtlTextBox`,
+		`OAuthAccessTokenTtl = OAuthAccessTokenTtlTextBox.Text.Trim()`,
+		`"--oauth-access-token-ttl", settings.OAuthAccessTokenTtl`,
+		`OAuthAccessTokenTTL:     request.OAuthAccessTokenTTL`,
+		`effectiveOAuthAccessTokenTTL(settings.OAuthAccessTokenTTL, inheritedOAuthAccessTokenTTL)`,
+	} {
+		if !strings.Contains(source.String(), want) {
+			t.Fatalf("Windows OAuth TTL persistence chain missing %q", want)
 		}
 	}
 }

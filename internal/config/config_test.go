@@ -257,6 +257,19 @@ func TestFromEnvParsesNeverExpiringOAuthAccessToken(t *testing.T) {
 	}
 }
 
+func TestValidateOAuthAccessTokenTTL(t *testing.T) {
+	for _, value := range []string{"1m", "24h", "30d", "999999d", "never"} {
+		if err := ValidateOAuthAccessTokenTTL(value); err != nil {
+			t.Fatalf("ValidateOAuthAccessTokenTTL(%q) error = %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "59s", "1000000d", "1.5s", "invalid"} {
+		if err := ValidateOAuthAccessTokenTTL(value); err == nil {
+			t.Fatalf("ValidateOAuthAccessTokenTTL(%q) accepted invalid value", value)
+		}
+	}
+}
+
 func TestNormalizeValidatesOAuthAccessTokenTTL(t *testing.T) {
 	home := t.TempDir()
 	for _, test := range []struct {

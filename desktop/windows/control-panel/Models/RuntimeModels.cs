@@ -64,6 +64,9 @@ public sealed class ControlPanelSettings
     [JsonPropertyName("nexus_endpoint")]
     public string NexusEndpoint { get; set; } = "";
 
+    [JsonPropertyName("oauth_access_token_ttl")]
+    public string OAuthAccessTokenTtl { get; set; } = "";
+
     [JsonPropertyName("browser_enabled")]
     public bool BrowserEnabled { get; set; }
 

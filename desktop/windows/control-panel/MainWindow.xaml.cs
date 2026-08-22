@@ -100,6 +100,7 @@ public partial class MainWindow : Window
                 PortTextBox.Text = snapshot.Settings.Port.ToString();
                 SelectLogLevel(snapshot.Settings.LogLevel);
                 NexusEndpointTextBox.Text = snapshot.Settings.NexusEndpoint;
+                OAuthAccessTokenTtlTextBox.Text = snapshot.Settings.OAuthAccessTokenTtl;
                 BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
                 BrowserCdpUrlTextBox.Text = snapshot.Settings.BrowserCdpUrl;
                 BrowserReuseExistingCdpCheckBox.IsChecked = snapshot.Settings.BrowserReuseExistingCdp;
@@ -321,6 +322,7 @@ public partial class MainWindow : Window
             Port = port,
             LogLevel = SelectedLogLevel(),
             NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
+            OAuthAccessTokenTtl = OAuthAccessTokenTtlTextBox.Text.Trim(),
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
             BrowserCdpUrl = BrowserCdpUrlTextBox.Text.Trim(),
             BrowserReuseExistingCdp = BrowserReuseExistingCdpCheckBox.IsChecked == true,

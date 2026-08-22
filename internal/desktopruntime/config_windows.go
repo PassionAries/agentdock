@@ -121,6 +121,7 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 		Port:                    request.Port,
 		LogLevel:                request.LogLevel,
 		NexusEndpoint:           request.NexusEndpoint,
+		OAuthAccessTokenTTL:     request.OAuthAccessTokenTTL,
 		BrowserEnabled:          request.BrowserEnabled,
 		BrowserCDPURL:           request.BrowserCDPURL,
 		BrowserReuseExistingCDP: request.BrowserReuseExistingCDP,

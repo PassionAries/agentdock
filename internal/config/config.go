@@ -471,22 +471,48 @@ func getenvOAuthAccessTokenTTL(key string, fallback int64) (seconds int64, never
 	if value == "" {
 		return fallback, false, nil
 	}
+	seconds, never, err = parseOAuthAccessTokenTTL(value)
+	if err != nil {
+		return 0, false, fmt.Errorf("parse %s as duration: %w", key, err)
+	}
+	return seconds, never, nil
+}
+
+// ValidateOAuthAccessTokenTTL validates an explicit access-token lifetime using
+// the same syntax and bounds as AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL.
+func ValidateOAuthAccessTokenTTL(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("value is empty")
+	}
+	seconds, never, err := parseOAuthAccessTokenTTL(value)
+	if err != nil {
+		return err
+	}
+	if !never && (seconds < int64(time.Minute/time.Second) || seconds > maxOAuthAccessTokenTTLSeconds) {
+		return fmt.Errorf("value must be between 1m and 999999d: %ds", seconds)
+	}
+	return nil
+}
+
+func parseOAuthAccessTokenTTL(value string) (seconds int64, never bool, err error) {
+	value = strings.TrimSpace(value)
 	if strings.EqualFold(value, "never") {
 		return 0, true, nil
 	}
 	if strings.HasSuffix(strings.ToLower(value), "d") {
 		days, err := strconv.ParseInt(strings.TrimSpace(value[:len(value)-1]), 10, 64)
 		if err != nil || days <= 0 || days > maxOAuthAccessTokenTTLSeconds/(24*60*60) {
-			return 0, false, fmt.Errorf("parse %s as duration: invalid day count %q", key, value)
+			return 0, false, fmt.Errorf("invalid day count %q", value)
 		}
 		return days * 24 * 60 * 60, false, nil
 	}
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
-		return 0, false, fmt.Errorf("parse %s as duration: %w", key, err)
+		return 0, false, err
 	}
 	if parsed%time.Second != 0 {
-		return 0, false, fmt.Errorf("parse %s as duration: value must use whole seconds", key)
+		return 0, false, errors.New("value must use whole seconds")
 	}
 	return int64(parsed / time.Second), false, nil
 }

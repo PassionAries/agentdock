@@ -25,6 +25,17 @@ func TestValidateConfigUpdate(t *testing.T) {
 		t.Fatalf("valid ACP config rejected: %v", err)
 	}
 
+	validTTL := valid
+	validTTL.OAuthAccessTokenTTL = "30d"
+	if err := validateConfigUpdate(validTTL); err != nil {
+		t.Fatalf("valid OAuth access token TTL rejected: %v", err)
+	}
+	validNeverTTL := valid
+	validNeverTTL.OAuthAccessTokenTTL = "never"
+	if err := validateConfigUpdate(validNeverTTL); err != nil {
+		t.Fatalf("valid never-expiring OAuth access token TTL rejected: %v", err)
+	}
+
 	cases := []ConfigUpdateRequest{
 		{Port: 8765, LogLevel: "info"},
 		{RuntimeRoot: "runtime", Port: 0, LogLevel: "info"},
@@ -34,6 +45,8 @@ func TestValidateConfigUpdate(t *testing.T) {
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", BrowserCDPURL: "http://user:pass@browser.internal:9222"},
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", BrowserCDPURL: "http://browser.internal:9222/#fragment"},
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", ACPEnabled: true, ACPAgent: "other"},
+		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", OAuthAccessTokenTTL: "59s"},
+		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", OAuthAccessTokenTTL: "1000000d"},
 	}
 	for _, request := range cases {
 		if err := validateConfigUpdate(request); err == nil {
