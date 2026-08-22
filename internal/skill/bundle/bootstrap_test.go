@@ -3,6 +3,7 @@ package bundle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -100,19 +101,8 @@ func TestBootstrapRestoresReplacedBundledSkillWhenActivationFails(t *testing.T) 
 	second := writeBundledSkill(t, bundle, "second-skill", "1.0.0")
 	writeManifest(t, bundle, Manifest{Skills: []ManifestSkill{first, second}})
 
-	lockPath := filepath.Join(state.Root(), "locks", second.Name+".lock")
-	if err := os.Mkdir(lockPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		time.Sleep(150 * time.Millisecond)
-		_ = os.Remove(lockPath)
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := Bootstrap(ctx, state, manager, bundle); err == nil {
-		t.Fatal("Bootstrap() succeeded despite blocked activation")
+	if err := bootstrapWithBlockedSecondActivation(t, state, manager, bundle, first, second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Bootstrap() error = %v, want context canceled", err)
 	}
 
 	installedPath, err := state.Resolve(local.Name, local.Version)
@@ -155,19 +145,8 @@ func TestBootstrapRestoresStateWhenActivationFails(t *testing.T) {
 	second := writeBundledSkill(t, bundle, "second-skill", "1.0.0")
 	writeManifest(t, bundle, Manifest{Skills: []ManifestSkill{first, second}})
 
-	lockPath := filepath.Join(state.Root(), "locks", second.Name+".lock")
-	if err := os.Mkdir(lockPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		time.Sleep(150 * time.Millisecond)
-		_ = os.Remove(lockPath)
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := Bootstrap(ctx, state, manager, bundle); err == nil {
-		t.Fatal("Bootstrap() succeeded despite blocked activation")
+	if err := bootstrapWithBlockedSecondActivation(t, state, manager, bundle, first, second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Bootstrap() error = %v, want context canceled", err)
 	}
 	for _, name := range []string{first.Name, second.Name} {
 		active, err := state.ActiveVersion(name)
@@ -195,6 +174,81 @@ func TestBootstrapRestoresStateWhenActivationFails(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(state.Root(), "bundled-skills.json")); !os.IsNotExist(err) {
 		t.Fatalf("failed bootstrap created bundled list: %v", err)
 	}
+}
+
+func bootstrapWithBlockedSecondActivation(
+	t *testing.T,
+	state *skillstate.Store,
+	manager *skills.Manager,
+	bundle string,
+	first ManifestSkill,
+	second ManifestSkill,
+) error {
+	t.Helper()
+
+	initialSelection, err := state.Snapshot(first.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(state.Root(), "locks", second.Name+".lock")
+	if err := os.Mkdir(lockPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(lockPath) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, bootstrapErr := Bootstrap(ctx, state, manager, bundle)
+		result <- bootstrapErr
+	}()
+
+	// 先等第一个 Skill 真正完成激活，再取消 context。第二个 Skill 的锁始终保留，
+	// 因此失败点由事务状态决定，不再依赖 race 模式下不稳定的毫秒时间窗。
+	waitForSelection(t, state, first.Name, func(selection skillstate.Selection) bool {
+		return selection.ActiveVersion == first.Version && !selection.UpdatedAt.Equal(initialSelection.UpdatedAt)
+	}, "first bundled Skill activation")
+	cancel()
+
+	// 回滚会先恢复已激活 Skill 的 selection，再清理已安装版本。等 selection 恢复后
+	// 才释放第二个 Skill 的锁，既确认走到了 activation 回滚，也允许事务正常收尾。
+	waitForSelection(t, state, first.Name, func(selection skillstate.Selection) bool {
+		return reflect.DeepEqual(selection, initialSelection)
+	}, "first bundled Skill rollback")
+	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("release blocked activation lock: %v", err)
+	}
+
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Bootstrap() did not finish after blocked activation was released")
+		return nil
+	}
+}
+
+func waitForSelection(
+	t *testing.T,
+	state *skillstate.Store,
+	skill string,
+	ready func(skillstate.Selection) bool,
+	description string,
+) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		selection, err := state.Snapshot(skill)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ready(selection) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
 }
 
 func newTestManager(t *testing.T) (*skillstate.Store, *skills.Manager) {
