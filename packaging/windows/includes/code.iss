@@ -388,6 +388,13 @@ var
   ExitCode: Integer;
   ErrorCode: String;
   ErrorMessage: String;
+  ErrorType: String;
+  ErrorId: String;
+  ErrorCategory: String;
+  ErrorScript: String;
+  ErrorLine: String;
+  ErrorColumn: String;
+  ErrorStack: String;
   DeleteTokenFile: Boolean;
 begin
   Result := '';
@@ -464,6 +471,21 @@ begin
     begin
       ErrorCode := GetIniString('AgentDock', 'Code', '', ResultFilePath);
       ErrorMessage := GetIniString('AgentDock', 'Message', '', ResultFilePath);
+      ErrorType := GetIniString('AgentDock', 'ErrorType', '', ResultFilePath);
+      ErrorId := GetIniString('AgentDock', 'ErrorId', '', ResultFilePath);
+      ErrorCategory := GetIniString('AgentDock', 'ErrorCategory', '', ResultFilePath);
+      ErrorScript := GetIniString('AgentDock', 'ErrorScript', '', ResultFilePath);
+      ErrorLine := GetIniString('AgentDock', 'ErrorLine', '', ResultFilePath);
+      ErrorColumn := GetIniString('AgentDock', 'ErrorColumn', '', ResultFilePath);
+      ErrorStack := GetIniString('AgentDock', 'ErrorStack', '', ResultFilePath);
+      if (ErrorType <> '') or (ErrorId <> '') or (ErrorCategory <> '') then
+        Log('AgentDock installation diagnostics: type=' + ErrorType +
+          '; id=' + ErrorId + '; category=' + ErrorCategory);
+      if (ErrorScript <> '') or (ErrorLine <> '') or (ErrorColumn <> '') then
+        Log('AgentDock installation location: script=' + ErrorScript +
+          '; line=' + ErrorLine + '; column=' + ErrorColumn);
+      if ErrorStack <> '' then
+        Log('AgentDock installation stack: ' + ErrorStack);
       if ErrorCode = 'setup-elevated-context' then
         ErrorMessage := GetLocalizedMessage('ElevatedSetupUnsupported');
       if ErrorMessage = '' then
@@ -549,8 +571,34 @@ begin
   Log('AgentDock: managed cleanup completed successfully.');
 end;
 
+// Inno 保留 TEMP 原生日志；这里额外复制到固定目录，方便用户长期查找和反馈安装问题。
+procedure PersistSetupLog();
+var
+  SourceLog: String;
+  LogDirectory: String;
+  PersistentLog: String;
+begin
+  SourceLog := ExpandConstant('{log}');
+  if (SourceLog = '') or (not FileExists(SourceLog)) then
+    Exit;
+
+  LogDirectory := ExpandConstant('{localappdata}\AgentDock\logs\installer');
+  if not ForceDirectories(LogDirectory) then
+  begin
+    Log('AgentDock: could not create persistent installer log directory: ' + LogDirectory);
+    Exit;
+  end;
+
+  PersistentLog := AddBackslash(LogDirectory) + 'setup-' +
+    GetDateTimeString('yyyymmdd-hhnnss-zzz', '-', ':') + '.log';
+  Log('AgentDock installer log target: ' + PersistentLog);
+  if not CopyFile(SourceLog, PersistentLog, True) then
+    Log('AgentDock: could not persist installer log; original log remains at: ' + SourceLog);
+end;
+
 procedure DeinitializeSetup();
 begin
+  PersistSetupLog();
   if ResultFilePath <> '' then
     DeleteFile(ResultFilePath);
   if TemporaryTokenFilePath <> '' then

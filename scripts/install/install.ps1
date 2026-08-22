@@ -77,6 +77,23 @@ function Get-CloudflaredReleaseBaseUrl {
     return 'https://github.com/cloudflare/cloudflared/releases/latest/download'
 }
 
+function Get-Sha256Hex {
+    param([string] $Path)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        try {
+            $hash = $sha256.ComputeHash($stream)
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $sha256.Dispose()
+    }
+    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+}
+
 function Add-UserPath {
     param([string] $Directory)
 
@@ -334,6 +351,22 @@ function Write-RuntimeManifest {
     [IO.File]::WriteAllText($Path, ($manifest | ConvertTo-Json -Depth 3), $Utf8NoBom)
 }
 
+function ConvertTo-InstallResultValue {
+    param(
+        [string] $Value,
+        [int] $MaxLength = 0
+    )
+
+    if ([string]::IsNullOrEmpty($Value)) {
+        return ''
+    }
+    $normalized = $Value.Replace("`r", ' ').Replace("`n", ' ')
+    if (($MaxLength -gt 0) -and ($normalized.Length -gt $MaxLength)) {
+        return $normalized.Substring(0, $MaxLength)
+    }
+    return $normalized
+}
+
 function Write-InstallResult {
     param(
         [string] $Path,
@@ -347,6 +380,7 @@ function Write-InstallResult {
         [string] $HealthStatus,
         [string] $PrivilegeMode,
         [string] $ErrorCode = '',
+        [System.Management.Automation.ErrorRecord] $ErrorRecord = $null,
         [string] $WarningCode = '',
         [string] $WarningMessage = ''
     )
@@ -358,13 +392,47 @@ function Write-InstallResult {
     if (-not [string]::IsNullOrWhiteSpace($parent)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
-    $safeMessage = $Message.Replace("`r", ' ').Replace("`n", ' ')
-    $safeWarningMessage = $WarningMessage.Replace("`r", ' ').Replace("`n", ' ')
+
+    $errorType = ''
+    $errorId = ''
+    $errorCategory = ''
+    $errorScript = ''
+    $errorLine = 0
+    $errorColumn = 0
+    $errorStack = ''
+    if ($null -ne $ErrorRecord) {
+        if ($null -ne $ErrorRecord.Exception) {
+            $errorType = $ErrorRecord.Exception.GetType().FullName
+        }
+        $errorId = [string] $ErrorRecord.FullyQualifiedErrorId
+        $errorCategory = [string] $ErrorRecord.CategoryInfo.Category
+        if ($null -ne $ErrorRecord.InvocationInfo) {
+            $errorScript = [string] $ErrorRecord.InvocationInfo.ScriptName
+            $errorLine = $ErrorRecord.InvocationInfo.ScriptLineNumber
+            $errorColumn = $ErrorRecord.InvocationInfo.OffsetInLine
+        }
+        $errorStack = [string] $ErrorRecord.ScriptStackTrace
+    }
+
+    $safeMessage = ConvertTo-InstallResultValue -Value $Message
+    $safeWarningMessage = ConvertTo-InstallResultValue -Value $WarningMessage
+    $safeErrorType = ConvertTo-InstallResultValue -Value $errorType
+    $safeErrorId = ConvertTo-InstallResultValue -Value $errorId
+    $safeErrorCategory = ConvertTo-InstallResultValue -Value $errorCategory
+    $safeErrorScript = ConvertTo-InstallResultValue -Value $errorScript
+    $safeErrorStack = ConvertTo-InstallResultValue -Value $errorStack -MaxLength 2048
     $lines = @(
         '[AgentDock]',
         "Success=$($Success.ToString().ToLowerInvariant())",
         "Code=$ErrorCode",
         "Message=$safeMessage",
+        "ErrorType=$safeErrorType",
+        "ErrorId=$safeErrorId",
+        "ErrorCategory=$safeErrorCategory",
+        "ErrorScript=$safeErrorScript",
+        "ErrorLine=$errorLine",
+        "ErrorColumn=$errorColumn",
+        "ErrorStack=$safeErrorStack",
         "WarningCode=$WarningCode",
         "WarningMessage=$safeWarningMessage",
         "Version=$InstalledVersion",
@@ -836,6 +904,35 @@ function Get-RunValue {
     }
 }
 
+function Set-RunValue {
+    param(
+        [string] $RegistryPath,
+        [string] $Name,
+        [string] $Value
+    )
+
+    try {
+        # The standard Run key usually exists; recreating it with -Force can fail in restricted environments.
+        if (-not (Test-Path -LiteralPath $RegistryPath -ErrorAction Stop)) {
+            New-Item -Path $RegistryPath -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        throw "Unable to prepare current-user startup registry key '$RegistryPath' for value '$Name': $($_.Exception.Message)"
+    }
+
+    try {
+        New-ItemProperty `
+            -Path $RegistryPath `
+            -Name $Name `
+            -Value $Value `
+            -PropertyType String `
+            -Force `
+            -ErrorAction Stop | Out-Null
+    } catch {
+        throw "Unable to write current-user startup registry value '$Name' at '$RegistryPath': $($_.Exception.Message)"
+    }
+}
+
 if ($Port -lt 1 -or $Port -gt 65535) {
     throw 'Port must be between 1 and 65535.'
 }
@@ -987,7 +1084,7 @@ try {
     }
 
     $expectedHash = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-    $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256Hex -Path $archivePath
     if ($actualHash -ne $expectedHash) {
         throw "SHA-256 mismatch for $assetName. Expected $expectedHash, got $actualHash."
     }
@@ -1209,13 +1306,12 @@ exit `$LASTEXITCODE
             -RuntimePublicUrl $manifestPublicUrl `
             -Channel $InstallChannel
 
-        New-Item -Path $runKey -Force | Out-Null
         if ($effectivePrivilegeMode -eq 'elevated') {
             Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             Enable-And-StartAgentDockTask
         } else {
             $startupCommand = "`"$destinationTrayBinary`" --start-core --runtime-root `"$runtimeDir`""
-            New-ItemProperty -Path $runKey -Name $runValueName -Value $startupCommand -PropertyType String -Force | Out-Null
+            Set-RunValue -RegistryPath $runKey -Name $runValueName -Value $startupCommand
             & $destinationBinary service start --runtime-root $runtimeDir
             if ($LASTEXITCODE -ne 0) {
                 throw "AgentDock native service start failed with exit code $LASTEXITCODE."
@@ -1223,7 +1319,7 @@ exit `$LASTEXITCODE
         }
         $startupRegistrationChanged = $true
         $trayStartupCommand = "`"$destinationTrayBinary`" --background"
-        New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $trayStartupCommand -PropertyType String -Force | Out-Null
+        Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $trayStartupCommand
         $trayStartupRegistrationChanged = $true
         Wait-AgentDockHealth -HealthPort $Port
 
@@ -1422,7 +1518,7 @@ exit `$process.ExitCode
             [IO.File]::WriteAllText($cloudflaredStderrLogPath, '', $Utf8NoBom)
 
             $cloudflaredStartupCommand = "`"$destinationTrayBinary`" --start-tunnel --runtime-root `"$runtimeDir`""
-            New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName -Value $cloudflaredStartupCommand -PropertyType String -Force | Out-Null
+            Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $cloudflaredStartupCommand
             $tunnelStartupRegistrationChanged = $true
             & $destinationBinary tunnel start --runtime-root $runtimeDir
             if ($LASTEXITCODE -ne 0) {
@@ -1612,19 +1708,18 @@ exit `$process.ExitCode
                 Restore-FileState -Path $item.Path -Name $item.Name -BackupDirectory $runtimeBackupDir
             }
 
-            New-Item -Path $runKey -Force | Out-Null
             if ($null -ne $previousRunValue) {
-                New-ItemProperty -Path $runKey -Name $runValueName -Value $previousRunValue -PropertyType String -Force | Out-Null
+                Set-RunValue -RegistryPath $runKey -Name $runValueName -Value $previousRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $runValueName -ErrorAction SilentlyContinue
             }
             if ($null -ne $previousTrayRunValue) {
-                New-ItemProperty -Path $runKey -Name $trayRunValueName -Value $previousTrayRunValue -PropertyType String -Force | Out-Null
+                Set-RunValue -RegistryPath $runKey -Name $trayRunValueName -Value $previousTrayRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $trayRunValueName -ErrorAction SilentlyContinue
             }
             if ($null -ne $previousTunnelRunValue) {
-                New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName -Value $previousTunnelRunValue -PropertyType String -Force | Out-Null
+                Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName -Value $previousTunnelRunValue
             } else {
                 Remove-ItemProperty -LiteralPath $runKey -Name $cloudflaredRunValueName -ErrorAction SilentlyContinue
             }
@@ -1668,7 +1763,8 @@ exit `$process.ExitCode
         -OAuthLoginPassword '' `
         -HealthStatus 'failed' `
         -PrivilegeMode $effectivePrivilegeMode `
-        -ErrorCode $installErrorCode
+        -ErrorCode $installErrorCode `
+        -ErrorRecord $installError
     throw $installError
 } finally {
     if ($DeleteTunnelTokenFile -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {

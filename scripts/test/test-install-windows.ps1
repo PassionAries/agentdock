@@ -85,6 +85,10 @@ if ($content.Contains('current account cannot elevate')) {
     throw "$InstallerPath must request UAC for old scheduled-task cleanup instead of rejecting a standard user early"
 }
 
+if ($content.Contains('Get-FileHash')) {
+    throw "$InstallerPath must compute runtime SHA-256 without depending on Get-FileHash"
+}
+
 foreach ($required in @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     'Get-AgentDockTaskState',
@@ -105,8 +109,11 @@ foreach ($required in @(
     'Administrator approval for AgentDock rollback was not completed',
     'setup-elevated-context',
     'Start Setup normally under the signed-in account',
-    'New-ItemProperty -Path $runKey -Name $runValueName',
-    'New-ItemProperty -Path $runKey -Name $cloudflaredRunValueName',
+    'function Set-RunValue',
+    'Unable to prepare current-user startup registry key',
+    'Unable to write current-user startup registry value',
+    'Set-RunValue -RegistryPath $runKey -Name $runValueName',
+    'Set-RunValue -RegistryPath $runKey -Name $cloudflaredRunValueName',
     'Start-AgentDockLauncher -LauncherPath $launcherPath',
     'Start-CloudflaredLauncher -LauncherPath $cloudflaredLauncherPath',
     'Release archive does not contain manage-windows.ps1',
@@ -128,12 +135,223 @@ foreach ($required in @(
     'Authentication: Bearer Token and OAuth are both enabled.',
     '$coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)',
     '-ErrorCode $installErrorCode',
+    '-ErrorRecord $installError',
+    'Get-Sha256Hex -Path $archivePath',
+    'ErrorType=$safeErrorType',
+    'ErrorStack=$safeErrorStack',
     "GetEnvironmentVariable('AGENTDOCK_RELEASE_BASE_URL')"
 )) {
     if (-not $content.Contains($required)) {
         throw "$InstallerPath is missing current-user startup logic: $required"
     }
 }
+foreach ($forbidden in @(
+    'New-Item -Path $runKey -Force',
+    'New-Item -Path $RegistryPath -Force',
+    'New-ItemProperty -Path $runKey'
+)) {
+    if ($content.Contains($forbidden)) {
+        throw "$InstallerPath must route current-user startup writes through Set-RunValue instead of: $forbidden"
+    }
+}
+$setRunValueCallCount = [regex]::Matches(
+    $content,
+    [regex]::Escape('Set-RunValue -RegistryPath $runKey')
+).Count
+if ($setRunValueCallCount -ne 6) {
+    throw "$InstallerPath must use Set-RunValue for all startup writes in install and rollback paths; got $setRunValueCallCount calls"
+}
+
+$sha256Function = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-Sha256Hex'
+}, $true)
+if ($null -eq $sha256Function) {
+    throw "$InstallerPath does not define Get-Sha256Hex"
+}
+$sha256ProbeAssertions = @'
+$hashPath = [IO.Path]::GetTempFileName()
+try {
+    [IO.File]::WriteAllBytes($hashPath, [Text.Encoding]::ASCII.GetBytes('abc'))
+    $actualHash = Get-Sha256Hex -Path $hashPath
+    $expectedHash = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+    if ($actualHash -ne $expectedHash) {
+        throw "Get-Sha256Hex returned an unexpected digest: $actualHash"
+    }
+} finally {
+    Remove-Item -LiteralPath $hashPath -Force -ErrorAction SilentlyContinue
+}
+'@
+$sha256Probe = [scriptblock]::Create(
+    $sha256Function.Extent.Text + "`r`n" + $sha256ProbeAssertions
+)
+& $sha256Probe
+
+$setRunValueFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Set-RunValue'
+}, $true)
+if ($null -eq $setRunValueFunction) {
+    throw "$InstallerPath does not define Set-RunValue"
+}
+$runValueProbeAssertions = @'
+$testRegistryPath = 'HKCU:\Software\AgentDockInstallerValidation-' + [Guid]::NewGuid().ToString('N')
+try {
+    Set-RunValue -RegistryPath $testRegistryPath -Name 'AgentDockTest' -Value 'first'
+    if (-not (Test-Path -LiteralPath $testRegistryPath)) {
+        throw 'Set-RunValue did not create a missing registry key'
+    }
+    $actualValue = Get-ItemPropertyValue -LiteralPath $testRegistryPath -Name 'AgentDockTest' -ErrorAction Stop
+    if ($actualValue -ne 'first') {
+        throw "Set-RunValue did not write the initial registry value: $actualValue"
+    }
+
+    New-ItemProperty -Path $testRegistryPath -Name 'SiblingValue' -Value 'keep-me' -PropertyType String -Force | Out-Null
+    Set-RunValue -RegistryPath $testRegistryPath -Name 'AgentDockTest' -Value 'second'
+    $actualValue = Get-ItemPropertyValue -LiteralPath $testRegistryPath -Name 'AgentDockTest' -ErrorAction Stop
+    if ($actualValue -ne 'second') {
+        throw "Set-RunValue did not update the existing registry value: $actualValue"
+    }
+    $siblingValue = Get-ItemPropertyValue -LiteralPath $testRegistryPath -Name 'SiblingValue' -ErrorAction Stop
+    if ($siblingValue -ne 'keep-me') {
+        throw "Set-RunValue modified an unrelated registry value: $siblingValue"
+    }
+} finally {
+    Remove-Item -LiteralPath $testRegistryPath -Recurse -Force -ErrorAction SilentlyContinue
+}
+'@
+$runValueProbe = [scriptblock]::Create(
+    $setRunValueFunction.Extent.Text + "`r`n" + $runValueProbeAssertions
+)
+& $runValueProbe
+
+$runValueDiagnosticPreamble = @'
+$script:registryPathExists = $false
+function Test-Path {
+    [CmdletBinding()]
+    param([string] $LiteralPath)
+    return $script:registryPathExists
+}
+function New-Item {
+    [CmdletBinding()]
+    param([string] $Path)
+    throw [System.UnauthorizedAccessException]::new('simulated registry key denial')
+}
+function New-ItemProperty {
+    [CmdletBinding()]
+    param(
+        [string] $Path,
+        [string] $Name,
+        [string] $Value,
+        [string] $PropertyType,
+        [switch] $Force
+    )
+    throw [System.UnauthorizedAccessException]::new('simulated registry value denial')
+}
+'@
+$runValueDiagnosticAssertions = @'
+$probePath = 'HKCU:\Software\AgentDockRegistryDiagnosticProbe'
+$probeName = 'AgentDockTest'
+$prepareError = ''
+try {
+    Set-RunValue -RegistryPath $probePath -Name $probeName -Value 'value'
+} catch {
+    $prepareError = $_.Exception.Message
+}
+if ($prepareError -notlike "*prepare current-user startup registry key*$probePath*$probeName*simulated registry key denial*") {
+    throw "Set-RunValue key-creation failure did not preserve safe registry context: $prepareError"
+}
+
+$script:registryPathExists = $true
+$writeError = ''
+try {
+    Set-RunValue -RegistryPath $probePath -Name $probeName -Value 'value'
+} catch {
+    $writeError = $_.Exception.Message
+}
+if ($writeError -notlike "*write current-user startup registry value*$probeName*$probePath*simulated registry value denial*") {
+    throw "Set-RunValue value-write failure did not preserve safe registry context: $writeError"
+}
+'@
+$runValueDiagnosticProbe = [scriptblock]::Create(
+    $runValueDiagnosticPreamble + "`r`n" +
+    $setRunValueFunction.Extent.Text + "`r`n" +
+    $runValueDiagnosticAssertions
+)
+& $runValueDiagnosticProbe
+
+$installResultValueFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'ConvertTo-InstallResultValue'
+}, $true)
+$installResultFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Write-InstallResult'
+}, $true)
+if ($null -eq $installResultValueFunction -or $null -eq $installResultFunction) {
+    throw "$InstallerPath does not define the install result helpers"
+}
+$installResultProbePreamble = @'
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Invoke-DiagnosticProbe {
+    param([string] $SensitiveValue)
+    throw 'diagnostic probe failure'
+}
+'@
+$installResultProbeAssertions = @'
+$resultPath = Join-Path ([IO.Path]::GetTempPath()) ("agentdock-install-result-test-" + [Guid]::NewGuid().ToString('N') + '.ini')
+$diagnosticSecret = 'agentdock-diagnostic-secret-value'
+try {
+    try {
+        Invoke-DiagnosticProbe -SensitiveValue $diagnosticSecret
+    } catch {
+        $probeError = $_
+    }
+    Write-InstallResult `
+        -Path $resultPath `
+        -Success $false `
+        -Message $probeError.Exception.Message `
+        -InstalledVersion '0.0.0' `
+        -LocalMCPUrl '' `
+        -PublicMCPUrl '' `
+        -BearerToken '' `
+        -OAuthLoginPassword '' `
+        -HealthStatus 'failed' `
+        -PrivilegeMode 'standard' `
+        -ErrorRecord $probeError
+    $resultText = [IO.File]::ReadAllText($resultPath, [Text.Encoding]::Unicode)
+    foreach ($requiredField in @('ErrorType=', 'ErrorId=', 'ErrorCategory=', 'ErrorLine=', 'ErrorColumn=', 'ErrorStack=')) {
+        if (-not $resultText.Contains($requiredField)) {
+            throw "Install result is missing diagnostic field: $requiredField"
+        }
+    }
+    if ($resultText -notmatch 'ErrorType=.+') {
+        throw 'Install result did not capture the PowerShell exception type'
+    }
+    if ($resultText -notmatch 'ErrorLine=[1-9][0-9]*') {
+        throw 'Install result did not capture the PowerShell script line'
+    }
+    if ($resultText -notmatch 'ErrorStack=.+Invoke-DiagnosticProbe') {
+        throw 'Install result did not capture a useful PowerShell script stack'
+    }
+    if ($resultText.Contains($diagnosticSecret)) {
+        throw 'Install result diagnostics must not include sensitive argument values'
+    }
+} finally {
+    Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
+}
+'@
+$installResultProbe = [scriptblock]::Create(
+    $installResultProbePreamble + "`r`n" +
+    $installResultValueFunction.Extent.Text + "`r`n" +
+    $installResultFunction.Extent.Text + "`r`n" +
+    $installResultProbeAssertions
+)
+& $installResultProbe
 
 $currentTaskUserFunction = $installerAst.Find({
     param($node)
@@ -286,6 +504,11 @@ $setupCode = Get-Content -LiteralPath $setupCodePath -Raw
 $setupMessages = Get-Content -LiteralPath $setupMessagesPath -Raw
 foreach ($required in @(
     "GetIniString('AgentDock', 'WarningCode', '', ResultFilePath)",
+    "GetIniString('AgentDock', 'ErrorType', '', ResultFilePath)",
+    "GetIniString('AgentDock', 'ErrorLine', '', ResultFilePath)",
+    "GetIniString('AgentDock', 'ErrorStack', '', ResultFilePath)",
+    "Log('AgentDock installation diagnostics: type=' + ErrorType",
+    "Log('AgentDock installation stack: ' + ErrorStack)",
     "InstallWarningCode = 'elevated-mode-fallback'",
     "GetLocalizedMessage('ElevatedModeFallbackNotice')"
 )) {

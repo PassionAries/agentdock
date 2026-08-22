@@ -42,6 +42,7 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+SetupLogging=yes
 UsePreviousAppDir=yes
 UsePreviousLanguage=no
 LanguageDetectionMethod=uilanguage
