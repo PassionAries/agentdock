@@ -870,6 +870,7 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 	setup := setupBuilder.String()
 	for _, want := range []string{
 		"PrivilegesRequired=lowest",
+		"SetupLogging=yes",
 		"#include \"includes\\messages.iss\"",
 		"#include \"includes\\code.iss\"",
 		"DisableDirPage=yes",
