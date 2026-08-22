@@ -907,7 +907,7 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"ExpandConstant('{log}')",
 		"{localappdata}\\AgentDock\\logs\\installer",
 		"GetDateTimeString('yyyymmdd-hhnnss-zzz'",
-		"FileCopy(SourceLog, PersistentLog, True)",
+		"CopyFile(SourceLog, PersistentLog, True)",
 		"original log remains at: ",
 		"DeinitializeSetup",
 		"function InitializeUninstall(): Boolean",

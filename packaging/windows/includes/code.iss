@@ -592,7 +592,7 @@ begin
   PersistentLog := AddBackslash(LogDirectory) + 'setup-' +
     GetDateTimeString('yyyymmdd-hhnnss-zzz', '-', ':') + '.log';
   Log('AgentDock installer log target: ' + PersistentLog);
-  if not FileCopy(SourceLog, PersistentLog, True) then
+  if not CopyFile(SourceLog, PersistentLog, True) then
     Log('AgentDock: could not persist installer log; original log remains at: ' + SourceLog);
 end;
 
