@@ -571,8 +571,34 @@ begin
   Log('AgentDock: managed cleanup completed successfully.');
 end;
 
+// Inno 保留 TEMP 原生日志；这里额外复制到固定目录，方便用户长期查找和反馈安装问题。
+procedure PersistSetupLog();
+var
+  SourceLog: String;
+  LogDirectory: String;
+  PersistentLog: String;
+begin
+  SourceLog := ExpandConstant('{log}');
+  if (SourceLog = '') or (not FileExists(SourceLog)) then
+    Exit;
+
+  LogDirectory := ExpandConstant('{localappdata}\AgentDock\logs\installer');
+  if not ForceDirectories(LogDirectory) then
+  begin
+    Log('AgentDock: could not create persistent installer log directory: ' + LogDirectory);
+    Exit;
+  end;
+
+  PersistentLog := AddBackslash(LogDirectory) + 'setup-' +
+    GetDateTimeString('yyyymmdd-hhnnss-zzz', '-', ':') + '.log';
+  Log('AgentDock installer log target: ' + PersistentLog);
+  if not FileCopy(SourceLog, PersistentLog, True) then
+    Log('AgentDock: could not persist installer log; original log remains at: ' + SourceLog);
+end;
+
 procedure DeinitializeSetup();
 begin
+  PersistSetupLog();
   if ResultFilePath <> '' then
     DeleteFile(ResultFilePath);
   if TemporaryTokenFilePath <> '' then
