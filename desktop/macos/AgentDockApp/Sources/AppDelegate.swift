@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pendingUpdateResult = DesktopUpdateResult.load(from: service.paths.updateResult)
         let updateResultExists = FileManager.default.fileExists(atPath: service.paths.updateResult.path)
         configureStatusItem()
-        registerLoginItemIfNeeded()
         if let pendingUpdateResult {
             restoreBackgroundServicesAfterUpdate(pendingUpdateResult)
         } else if updateResultExists {
@@ -30,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             refreshStatus(showWindow: !launchedInBackground)
         } else {
             // 没有 pending result 时，更新协调文件只能是上一次已结束流程留下的临时状态。
+            configureMenuLoginAgentIfNeeded()
             DesktopUpdateServiceState.remove(at: service.paths.updateServiceState)
             DesktopUpdateHandoff.remove(at: service.paths.updateHandoff)
             refreshStatus(showWindow: !launchedInBackground)
@@ -91,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     warnings.append("Tunnel 未能按当前公网模式恢复：\(error.localizedDescription)")
                     NSLog("AgentDock 更新后 Tunnel 状态收敛失败：%@", error.localizedDescription)
                 }
+                if pendingResult.ok, let menuLoginWarning = await restoreMenuLoginAgentAfterUpdateCommit() {
+                    warnings.append(menuLoginWarning)
+                }
                 self.presentUpdateResult(result, warning: warnings.isEmpty ? nil : warnings.joined(separator: "\n"))
             } catch {
                 NSLog("AgentDock 更新后后台服务恢复失败：%@", error.localizedDescription)
@@ -109,15 +112,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func registerLoginItemIfNeeded() {
+    private func restoreMenuLoginAgentAfterUpdateCommit() async -> String? {
+        let fileManager = FileManager.default
+        let deadline = Date().addingTimeInterval(10)
+        while fileManager.fileExists(atPath: service.paths.updateHandoff.path), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard !fileManager.fileExists(atPath: service.paths.updateHandoff.path) else {
+            let message = "菜单栏登录启动将在下次启动时重新收敛：更新事务尚未完成。"
+            NSLog("AgentDock 更新后菜单栏登录启动延后恢复：更新事务尚未完成。")
+            return message
+        }
+
+        do {
+            try menuLoginAgent.restoreAfterUpdate()
+            return nil
+        } catch {
+            NSLog("AgentDock 更新后菜单栏登录启动恢复失败：%@", error.localizedDescription)
+            return "菜单栏登录启动未能恢复：\(error.localizedDescription)"
+        }
+    }
+
+    private func configureMenuLoginAgentIfNeeded() {
         if ProcessInfo.processInfo.environment["AGENTDOCK_SKIP_LOGIN_ITEM_CONFIGURATION"] == "1" {
             return
         }
         do {
             try menuLoginAgent.configureOnLaunch()
         } catch {
-            // 菜单栏登录项失败不影响 Core 后台服务；用户仍可手动打开 AgentDock。
-            NSLog("AgentDock 菜单栏登录项注册失败：%@", error.localizedDescription)
+            // 菜单栏登录启动失败不影响 Core 后台服务；用户仍可手动打开 AgentDock。
+            NSLog("AgentDock 菜单栏登录启动配置失败：%@", error.localizedDescription)
         }
     }
 

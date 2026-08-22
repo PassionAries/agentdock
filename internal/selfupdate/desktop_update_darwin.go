@@ -202,15 +202,40 @@ func validateMacOSDesktopRuntime(ctx context.Context, appPath, targetVersion str
 	}
 	core := filepath.Join(appPath, "Contents", "Helpers", "agentdock")
 	cloudflared := filepath.Join(appPath, "Contents", "Helpers", "cloudflared")
+	menuHelper := filepath.Join(appPath, "Contents", "Helpers", "AgentDockLoginHelper")
+	menuAgent := filepath.Join(appPath, "Contents", "Library", "LaunchAgents", "com.uvwt.agentdock.menu-login.plist")
 	skillManifest := filepath.Join(appPath, "Contents", "Resources", "core-skills", "manifest.json")
-	for _, path := range []string{core, cloudflared, skillManifest} {
+	for _, path := range []string{core, cloudflared, menuHelper, menuAgent, skillManifest} {
 		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("macOS App 缺少有效运行组件: %s", path)
 		}
 	}
-	if !executableRegularFile(core) || !executableRegularFile(cloudflared) {
-		return errors.New("macOS App 内置 Core 或 cloudflared 不可执行")
+	if !executableRegularFile(core) || !executableRegularFile(cloudflared) || !executableRegularFile(menuHelper) {
+		return errors.New("macOS App 内置 Core、cloudflared 或菜单栏登录组件不可执行")
+	}
+	for _, expected := range []struct {
+		key   string
+		value string
+	}{
+		{key: "Label", value: "com.uvwt.agentdock.menu-login"},
+		{key: "BundleProgram", value: "Contents/Helpers/AgentDockLoginHelper"},
+		{key: "ProgramArguments.0", value: "AgentDockLoginHelper"},
+		{key: "RunAtLoad", value: "true"},
+		{key: "LimitLoadToSessionType", value: "Aqua"},
+	} {
+		value, err := plistValue(ctx, menuAgent, expected.key)
+		if err != nil || value != expected.value {
+			return fmt.Errorf("macOS App 菜单栏登录服务 %s 无效", expected.key)
+		}
+	}
+	if _, err := plistValue(ctx, menuAgent, "ProgramArguments.1"); err == nil {
+		return errors.New("macOS App 菜单栏登录服务 ProgramArguments 只能包含 AgentDockLoginHelper")
+	}
+	for _, forbiddenKey := range []string{"KeepAlive", "ProcessType"} {
+		if _, err := plistValue(ctx, menuAgent, forbiddenKey); err == nil {
+			return fmt.Errorf("macOS App 菜单栏登录服务不应包含 %s", forbiddenKey)
+		}
 	}
 	if err := verifyBinaryVersion(ctx, core, targetVersion); err != nil {
 		return fmt.Errorf("macOS App 内置 Core 版本不匹配: %w", err)

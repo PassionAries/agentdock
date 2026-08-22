@@ -2,7 +2,8 @@ import Foundation
 import ServiceManagement
 
 final class MenuLoginAgentController {
-    private let helperIdentifier = "com.uvwt.agentdock.login-helper"
+    private let menuAgentPlistName = "com.uvwt.agentdock.menu-login.plist"
+    private let legacyHelperIdentifier = "com.uvwt.agentdock.login-helper"
     private let preferenceKey = "menuLoginEnabled"
     private let preferenceInitializedKey = "menuLoginPreferenceInitialized"
     private let defaults: UserDefaults
@@ -11,29 +12,47 @@ final class MenuLoginAgentController {
         self.defaults = defaults
     }
 
-    private var loginItem: SMAppService {
-        SMAppService.loginItem(identifier: helperIdentifier)
+    private var menuAgent: SMAppService {
+        SMAppService.agent(plistName: menuAgentPlistName)
     }
 
     func configureOnLaunch() throws {
         guard !isRunningFromTransientVolume else { return }
-        let obsoleteMainApp = SMAppService.mainApp
-        if obsoleteMainApp.status == .enabled || obsoleteMainApp.status == .requiresApproval {
-            try? obsoleteMainApp.unregister()
-        }
-        if !defaults.bool(forKey: preferenceInitializedKey) {
-            defaults.set(true, forKey: preferenceInitializedKey)
-            defaults.set(true, forKey: preferenceKey)
-        }
+        initializePreferenceIfNeeded()
         if defaults.bool(forKey: preferenceKey) {
             try register()
         } else {
             try unregister()
         }
+        migrateLegacyRegistrationsIfSafe()
+    }
+
+    func restoreAfterUpdate() throws {
+        guard !isRunningFromTransientVolume else { return }
+        initializePreferenceIfNeeded()
+        guard defaults.bool(forKey: preferenceKey) else {
+            try unregister()
+            migrateLegacyRegistrationsIfSafe()
+            return
+        }
+
+        try validateBundledAgent()
+        switch menuAgent.status {
+        case .enabled:
+            try menuAgent.unregister()
+            try menuAgent.register()
+        case .requiresApproval:
+            break
+        case .notFound, .notRegistered:
+            try menuAgent.register()
+        @unknown default:
+            try menuAgent.register()
+        }
+        migrateLegacyRegistrationsIfSafe()
     }
 
     var isEnabled: Bool {
-        loginItem.status == .enabled || loginItem.status == .requiresApproval
+        menuAgent.status == .enabled || menuAgent.status == .requiresApproval
     }
 
     func setEnabled(_ enabled: Bool) throws {
@@ -44,27 +63,68 @@ final class MenuLoginAgentController {
         }
         defaults.set(true, forKey: preferenceInitializedKey)
         defaults.set(enabled, forKey: preferenceKey)
+        migrateLegacyRegistrationsIfSafe()
     }
 
     func register() throws {
         guard !isRunningFromTransientVolume else {
             throw ValidationError("请先把 AgentDock 拖到“应用程序”文件夹，再启用登录启动。")
         }
-        switch loginItem.status {
+        try validateBundledAgent()
+        switch menuAgent.status {
         case .enabled, .requiresApproval:
             return
-        case .notFound:
-            throw ValidationError("应用包缺少标准菜单栏登录项。")
-        case .notRegistered:
-            try loginItem.register()
+        case .notFound, .notRegistered:
+            try menuAgent.register()
         @unknown default:
-            try loginItem.register()
+            try menuAgent.register()
         }
     }
 
     func unregister() throws {
-        if loginItem.status == .enabled || loginItem.status == .requiresApproval {
-            try loginItem.unregister()
+        if menuAgent.status == .enabled || menuAgent.status == .requiresApproval {
+            try menuAgent.unregister()
+        }
+    }
+
+    private func initializePreferenceIfNeeded() {
+        guard !defaults.bool(forKey: preferenceInitializedKey) else { return }
+        defaults.set(true, forKey: preferenceInitializedKey)
+        defaults.set(true, forKey: preferenceKey)
+    }
+
+    private func migrateLegacyRegistrationsIfSafe() {
+        // 用户希望保留登录启动时，只有新 agent 已真正启用才清理旧注册。
+        // 若系统仍要求批准，先保留旧登录项，避免迁移过程中出现自动启动空窗。
+        if defaults.bool(forKey: preferenceKey), menuAgent.status != .enabled {
+            return
+        }
+
+        let obsoleteMainApp = SMAppService.mainApp
+        if obsoleteMainApp.status == .enabled || obsoleteMainApp.status == .requiresApproval {
+            try? obsoleteMainApp.unregister()
+        }
+
+        let legacyLoginItem = SMAppService.loginItem(identifier: legacyHelperIdentifier)
+        if legacyLoginItem.status == .enabled || legacyLoginItem.status == .requiresApproval {
+            try? legacyLoginItem.unregister()
+        }
+    }
+
+    private func validateBundledAgent() throws {
+        let appBundle = Bundle.main.bundleURL
+        let plist = appBundle.appendingPathComponent("Contents/Library/LaunchAgents/\(menuAgentPlistName)")
+        let helper = appBundle.appendingPathComponent("Contents/Helpers/AgentDockLoginHelper")
+        let fileManager = FileManager.default
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: plist.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            throw ValidationError("AgentDock 应用包缺少菜单栏登录服务定义。")
+        }
+        guard fileManager.fileExists(atPath: helper.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue,
+              fileManager.isExecutableFile(atPath: helper.path) else {
+            throw ValidationError("AgentDock 应用包缺少可执行的菜单栏登录组件。")
         }
     }
 

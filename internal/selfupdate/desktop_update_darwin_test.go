@@ -42,6 +42,57 @@ func TestExtractDesktopUpdateArchiveValidatesSignedApp(t *testing.T) {
 	}
 }
 
+func TestValidateMacOSDesktopRuntimeRejectsUnsafeMenuAgent(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(t *testing.T, plistPath string)
+		wantError string
+	}{
+		{
+			name: "program arguments",
+			mutate: func(t *testing.T, plistPath string) {
+				runTestCommand(t, "/usr/bin/plutil", "-replace", "ProgramArguments.0", "-string", "wrong-helper", plistPath)
+			},
+			wantError: "ProgramArguments.0 无效",
+		},
+		{
+			name: "extra program argument",
+			mutate: func(t *testing.T, plistPath string) {
+				runTestCommand(t, "/usr/bin/plutil", "-insert", "ProgramArguments.1", "-string", "--unexpected", plistPath)
+			},
+			wantError: "ProgramArguments 只能包含 AgentDockLoginHelper",
+		},
+		{
+			name: "keep alive",
+			mutate: func(t *testing.T, plistPath string) {
+				runTestCommand(t, "/usr/bin/plutil", "-insert", "KeepAlive", "-bool", "YES", plistPath)
+			},
+			wantError: "不应包含 KeepAlive",
+		},
+		{
+			name: "process type",
+			mutate: func(t *testing.T, plistPath string) {
+				runTestCommand(t, "/usr/bin/plutil", "-insert", "ProcessType", "-string", "Background", plistPath)
+			},
+			wantError: "不应包含 ProcessType",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			appPath := writeSignedMacOSApp(t, t.TempDir(), "0.7.1")
+			plistPath := filepath.Join(appPath, "Contents", "Library", "LaunchAgents", "com.uvwt.agentdock.menu-login.plist")
+			test.mutate(t, plistPath)
+			runTestCommand(t, "/usr/bin/codesign", "--force", "--deep", "--sign", "-", "--identifier", "com.uvwt.agentdock", appPath)
+
+			err := validateMacOSDesktopRuntime(context.Background(), appPath, "v0.7.1")
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("expected error containing %q, got %v", test.wantError, err)
+			}
+		})
+	}
+}
+
 func TestMacOSDesktopUpdateInstallsAndRestoresApp(t *testing.T) {
 	dir := t.TempDir()
 	target := writeSignedMacOSApp(t, filepath.Join(dir, "installed"), "0.7.0")
@@ -220,8 +271,9 @@ func writeSignedMacOSApp(t *testing.T, root, version string) string {
 	contents := filepath.Join(appPath, "Contents")
 	macOSDir := filepath.Join(contents, "MacOS")
 	helpersDir := filepath.Join(contents, "Helpers")
+	launchAgentsDir := filepath.Join(contents, "Library", "LaunchAgents")
 	skillsDir := filepath.Join(contents, "Resources", "core-skills")
-	for _, dir := range []string{macOSDir, helpersDir, skillsDir} {
+	for _, dir := range []string{macOSDir, helpersDir, launchAgentsDir, skillsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -247,6 +299,22 @@ func writeSignedMacOSApp(t *testing.T, root, version string) string {
 	if err := os.WriteFile(filepath.Join(helpersDir, "cloudflared"), cloudflaredBinary, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(helpersDir, "AgentDockLoginHelper"), cloudflaredBinary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	menuAgentPlist := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.uvwt.agentdock.menu-login</string>
+<key>BundleProgram</key><string>Contents/Helpers/AgentDockLoginHelper</string>
+<key>ProgramArguments</key><array><string>AgentDockLoginHelper</string></array>
+<key>RunAtLoad</key><true/>
+<key>LimitLoadToSessionType</key><string>Aqua</string>
+</dict></plist>
+`
+	if err := os.WriteFile(filepath.Join(launchAgentsDir, "com.uvwt.agentdock.menu-login.plist"), []byte(menuAgentPlist), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(skillsDir, "manifest.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +332,7 @@ func writeSignedMacOSApp(t *testing.T, root, version string) string {
 	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(plist), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	runTestCommand(t, "/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "com.uvwt.agentdock.login-helper", filepath.Join(helpersDir, "AgentDockLoginHelper"))
 	runTestCommand(t, "/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "com.uvwt.agentdock.core", filepath.Join(helpersDir, "agentdock"))
 	runTestCommand(t, "/usr/bin/codesign", "--force", "--sign", "-", "--identifier", "com.uvwt.agentdock.cloudflared", filepath.Join(helpersDir, "cloudflared"))
 	runTestCommand(t, "/usr/bin/codesign", "--force", "--deep", "--sign", "-", "--identifier", "com.uvwt.agentdock", appPath)

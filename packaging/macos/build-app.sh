@@ -105,10 +105,8 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
 LAUNCH_AGENTS_DIR="$CONTENTS_DIR/Library/LaunchAgents"
-LOGIN_ITEM_APP="$CONTENTS_DIR/Library/LoginItems/AgentDockLoginHelper.app"
-LOGIN_ITEM_CONTENTS="$LOGIN_ITEM_APP/Contents"
-LOGIN_ITEM_MACOS="$LOGIN_ITEM_CONTENTS/MacOS"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPERS_DIR" "$LAUNCH_AGENTS_DIR" "$LOGIN_ITEM_MACOS"
+MENU_LOGIN_HELPER="$HELPERS_DIR/AgentDockLoginHelper"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$HELPERS_DIR" "$LAUNCH_AGENTS_DIR"
 
 if (( ${#compiled_binaries[@]} == 1 )); then
   cp -p "$compiled_binaries[1]" "$MACOS_DIR/AgentDock"
@@ -118,39 +116,11 @@ fi
 chmod 0755 "$MACOS_DIR/AgentDock"
 
 if (( ${#login_helper_binaries[@]} == 1 )); then
-  cp -p "$login_helper_binaries[1]" "$LOGIN_ITEM_MACOS/AgentDockLoginHelper"
+  cp -p "$login_helper_binaries[1]" "$MENU_LOGIN_HELPER"
 else
-  lipo -create "${login_helper_binaries[@]}" -output "$LOGIN_ITEM_MACOS/AgentDockLoginHelper"
+  lipo -create "${login_helper_binaries[@]}" -output "$MENU_LOGIN_HELPER"
 fi
-chmod 0755 "$LOGIN_ITEM_MACOS/AgentDockLoginHelper"
-
-cat > "$LOGIN_ITEM_CONTENTS/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>AgentDockLoginHelper</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.uvwt.agentdock.login-helper</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>AgentDockLoginHelper</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>$VERSION</string>
-  <key>CFBundleVersion</key>
-  <string>$VERSION</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>$MIN_VERSION</string>
-  <key>LSUIElement</key>
-  <true/>
-</dict>
-</plist>
-PLIST
-plutil -lint "$LOGIN_ITEM_CONTENTS/Info.plist" >/dev/null
+chmod 0755 "$MENU_LOGIN_HELPER"
 
 ICONSET_DIR="$TMP_DIR/AgentDock.iconset"
 mkdir -p "$ICONSET_DIR"
@@ -291,8 +261,30 @@ cat > "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.tunnel.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+cat > "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.menu-login.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.uvwt.agentdock.menu-login</string>
+  <key>BundleProgram</key>
+  <string>Contents/Helpers/AgentDockLoginHelper</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>AgentDockLoginHelper</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+</dict>
+</plist>
+PLIST
 plutil -lint "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.core.plist" >/dev/null
 plutil -lint "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.tunnel.plist" >/dev/null
+plutil -lint "$LAUNCH_AGENTS_DIR/com.uvwt.agentdock.menu-login.plist" >/dev/null
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -335,7 +327,7 @@ PLIST
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 
 print -- "==> ad-hoc 签名 AgentDock.app"
-codesign --force --sign - --identifier "com.uvwt.agentdock.login-helper" "$LOGIN_ITEM_APP"
+codesign --force --sign - --identifier "com.uvwt.agentdock.login-helper" "$MENU_LOGIN_HELPER"
 codesign --force --sign - --identifier "com.uvwt.agentdock.core" "$HELPERS_DIR/agentdock"
 codesign --force --sign - --identifier "com.uvwt.agentdock.cloudflared" "$HELPERS_DIR/cloudflared"
 # 嵌套代码先分别签名，再签外层 App。不要用 --deep 做签名操作，否则会重新签

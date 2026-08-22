@@ -116,11 +116,9 @@ APP="$TMP_ROOT/output/AgentDock.app"
 DMG="$TMP_ROOT/output/AgentDock-macos-universal.dmg"
 ZIP="$TMP_ROOT/output/AgentDock-macos-universal.zip"
 test -x "$APP/Contents/MacOS/AgentDock"
-LOGIN_HELPER_APP="$APP/Contents/Library/LoginItems/AgentDockLoginHelper.app"
-test -x "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper"
-plutil -lint "$LOGIN_HELPER_APP/Contents/Info.plist" >/dev/null
-test "$(plutil -extract CFBundleIdentifier raw -o - "$LOGIN_HELPER_APP/Contents/Info.plist")" = \
-  "com.uvwt.agentdock.login-helper"
+MENU_LOGIN_HELPER="$APP/Contents/Helpers/AgentDockLoginHelper"
+test -x "$MENU_LOGIN_HELPER"
+test ! -e "$APP/Contents/Library/LoginItems"
 test ! -e "$APP/Contents/Resources/install-macos-platform.sh"
 test ! -e "$APP/Contents/Resources/install-browser-runner-macos.sh"
 test ! -e "$APP/Contents/Resources/browser-runner"
@@ -130,27 +128,41 @@ CORE_HELPER="$APP/Contents/Helpers/agentdock"
 CLOUDFLARED_HELPER="$APP/Contents/Helpers/cloudflared"
 CORE_AGENT_PLIST="$APP/Contents/Library/LaunchAgents/com.uvwt.agentdock.core.plist"
 TUNNEL_AGENT_PLIST="$APP/Contents/Library/LaunchAgents/com.uvwt.agentdock.tunnel.plist"
+MENU_AGENT_PLIST="$APP/Contents/Library/LaunchAgents/com.uvwt.agentdock.menu-login.plist"
 test -x "$CORE_HELPER"
 test -x "$CLOUDFLARED_HELPER"
 test -f "$APP/Contents/Resources/core-skills/manifest.json"
 test -f "$CORE_AGENT_PLIST"
 test -f "$TUNNEL_AGENT_PLIST"
+test -f "$MENU_AGENT_PLIST"
 plutil -lint "$CORE_AGENT_PLIST" >/dev/null
 plutil -lint "$TUNNEL_AGENT_PLIST" >/dev/null
+plutil -lint "$MENU_AGENT_PLIST" >/dev/null
 test "$(plutil -extract Label raw -o - "$CORE_AGENT_PLIST")" = "com.uvwt.agentdock.core"
 test "$(plutil -extract BundleProgram raw -o - "$CORE_AGENT_PLIST")" = "Contents/Helpers/agentdock"
 test "$(plutil -extract Label raw -o - "$TUNNEL_AGENT_PLIST")" = "com.uvwt.agentdock.tunnel"
 test "$(plutil -extract BundleProgram raw -o - "$TUNNEL_AGENT_PLIST")" = "Contents/Helpers/agentdock"
-! grep -Eq '/Users/|\.local/bin|Library/LaunchAgents' "$CORE_AGENT_PLIST" "$TUNNEL_AGENT_PLIST"
+test "$(plutil -extract Label raw -o - "$MENU_AGENT_PLIST")" = "com.uvwt.agentdock.menu-login"
+test "$(plutil -extract BundleProgram raw -o - "$MENU_AGENT_PLIST")" = "Contents/Helpers/AgentDockLoginHelper"
+test "$(plutil -extract ProgramArguments.0 raw -o - "$MENU_AGENT_PLIST")" = "AgentDockLoginHelper"
+! plutil -extract ProgramArguments.1 raw -o - "$MENU_AGENT_PLIST" >/dev/null 2>&1
+test "$(plutil -extract RunAtLoad raw -o - "$MENU_AGENT_PLIST")" = "true"
+test "$(plutil -extract LimitLoadToSessionType raw -o - "$MENU_AGENT_PLIST")" = "Aqua"
+! plutil -extract KeepAlive raw -o - "$MENU_AGENT_PLIST" >/dev/null 2>&1
+! plutil -extract ProcessType raw -o - "$MENU_AGENT_PLIST" >/dev/null 2>&1
+! grep -Eq '/Users/|\.local/bin|Library/LaunchAgents' "$CORE_AGENT_PLIST" "$TUNNEL_AGENT_PLIST" "$MENU_AGENT_PLIST"
 # pipefail 下不要用 grep -q 提前关闭命令输出，避免上游偶发 SIGPIPE(141)。
 core_helper_version="$("$CORE_HELPER" --version)"
 [[ "$core_helper_version" == "AgentDock v"* ]]
 cloudflared_helper_version="$("$CLOUDFLARED_HELPER" --version)"
 [[ "$cloudflared_helper_version" == "cloudflared version test"* ]]
+codesign --verify --strict --verbose=2 "$MENU_LOGIN_HELPER"
 codesign --verify --strict --verbose=2 "$CORE_HELPER"
 codesign --verify --strict --verbose=2 "$CLOUDFLARED_HELPER"
+menu_helper_signature="$(codesign -dv --verbose=4 "$MENU_LOGIN_HELPER" 2>&1)"
 core_signature="$(codesign -dv --verbose=4 "$CORE_HELPER" 2>&1)"
 cloudflared_signature="$(codesign -dv --verbose=4 "$CLOUDFLARED_HELPER" 2>&1)"
+grep -q '^Identifier=com.uvwt.agentdock.login-helper$' <<< "$menu_helper_signature"
 grep -q '^Identifier=com.uvwt.agentdock.core$' <<< "$core_signature"
 grep -q '^Identifier=com.uvwt.agentdock.cloudflared$' <<< "$cloudflared_signature"
 test -f "$DMG"
@@ -176,9 +188,8 @@ ditto -x -k "$ZIP" "$zip_extract"
 test -d "$zip_extract/AgentDock.app"
 codesign --verify --deep --strict --verbose=2 "$zip_extract/AgentDock.app"
 cmp "$APP/Contents/MacOS/AgentDock" "$zip_extract/AgentDock.app/Contents/MacOS/AgentDock"
-cmp \
-  "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper" \
-  "$zip_extract/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
+cmp "$MENU_LOGIN_HELPER" "$zip_extract/AgentDock.app/Contents/Helpers/AgentDockLoginHelper"
+cmp "$MENU_AGENT_PLIST" "$zip_extract/AgentDock.app/Contents/Library/LaunchAgents/com.uvwt.agentdock.menu-login.plist"
 cmp "$CORE_HELPER" "$zip_extract/AgentDock.app/Contents/Helpers/agentdock"
 cmp "$CLOUDFLARED_HELPER" "$zip_extract/AgentDock.app/Contents/Helpers/cloudflared"
 
@@ -192,9 +203,8 @@ test -L "$MOUNT_POINT/Applications"
 test "$(readlink "$MOUNT_POINT/Applications")" = "/Applications"
 codesign --verify --deep --strict --verbose=2 "$MOUNT_POINT/AgentDock.app"
 cmp "$APP/Contents/MacOS/AgentDock" "$MOUNT_POINT/AgentDock.app/Contents/MacOS/AgentDock"
-cmp \
-  "$LOGIN_HELPER_APP/Contents/MacOS/AgentDockLoginHelper" \
-  "$MOUNT_POINT/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
+cmp "$MENU_LOGIN_HELPER" "$MOUNT_POINT/AgentDock.app/Contents/Helpers/AgentDockLoginHelper"
+cmp "$MENU_AGENT_PLIST" "$MOUNT_POINT/AgentDock.app/Contents/Library/LaunchAgents/com.uvwt.agentdock.menu-login.plist"
 cmp "$CORE_HELPER" "$MOUNT_POINT/AgentDock.app/Contents/Helpers/agentdock"
 cmp "$CLOUDFLARED_HELPER" "$MOUNT_POINT/AgentDock.app/Contents/Helpers/cloudflared"
 cmp \
