@@ -160,7 +160,6 @@
                 <Grid.RowDefinitions>
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="端口" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBox x:Name="PortTextBox" Grid.Column="1" Width="130" HorizontalAlignment="Left" Margin="0,0,0,10" />
@@ -171,11 +170,6 @@
                   <ComboBoxItem Content="warn" />
                   <ComboBoxItem Content="error" />
                 </ComboBox>
-                <TextBlock Text="OAuth Token TTL" Grid.Row="2" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,0,0,10">
-                  <TextBox x:Name="OAuthAccessTokenTtlTextBox" ToolTip="例如 1h、30d、never；留空时继承 AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL，未设置则使用默认 1h" />
-                  <TextBlock Text="支持 1h、30d、never 等格式；留空表示不固定，由环境变量或默认 1h 决定。" Foreground="#667085" Margin="0,4,0,0" TextWrapping="Wrap" />
-                </StackPanel>
               </Grid>
             </GroupBox>
 

@@ -452,7 +452,7 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 	}
 }
 
-func TestWindowsControlPanelPersistsOAuthAccessTokenTTLThroughNativeConfig(t *testing.T) {
+func TestWindowsControlPanelPreservesOAuthAccessTokenTTLWithoutExposingIt(t *testing.T) {
 	files := []string{
 		filepath.Join("..", "..", "desktop", "windows", "control-panel", "Models", "RuntimeModels.cs"),
 		filepath.Join("..", "..", "desktop", "windows", "control-panel", "MainWindow.xaml"),
@@ -471,14 +471,18 @@ func TestWindowsControlPanelPersistsOAuthAccessTokenTTLThroughNativeConfig(t *te
 	}
 	for _, want := range []string{
 		`oauth_access_token_ttl`,
-		`OAuthAccessTokenTtlTextBox`,
-		`OAuthAccessTokenTtl = OAuthAccessTokenTtlTextBox.Text.Trim()`,
+		`OAuthAccessTokenTtl = _snapshot?.Settings.OAuthAccessTokenTtl ?? ""`,
 		`"--oauth-access-token-ttl", settings.OAuthAccessTokenTtl`,
 		`OAuthAccessTokenTTL:     request.OAuthAccessTokenTTL`,
 		`effectiveOAuthAccessTokenTTL(settings.OAuthAccessTokenTTL, inheritedOAuthAccessTokenTTL)`,
 	} {
 		if !strings.Contains(source.String(), want) {
 			t.Fatalf("Windows OAuth TTL persistence chain missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{`OAuthAccessTokenTtlTextBox`, `OAuth Token TTL`} {
+		if strings.Contains(source.String(), forbidden) {
+			t.Fatalf("Windows control panel still exposes OAuth TTL setting %q", forbidden)
 		}
 	}
 }
