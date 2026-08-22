@@ -77,6 +77,23 @@ function Get-CloudflaredReleaseBaseUrl {
     return 'https://github.com/cloudflare/cloudflared/releases/latest/download'
 }
 
+function Get-Sha256Hex {
+    param([string] $Path)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        try {
+            $hash = $sha256.ComputeHash($stream)
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $sha256.Dispose()
+    }
+    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+}
+
 function Add-UserPath {
     param([string] $Directory)
 
@@ -334,6 +351,22 @@ function Write-RuntimeManifest {
     [IO.File]::WriteAllText($Path, ($manifest | ConvertTo-Json -Depth 3), $Utf8NoBom)
 }
 
+function ConvertTo-InstallResultValue {
+    param(
+        [string] $Value,
+        [int] $MaxLength = 0
+    )
+
+    if ([string]::IsNullOrEmpty($Value)) {
+        return ''
+    }
+    $normalized = $Value.Replace("`r", ' ').Replace("`n", ' ')
+    if (($MaxLength -gt 0) -and ($normalized.Length -gt $MaxLength)) {
+        return $normalized.Substring(0, $MaxLength)
+    }
+    return $normalized
+}
+
 function Write-InstallResult {
     param(
         [string] $Path,
@@ -347,6 +380,7 @@ function Write-InstallResult {
         [string] $HealthStatus,
         [string] $PrivilegeMode,
         [string] $ErrorCode = '',
+        [System.Management.Automation.ErrorRecord] $ErrorRecord = $null,
         [string] $WarningCode = '',
         [string] $WarningMessage = ''
     )
@@ -358,13 +392,47 @@ function Write-InstallResult {
     if (-not [string]::IsNullOrWhiteSpace($parent)) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
-    $safeMessage = $Message.Replace("`r", ' ').Replace("`n", ' ')
-    $safeWarningMessage = $WarningMessage.Replace("`r", ' ').Replace("`n", ' ')
+
+    $errorType = ''
+    $errorId = ''
+    $errorCategory = ''
+    $errorScript = ''
+    $errorLine = 0
+    $errorColumn = 0
+    $errorStack = ''
+    if ($null -ne $ErrorRecord) {
+        if ($null -ne $ErrorRecord.Exception) {
+            $errorType = $ErrorRecord.Exception.GetType().FullName
+        }
+        $errorId = [string] $ErrorRecord.FullyQualifiedErrorId
+        $errorCategory = [string] $ErrorRecord.CategoryInfo.Category
+        if ($null -ne $ErrorRecord.InvocationInfo) {
+            $errorScript = [string] $ErrorRecord.InvocationInfo.ScriptName
+            $errorLine = $ErrorRecord.InvocationInfo.ScriptLineNumber
+            $errorColumn = $ErrorRecord.InvocationInfo.OffsetInLine
+        }
+        $errorStack = [string] $ErrorRecord.ScriptStackTrace
+    }
+
+    $safeMessage = ConvertTo-InstallResultValue -Value $Message
+    $safeWarningMessage = ConvertTo-InstallResultValue -Value $WarningMessage
+    $safeErrorType = ConvertTo-InstallResultValue -Value $errorType
+    $safeErrorId = ConvertTo-InstallResultValue -Value $errorId
+    $safeErrorCategory = ConvertTo-InstallResultValue -Value $errorCategory
+    $safeErrorScript = ConvertTo-InstallResultValue -Value $errorScript
+    $safeErrorStack = ConvertTo-InstallResultValue -Value $errorStack -MaxLength 2048
     $lines = @(
         '[AgentDock]',
         "Success=$($Success.ToString().ToLowerInvariant())",
         "Code=$ErrorCode",
         "Message=$safeMessage",
+        "ErrorType=$safeErrorType",
+        "ErrorId=$safeErrorId",
+        "ErrorCategory=$safeErrorCategory",
+        "ErrorScript=$safeErrorScript",
+        "ErrorLine=$errorLine",
+        "ErrorColumn=$errorColumn",
+        "ErrorStack=$safeErrorStack",
         "WarningCode=$WarningCode",
         "WarningMessage=$safeWarningMessage",
         "Version=$InstalledVersion",
@@ -987,7 +1055,7 @@ try {
     }
 
     $expectedHash = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-    $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256Hex -Path $archivePath
     if ($actualHash -ne $expectedHash) {
         throw "SHA-256 mismatch for $assetName. Expected $expectedHash, got $actualHash."
     }
@@ -1668,7 +1736,8 @@ exit `$process.ExitCode
         -OAuthLoginPassword '' `
         -HealthStatus 'failed' `
         -PrivilegeMode $effectivePrivilegeMode `
-        -ErrorCode $installErrorCode
+        -ErrorCode $installErrorCode `
+        -ErrorRecord $installError
     throw $installError
 } finally {
     if ($DeleteTunnelTokenFile -and -not [string]::IsNullOrWhiteSpace($TunnelTokenFile)) {

@@ -85,6 +85,10 @@ if ($content.Contains('current account cannot elevate')) {
     throw "$InstallerPath must request UAC for old scheduled-task cleanup instead of rejecting a standard user early"
 }
 
+if ($content.Contains('Get-FileHash')) {
+    throw "$InstallerPath must compute runtime SHA-256 without depending on Get-FileHash"
+}
+
 foreach ($required in @(
     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
     'Get-AgentDockTaskState',
@@ -128,12 +132,113 @@ foreach ($required in @(
     'Authentication: Bearer Token and OAuth are both enabled.',
     '$coreSkillOutput = @(& $destinationBinary skill bootstrap --bundle $coreSkillBundle 2>&1)',
     '-ErrorCode $installErrorCode',
+    '-ErrorRecord $installError',
+    'Get-Sha256Hex -Path $archivePath',
+    'ErrorType=$safeErrorType',
+    'ErrorStack=$safeErrorStack',
     "GetEnvironmentVariable('AGENTDOCK_RELEASE_BASE_URL')"
 )) {
     if (-not $content.Contains($required)) {
         throw "$InstallerPath is missing current-user startup logic: $required"
     }
 }
+
+$sha256Function = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-Sha256Hex'
+}, $true)
+if ($null -eq $sha256Function) {
+    throw "$InstallerPath does not define Get-Sha256Hex"
+}
+$sha256ProbeAssertions = @'
+$hashPath = [IO.Path]::GetTempFileName()
+try {
+    [IO.File]::WriteAllBytes($hashPath, [Text.Encoding]::ASCII.GetBytes('abc'))
+    $actualHash = Get-Sha256Hex -Path $hashPath
+    $expectedHash = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+    if ($actualHash -ne $expectedHash) {
+        throw "Get-Sha256Hex returned an unexpected digest: $actualHash"
+    }
+} finally {
+    Remove-Item -LiteralPath $hashPath -Force -ErrorAction SilentlyContinue
+}
+'@
+$sha256Probe = [scriptblock]::Create(
+    $sha256Function.Extent.Text + "`r`n" + $sha256ProbeAssertions
+)
+& $sha256Probe
+
+$installResultValueFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'ConvertTo-InstallResultValue'
+}, $true)
+$installResultFunction = $installerAst.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Write-InstallResult'
+}, $true)
+if ($null -eq $installResultValueFunction -or $null -eq $installResultFunction) {
+    throw "$InstallerPath does not define the install result helpers"
+}
+$installResultProbePreamble = @'
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Invoke-DiagnosticProbe {
+    param([string] $SensitiveValue)
+    throw 'diagnostic probe failure'
+}
+'@
+$installResultProbeAssertions = @'
+$resultPath = Join-Path ([IO.Path]::GetTempPath()) ("agentdock-install-result-test-" + [Guid]::NewGuid().ToString('N') + '.ini')
+$diagnosticSecret = 'agentdock-diagnostic-secret-value'
+try {
+    try {
+        Invoke-DiagnosticProbe -SensitiveValue $diagnosticSecret
+    } catch {
+        $probeError = $_
+    }
+    Write-InstallResult `
+        -Path $resultPath `
+        -Success $false `
+        -Message $probeError.Exception.Message `
+        -InstalledVersion '0.0.0' `
+        -LocalMCPUrl '' `
+        -PublicMCPUrl '' `
+        -BearerToken '' `
+        -OAuthLoginPassword '' `
+        -HealthStatus 'failed' `
+        -PrivilegeMode 'standard' `
+        -ErrorRecord $probeError
+    $resultText = [IO.File]::ReadAllText($resultPath, [Text.Encoding]::Unicode)
+    foreach ($requiredField in @('ErrorType=', 'ErrorId=', 'ErrorCategory=', 'ErrorLine=', 'ErrorColumn=', 'ErrorStack=')) {
+        if (-not $resultText.Contains($requiredField)) {
+            throw "Install result is missing diagnostic field: $requiredField"
+        }
+    }
+    if ($resultText -notmatch 'ErrorType=.+') {
+        throw 'Install result did not capture the PowerShell exception type'
+    }
+    if ($resultText -notmatch 'ErrorLine=[1-9][0-9]*') {
+        throw 'Install result did not capture the PowerShell script line'
+    }
+    if ($resultText -notmatch 'ErrorStack=.+Invoke-DiagnosticProbe') {
+        throw 'Install result did not capture a useful PowerShell script stack'
+    }
+    if ($resultText.Contains($diagnosticSecret)) {
+        throw 'Install result diagnostics must not include sensitive argument values'
+    }
+} finally {
+    Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
+}
+'@
+$installResultProbe = [scriptblock]::Create(
+    $installResultProbePreamble + "`r`n" +
+    $installResultValueFunction.Extent.Text + "`r`n" +
+    $installResultFunction.Extent.Text + "`r`n" +
+    $installResultProbeAssertions
+)
+& $installResultProbe
 
 $currentTaskUserFunction = $installerAst.Find({
     param($node)
@@ -286,6 +391,11 @@ $setupCode = Get-Content -LiteralPath $setupCodePath -Raw
 $setupMessages = Get-Content -LiteralPath $setupMessagesPath -Raw
 foreach ($required in @(
     "GetIniString('AgentDock', 'WarningCode', '', ResultFilePath)",
+    "GetIniString('AgentDock', 'ErrorType', '', ResultFilePath)",
+    "GetIniString('AgentDock', 'ErrorLine', '', ResultFilePath)",
+    "GetIniString('AgentDock', 'ErrorStack', '', ResultFilePath)",
+    "Log('AgentDock installation diagnostics: type=' + ErrorType",
+    "Log('AgentDock installation stack: ' + ErrorStack)",
     "InstallWarningCode = 'elevated-mode-fallback'",
     "GetLocalizedMessage('ElevatedModeFallbackNotice')"
 )) {

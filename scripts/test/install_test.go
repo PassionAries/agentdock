@@ -221,7 +221,11 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 		"$destinationBinary version --json",
 		"New-ItemProperty -Path $runKey -Name $trayRunValueName",
 		"cloudflared-windows-$Architecture.exe",
-		"Get-FileHash -LiteralPath $archivePath -Algorithm SHA256",
+		"Get-Sha256Hex -Path $archivePath",
+		"[System.Security.Cryptography.SHA256]::Create()",
+		"-ErrorRecord $installError",
+		"ErrorType=$safeErrorType",
+		"ErrorStack=$safeErrorStack",
 		"Stop-AgentDockForUpgrade -BinaryPath $destinationBinary",
 		"Get-ProcessesByPath -ProcessName 'agentdock'",
 		"Get-CimInstance Win32_Process",
@@ -320,6 +324,9 @@ func TestInstallWindowsUsesChecksumsDPAPIAndCurrentUserStartup(t *testing.T) {
 	}
 	if strings.Contains(script, "--token $TunnelToken") || strings.Contains(script, "--token `$env:TUNNEL_TOKEN") {
 		t.Fatal("cloudflared token must be decrypted into its environment, not placed in process arguments")
+	}
+	if strings.Contains(script, "Get-FileHash") {
+		t.Fatal("install.ps1 must compute runtime SHA-256 without depending on Get-FileHash")
 	}
 	for _, forbidden := range []string{
 		"Set-PrivateAcl",
@@ -888,6 +895,11 @@ func TestWindowsSetupKeepsPublicAccessExplicitAndSecretsOffCommandLine(t *testin
 		"RuntimeUsesElevatedCore",
 		"ElevatedSetupUnsupported",
 		"GetIniString('AgentDock', 'Code'",
+		"GetIniString('AgentDock', 'ErrorType'",
+		"GetIniString('AgentDock', 'ErrorLine'",
+		"GetIniString('AgentDock', 'ErrorStack'",
+		"AgentDock installation diagnostics: type=",
+		"AgentDock installation stack: ",
 		"#ifdef SignedBuild",
 		"SignedUninstaller=yes",
 		"DeinitializeSetup",
