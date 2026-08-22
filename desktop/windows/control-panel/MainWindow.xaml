@@ -111,11 +111,11 @@
             <GroupBox Header="访问模式">
               <StackPanel>
                 <RadioButton x:Name="LocalModeRadio" GroupName="TunnelMode" Content="仅本机" Tag="none" Margin="0,4,0,10" Checked="TunnelModeRadio_Checked" />
-                <TextBlock Text="只监听本机地址，不启动 Cloudflare Tunnel。已保存的固定 Tunnel Token 不会删除。" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
+                <TextBlock Text="仅允许这台电脑访问，不启用 Cloudflare 公网访问；或者自行配置内网穿透或反向代理。" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
                 <RadioButton x:Name="QuickModeRadio" GroupName="TunnelMode" Content="临时地址" Tag="quick" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
-                <TextBlock Text="自动生成 trycloudflare.com 地址。重新生成时立即隐藏旧地址，并持续自动检测新地址。" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
+                <TextBlock Text="通过 Cloudflare 自动生成临时公网地址，无需配置域名。适合临时访问或测试，地址可能会变化。" Foreground="#667085" Margin="24,-8,0,14" TextWrapping="Wrap" />
                 <RadioButton x:Name="NamedModeRadio" GroupName="TunnelMode" Content="固定域名" Tag="named" Margin="0,0,0,10" Checked="TunnelModeRadio_Checked" />
-                <TextBlock Text="使用 Cloudflare Tunnel Token 和已接入 Cloudflare 的 HTTPS 域名。" Foreground="#667085" Margin="24,-8,0,4" TextWrapping="Wrap" />
+                <TextBlock Text="通过 Cloudflare Tunnel 使用自己的 HTTPS 域名，完成配置后即可获得稳定的公网地址。" Foreground="#667085" Margin="24,-8,0,4" TextWrapping="Wrap" />
               </StackPanel>
             </GroupBox>
 

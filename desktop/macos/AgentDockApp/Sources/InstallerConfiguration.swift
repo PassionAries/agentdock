@@ -16,11 +16,11 @@ enum TunnelMode: String, CaseIterable {
     var detail: String {
         switch self {
         case .local:
-            return "只监听本机地址，不开放公网访问；此前保存的 Tunnel Token 会继续保留。"
+            return "仅允许这台电脑访问，不启用 Cloudflare 公网访问；或者自行配置内网穿透或反向代理。"
         case .quick:
-            return "自动生成 trycloudflare.com 临时地址；电脑或 Tunnel 重启后会自动刷新，且不会删除已保存的固定域名 Tunnel Token。"
+            return "通过 Cloudflare 自动生成临时公网地址，无需配置域名。适合临时访问或测试，地址可能会变化。"
         case .named:
-            return "使用固定 HTTPS 地址，适合长期运行；此前保存过 Tunnel Token 时可以留空复用。"
+            return "通过 Cloudflare Tunnel 使用自己的 HTTPS 域名，完成配置后即可获得稳定的公网地址。"
         }
     }
 }
