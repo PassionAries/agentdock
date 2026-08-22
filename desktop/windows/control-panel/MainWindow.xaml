@@ -142,7 +142,6 @@
             <StackPanel Orientation="Horizontal">
               <Button Content="应用访问模式" Click="ApplyTunnelModeButton_Click" />
               <Button x:Name="RegenerateQuickButton" Content="重新生成临时地址" Click="RegenerateQuickButton_Click" />
-              <Button Content="测试当前公网地址" Click="TestPublicButton_Click" />
             </StackPanel>
             <TextBlock x:Name="TunnelActionStatusText" Foreground="#475467" TextWrapping="Wrap" Margin="0,6,0,0" />
           </StackPanel>
