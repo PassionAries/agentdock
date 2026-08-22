@@ -683,7 +683,7 @@ jobs:
           test "$(readlink "$mount_dir/Applications")" = "/Applications"
           codesign --verify --deep --strict --verbose=2 "$mount_dir/AgentDock.app"
           app_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock")"
-          helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper")"
+          helper_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Helpers/AgentDockLoginHelper")"
           core_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Helpers/agentdock")"
           cloudflared_arches="$(lipo -archs "$mount_dir/AgentDock.app/Contents/Helpers/cloudflared")"
           [[ "$app_arches" == *arm64* && "$app_arches" == *x86_64* ]]
@@ -694,8 +694,8 @@ jobs:
             "$zip_dir/AgentDock.app/Contents/MacOS/AgentDock" \
             "$mount_dir/AgentDock.app/Contents/MacOS/AgentDock"
           cmp \
-            "$zip_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper" \
-            "$mount_dir/AgentDock.app/Contents/Library/LoginItems/AgentDockLoginHelper.app/Contents/MacOS/AgentDockLoginHelper"
+            "$zip_dir/AgentDock.app/Contents/Helpers/AgentDockLoginHelper" \
+            "$mount_dir/AgentDock.app/Contents/Helpers/AgentDockLoginHelper"
           cmp \
             "$zip_dir/AgentDock.app/Contents/Helpers/agentdock" \
             "$mount_dir/AgentDock.app/Contents/Helpers/agentdock"
