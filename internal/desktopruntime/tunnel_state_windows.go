@@ -137,7 +137,8 @@ func normalizeHTTPSOrigin(value string) (string, error) {
 	if err != nil || !parsed.IsAbs() || parsed.Scheme != "https" || parsed.Host == "" {
 		return "", fmt.Errorf("公网地址必须是完整 HTTPS Origin：%s", value)
 	}
-	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+	path := strings.TrimRight(parsed.EscapedPath(), "/")
+	if parsed.User != nil || (path != "" && !strings.EqualFold(path, "/mcp")) || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("公网地址不能包含路径、查询参数、片段或用户信息：%s", value)
 	}
 	return "https://" + parsed.Host, nil

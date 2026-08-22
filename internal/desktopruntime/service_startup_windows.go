@@ -3,12 +3,15 @@
 package desktopruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
+	"unicode/utf16"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -17,7 +20,7 @@ const windowsRunKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 
 type scheduledTaskXML struct {
 	Settings struct {
-		Enabled bool `xml:"Enabled"`
+		Enabled *bool `xml:"Enabled"`
 	} `xml:"Settings"`
 }
 
@@ -61,13 +64,58 @@ func coreAutostartEnabled(ctx context.Context, manifest Manifest) (bool, error) 
 		if err != nil {
 			return false, err
 		}
-		var task scheduledTaskXML
-		if err := xml.Unmarshal(output, &task); err != nil {
+		task, err := parseScheduledTaskXML(output)
+		if err != nil {
 			return false, err
 		}
-		return task.Settings.Enabled, nil
+		// Task Scheduler 省略 Enabled 时使用 schema 默认值 true。
+		return task.Settings.Enabled == nil || *task.Settings.Enabled, nil
 	}
 	return runValuePresent(defaultString(manifest.StartupValueName, "AgentDock"))
+}
+
+func parseScheduledTaskXML(output []byte) (scheduledTaskXML, error) {
+	decoded, err := decodeScheduledTaskXML(output)
+	if err != nil {
+		return scheduledTaskXML{}, err
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(decoded))
+	// schtasks 会保留 UTF-16 声明；字节已在上一步转换为 UTF-8。
+	decoder.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
+		if strings.EqualFold(strings.TrimSpace(charset), "utf-16") {
+			return input, nil
+		}
+		return nil, fmt.Errorf("不支持的计划任务 XML 编码：%s", charset)
+	}
+	var task scheduledTaskXML
+	if err := decoder.Decode(&task); err != nil {
+		return scheduledTaskXML{}, err
+	}
+	return task, nil
+}
+
+func decodeScheduledTaskXML(output []byte) ([]byte, error) {
+	if len(output) < 2 {
+		return output, nil
+	}
+	littleEndian := output[0] == 0xff && output[1] == 0xfe
+	bigEndian := output[0] == 0xfe && output[1] == 0xff
+	if !littleEndian && !bigEndian {
+		return output, nil
+	}
+	payload := output[2:]
+	if len(payload)%2 != 0 {
+		return nil, errors.New("计划任务 XML 的 UTF-16 字节数无效")
+	}
+	codeUnits := make([]uint16, len(payload)/2)
+	for index := range codeUnits {
+		if littleEndian {
+			codeUnits[index] = uint16(payload[index*2]) | uint16(payload[index*2+1])<<8
+		} else {
+			codeUnits[index] = uint16(payload[index*2])<<8 | uint16(payload[index*2+1])
+		}
+	}
+	return []byte(string(utf16.Decode(codeUnits))), nil
 }
 
 func runScheduledTaskCommand(ctx context.Context, args ...string) error {

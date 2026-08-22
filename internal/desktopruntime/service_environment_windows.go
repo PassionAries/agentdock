@@ -38,6 +38,7 @@ var managedCoreEnvironment = []string{
 	"AGENTDOCK_OAUTH_ENABLED",
 	"AGENTDOCK_OAUTH_PASSWORD",
 	"AGENTDOCK_OAUTH_TOKEN_SECRET",
+	"AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL",
 }
 
 type controlPanelSettings struct {
@@ -62,6 +63,7 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	if err != nil {
 		return err
 	}
+	oauthAccessTokenTTL := strings.TrimSpace(os.Getenv("AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL"))
 
 	for _, name := range managedCoreEnvironment {
 		if err := os.Unsetenv(name); err != nil {
@@ -119,6 +121,13 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		return err
 	}
 	if serverURL != "" {
+		serverURL, err = normalizeHTTPSOrigin(serverURL)
+		if err != nil {
+			return err
+		}
+		if err := writeRuntimeText(filepath.Join(root, "server-url.txt"), serverURL); err != nil {
+			return err
+		}
 		oauthPassword, passwordErr := readProtectedText(filepath.Join(root, "oauth-password.dpapi"), "agentdock.oauth.password.v1")
 		if passwordErr != nil {
 			return fmt.Errorf("读取 OAuth 密码失败: %w", passwordErr)
@@ -131,6 +140,16 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 		managed["AGENTDOCK_OAUTH_ENABLED"] = "true"
 		managed["AGENTDOCK_OAUTH_PASSWORD"] = oauthPassword
 		managed["AGENTDOCK_OAUTH_TOKEN_SECRET"] = oauthSecret
+	}
+	storedOAuthAccessTokenTTL, err := readTrimmedText(filepath.Join(root, "oauth-access-token-ttl.txt"))
+	if err != nil {
+		return err
+	}
+	if storedOAuthAccessTokenTTL != "" {
+		oauthAccessTokenTTL = storedOAuthAccessTokenTTL
+	}
+	if oauthAccessTokenTTL != "" {
+		managed["AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL"] = oauthAccessTokenTTL
 	}
 
 	for name, value := range managed {
