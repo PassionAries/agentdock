@@ -14,6 +14,10 @@ namespace AgentDock.ControlPanel;
 
 public partial class MainWindow : Window
 {
+    private const string BrowserConnectionManaged = "managed";
+    private const string BrowserConnectionReuse = "reuse";
+    private const string BrowserConnectionSpecified = "specified";
+
     private readonly RuntimeService _runtime;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly Dictionary<PasswordBox, Stack<string>> _passwordHistory = new();
@@ -90,7 +94,7 @@ public partial class MainWindow : Window
                     ? snapshot.PublicOrigin
                     : snapshot.SavedNamedOrigin;
             }
-            TunnelTokenStoredText.Text = snapshot.TunnelTokenStored ? "已使用当前 Windows 用户 DPAPI 保存" : "未保存";
+            TunnelTokenStoredText.Text = snapshot.TunnelTokenStored ? "Tunnel Token已加密保存" : "未保存";
             ElevatedCoreCheckBox.IsChecked = string.Equals(snapshot.Manifest.PrivilegeMode, "elevated", StringComparison.OrdinalIgnoreCase);
             CoreStartupCheckBox.IsChecked = snapshot.CoreStartupEnabled;
             TrayStartupCheckBox.IsChecked = snapshot.TrayStartupEnabled;
@@ -103,13 +107,14 @@ public partial class MainWindow : Window
                 OAuthAccessTokenTtlTextBox.Text = snapshot.Settings.OAuthAccessTokenTtl;
                 BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
                 BrowserCdpUrlTextBox.Text = snapshot.Settings.BrowserCdpUrl;
-                BrowserReuseExistingCdpCheckBox.IsChecked = snapshot.Settings.BrowserReuseExistingCdp;
+                SelectBrowserConnectionMode(snapshot.Settings);
                 AcpEnabledCheckBox.IsChecked = snapshot.Settings.AcpEnabled;
                 SelectAcpAgent(snapshot.Settings.AcpAgent);
                 _settingsLoaded = true;
             }
 
             UpdateTunnelModeUi();
+            RefreshBrowserConnectionUi();
             RefreshAcpUi();
         }
         finally
@@ -140,7 +145,7 @@ public partial class MainWindow : Window
         PublicTestStatusText.Text = result.Message;
     }
 
-    private async Task ExecuteActionAsync(string pendingText, Func<Task> action, TextBlock? statusTarget = null)
+    private async Task<bool> ExecuteActionAsync(string pendingText, Func<Task> action, TextBlock? statusTarget = null)
     {
         statusTarget ??= FooterStatusText;
         statusTarget.Text = pendingText;
@@ -149,11 +154,13 @@ public partial class MainWindow : Window
             await action();
             statusTarget.Text = "操作完成";
             await RefreshAsync();
+            return true;
         }
         catch (Exception ex)
         {
             statusTarget.Text = ex.Message;
             MessageBox.Show(this, ex.Message, "AgentDock", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
         }
     }
 
@@ -281,6 +288,53 @@ public partial class MainWindow : Window
         RefreshAcpUi();
     }
 
+    private void BrowserConnection_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsInitialized || _updatingUi)
+        {
+            return;
+        }
+        RefreshBrowserConnectionUi();
+    }
+
+    private void RefreshBrowserConnectionUi()
+    {
+        var mode = SelectedBrowserConnectionMode();
+        BrowserCdpUrlTextBox.Visibility = mode == BrowserConnectionSpecified
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        BrowserConnectionHelpText.Text = mode switch
+        {
+            BrowserConnectionReuse => "优先使用本机已有 CDP 浏览器；未找到时自动使用隔离浏览器。可能沿用已有登录状态。",
+            BrowserConnectionSpecified => "使用指定 CDP 浏览器，并可能沿用其中的登录状态。",
+            _ => "使用隔离浏览器，不沿用日常浏览器登录状态。"
+        };
+    }
+
+    private string SelectedBrowserConnectionMode()
+    {
+        return (BrowserConnectionModeComboBox.SelectedItem as ComboBoxItem)?.Tag as string
+            ?? BrowserConnectionManaged;
+    }
+
+    private void SelectBrowserConnectionMode(ControlPanelSettings settings)
+    {
+        // 兼容旧配置和运行时优先级：显式 CDP URL 始终优先于复用开关。
+        var mode = !string.IsNullOrWhiteSpace(settings.BrowserCdpUrl)
+            ? BrowserConnectionSpecified
+            : settings.BrowserReuseExistingCdp ? BrowserConnectionReuse : BrowserConnectionManaged;
+        foreach (var item in BrowserConnectionModeComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag as string, mode, StringComparison.Ordinal))
+            {
+                BrowserConnectionModeComboBox.SelectedItem = item;
+                return;
+            }
+        }
+        BrowserConnectionModeComboBox.SelectedIndex = 0;
+    }
+
     private void RefreshAcpUi()
     {
         var enabled = AcpEnabledCheckBox.IsChecked == true;
@@ -317,6 +371,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        var browserConnectionMode = SelectedBrowserConnectionMode();
+        var browserCdpUrl = BrowserCdpUrlTextBox.Text.Trim();
+        if (browserConnectionMode == BrowserConnectionSpecified && string.IsNullOrWhiteSpace(browserCdpUrl))
+        {
+            MessageBox.Show(this, "选择“连接指定 CDP 浏览器”时必须填写 CDP 地址。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         var settings = new ControlPanelSettings
         {
             Port = port,
@@ -324,15 +386,21 @@ public partial class MainWindow : Window
             NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
             OAuthAccessTokenTtl = OAuthAccessTokenTtlTextBox.Text.Trim(),
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
-            BrowserCdpUrl = BrowserCdpUrlTextBox.Text.Trim(),
-            BrowserReuseExistingCdp = BrowserReuseExistingCdpCheckBox.IsChecked == true,
+            BrowserCdpUrl = browserConnectionMode == BrowserConnectionSpecified ? browserCdpUrl : "",
+            BrowserReuseExistingCdp = browserConnectionMode == BrowserConnectionReuse,
             AcpEnabled = acpEnabled,
             AcpAgent = acpAgent
         };
-        await ExecuteActionAsync(
+        var saved = await ExecuteActionAsync(
             "正在保存设置并重启…",
             () => _runtime.SaveSettingsAsync(settings, NexusTokenPasswordBox.Password),
             SettingsStatusText);
+        if (saved)
+        {
+            BrowserCdpUrlTextBox.Text = settings.BrowserCdpUrl;
+            SelectBrowserConnectionMode(settings);
+            RefreshBrowserConnectionUi();
+        }
         NexusTokenPasswordBox.Clear();
     }
 

@@ -352,7 +352,7 @@ public partial class App : System.Windows.Application
 
     private static void OpenDocumentation()
     {
-        Process.Start(new ProcessStartInfo("https://github.com/uvwt/agentdock#readme")
+        Process.Start(new ProcessStartInfo("https://uvwt.github.io/agentdock-docs/")
         {
             UseShellExecute = true
         });

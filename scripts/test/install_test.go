@@ -1136,7 +1136,7 @@ func TestDesktopTrayMenusUseNativeDismissalAndOmitCopyActions(t *testing.T) {
 		"!_trayMenu.Visible",
 		"Runtime.GetSnapshotAsync()",
 		"snapshot.CoreRunning",
-		"https://github.com/uvwt/agentdock#readme",
+		"https://uvwt.github.io/agentdock-docs/",
 	} {
 		if !strings.Contains(windowsApp, want) {
 			t.Fatalf("Windows tray menu missing native live behavior %q", want)

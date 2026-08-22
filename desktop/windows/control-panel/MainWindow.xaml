@@ -151,18 +151,13 @@
       <TabItem Header="高级设置">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Margin="18">
-            <GroupBox Header="核心设置">
+            <GroupBox Header="基础设置">
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="150" />
                   <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
-                  <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
@@ -176,20 +171,51 @@
                   <ComboBoxItem Content="warn" />
                   <ComboBoxItem Content="error" />
                 </ComboBox>
-                <TextBlock Text="Nexus 地址" Grid.Row="2" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBox x:Name="NexusEndpointTextBox" Grid.Row="2" Grid.Column="1" Margin="0,0,0,10" />
-                <TextBlock Text="Nexus Token" Grid.Row="3" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <PasswordBox x:Name="NexusTokenPasswordBox" Grid.Row="3" Grid.Column="1" Margin="0,0,0,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
-                <TextBlock Text="浏览器工具" Grid.Row="4" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.Row="4" Grid.Column="1" Content="启用浏览器 CDP 工具" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBlock Text="已有 CDP 地址" Grid.Row="5" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBox x:Name="BrowserCdpUrlTextBox" Grid.Row="5" Grid.Column="1" Margin="0,0,0,10" ToolTip="可选，例如 http://127.0.0.1:9222 或 ws://.../devtools/browser/..." />
-                <TextBlock Text="自动复用" Grid.Row="6" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <CheckBox x:Name="BrowserReuseExistingCdpCheckBox" Grid.Row="6" Grid.Column="1" Content="自动发现并复用唯一已有 CDP；发现多个时不自动选择" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBlock Text="OAuth Token TTL" Grid.Row="7" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <StackPanel Grid.Row="7" Grid.Column="1" Margin="0,0,0,10">
+                <TextBlock Text="OAuth Token TTL" Grid.Row="2" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,0,0,10">
                   <TextBox x:Name="OAuthAccessTokenTtlTextBox" ToolTip="例如 1h、30d、never；留空时继承 AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL，未设置则使用默认 1h" />
                   <TextBlock Text="支持 1h、30d、never 等格式；留空表示不固定，由环境变量或默认 1h 决定。" Foreground="#667085" Margin="0,4,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+            </GroupBox>
+
+            <GroupBox Header="Nexus">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="150" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="地址" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBox x:Name="NexusEndpointTextBox" Grid.Column="1" Margin="0,0,0,10" />
+                <TextBlock Text="Token" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <PasswordBox x:Name="NexusTokenPasswordBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
+              </Grid>
+            </GroupBox>
+
+            <GroupBox Header="浏览器">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="150" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <CheckBox x:Name="BrowserEnabledCheckBox" Grid.ColumnSpan="2" Content="启用浏览器 CDP 控制" Margin="0,4,0,12" Checked="BrowserConnection_Changed" Unchecked="BrowserConnection_Changed" />
+                <TextBlock Text="连接方式" Grid.Row="1" VerticalAlignment="Top" Margin="0,5,0,10" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,10">
+                  <ComboBox x:Name="BrowserConnectionModeComboBox" Width="320" HorizontalAlignment="Left" SelectionChanged="BrowserConnection_Changed">
+                    <ComboBoxItem Content="隔离浏览器" Tag="managed" />
+                    <ComboBoxItem Content="优先使用本机已有 CDP 浏览器" Tag="reuse" />
+                    <ComboBoxItem Content="连接指定 CDP 浏览器" Tag="specified" />
+                  </ComboBox>
+                  <TextBox x:Name="BrowserCdpUrlTextBox" Margin="0,8,0,0" Visibility="Collapsed" ToolTip="例如 http://127.0.0.1:9222 或 ws://.../devtools/browser/..." />
+                  <TextBlock x:Name="BrowserConnectionHelpText" Margin="0,6,0,0" Foreground="#667085" TextWrapping="Wrap" />
                 </StackPanel>
               </Grid>
             </GroupBox>

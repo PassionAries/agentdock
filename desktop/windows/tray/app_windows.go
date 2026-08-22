@@ -530,7 +530,7 @@ func (app *trayApp) notify(title, body string, failed bool) {
 }
 
 func (app *trayApp) openDocumentation() {
-	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", "https://uvwt.github.io/agentdock-docs/zh-CN/").Start()
+	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", "https://uvwt.github.io/agentdock-docs/").Start()
 }
 
 func appendMenu(menu uintptr, flags uintptr, id uint16, text string) {

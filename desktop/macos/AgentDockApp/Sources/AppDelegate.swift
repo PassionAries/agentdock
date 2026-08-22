@@ -209,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openBackgroundSettings() { service.openBackgroundItemsSettings() }
 
     @objc private func openDocumentation() {
-        if let url = URL(string: "https://github.com/uvwt/agentdock#readme") {
+        if let url = URL(string: "https://uvwt.github.io/agentdock-docs/") {
             NSWorkspace.shared.open(url)
         }
     }
