@@ -42,7 +42,7 @@ func (c client) post(ctx context.Context, path string, payload any, out any) err
 	cfg := c.config()
 	endpoint := strings.TrimRight(strings.TrimSpace(cfg.NexusEndpoint), "/")
 	if endpoint == "" {
-		return errors.New("Nexus endpoint is not configured")
+		return errors.New("AgentDock is not paired with NexusDock")
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -54,9 +54,9 @@ func (c client) post(ctx context.Context, path string, payload any, out any) err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
-	token := strings.TrimSpace(cfg.NexusToken)
+	token := strings.TrimSpace(cfg.NexusDeviceToken)
 	if token == "" {
-		return errors.New("AGENTDOCK_NEXUS_TOKEN is not configured")
+		return errors.New("NexusDock Device Token is unavailable; pair this AgentDock device first")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	httpClient := &http.Client{

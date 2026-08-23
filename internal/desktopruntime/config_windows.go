@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/uvwt/agentdock/internal/fs/atomicfile"
 	toolbrowser "github.com/uvwt/agentdock/internal/tool/browser"
@@ -82,10 +81,8 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 		}
 	}
 	settingsPath := filepath.Join(runtime.root, "control-panel-settings.json")
-	nexusTokenPath := filepath.Join(runtime.root, "nexus-token.dpapi")
 	snapshotPaths := []string{
 		settingsPath,
-		nexusTokenPath,
 		runtime.files.manifest,
 		runtime.files.serverURL,
 		runtime.files.quickURL,
@@ -120,7 +117,6 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	settings := controlPanelSettings{
 		Port:                    request.Port,
 		LogLevel:                request.LogLevel,
-		NexusEndpoint:           request.NexusEndpoint,
 		OAuthAccessTokenTTL:     request.OAuthAccessTokenTTL,
 		BrowserEnabled:          request.BrowserEnabled,
 		BrowserCDPURL:           request.BrowserCDPURL,
@@ -137,18 +133,6 @@ func platformUpdateConfig(ctx context.Context, request ConfigUpdateRequest) erro
 	data = append(data, '\n')
 	if err := atomicfile.Write(settingsPath, data, 0o600); err != nil {
 		return rollback(fmt.Errorf("保存控制面板设置失败: %w", err))
-	}
-
-	if request.NexusTokenFile != "" {
-		token, tokenErr := readSecretFile(request.NexusTokenFile)
-		if tokenErr != nil {
-			return rollback(tokenErr)
-		}
-		if strings.TrimSpace(token) != "" {
-			if err := writeProtectedText(nexusTokenPath, token, "agentdock.nexus.token.v1"); err != nil {
-				return rollback(fmt.Errorf("保存 Nexus Token 失败: %w", err))
-			}
-		}
 	}
 
 	runtime.settings = settings

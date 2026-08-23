@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,24 @@ func TestPairPersistsOnlyNexusDeviceIdentity(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("identity permissions = %o", info.Mode().Perm())
+	}
+	status, err := ReadStatus(home)
+	if err != nil || !status.Paired || !status.DeviceTokenStored || status.Endpoint != server.URL || status.NodeID != "node_test" {
+		t.Fatalf("status = %#v err=%v", status, err)
+	}
+}
+
+func TestReadStatusDoesNotExposeDeviceToken(t *testing.T) {
+	status, err := ReadStatus(t.TempDir())
+	if err != nil || status.Paired || status.DeviceTokenStored {
+		t.Fatalf("status = %#v err=%v", status, err)
+	}
+	data, err := json.Marshal(Status{Paired: true, DeviceTokenStored: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "device_token\"") {
+		t.Fatalf("status JSON exposed Device Token field: %s", data)
 	}
 }
 

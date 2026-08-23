@@ -452,6 +452,21 @@ write_env_key() {
   printf '%s=%s\n' "$key" "$quoted" >> "$AGENTDOCK_ENV"
 }
 
+remove_env_key() {
+  local key="$1"
+  local pattern="^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*="
+  local tmp_file="$AGENTDOCK_ENV.tmp.$$"
+  if grep -Ev "$pattern" "$AGENTDOCK_ENV" > "$tmp_file"; then
+    :
+  else
+    local status="$?"
+    # grep 在所有行都被移除时返回 1，此时空文件正是期望结果；真正的读取失败必须返回。
+    [[ "$status" -eq 1 ]] || return "$status"
+  fi
+  chmod 0600 "$tmp_file"
+  mv -f "$tmp_file" "$AGENTDOCK_ENV"
+}
+
 snapshot_service_file() {
   local name="$1"
   local file_path="$2"
@@ -515,8 +530,9 @@ ENV
     write_env_key AGENTDOCK_OAUTH_PASSWORD "$OAUTH_PASSWORD_VALUE" false
     write_env_key AGENTDOCK_OAUTH_TOKEN_SECRET "$OAUTH_TOKEN_SECRET_VALUE" false
   fi
-  write_env_key AGENTDOCK_NEXUS_ENDPOINT "${AGENTDOCK_NEXUS_ENDPOINT:-}" false
-  write_env_key AGENTDOCK_NEXUS_TOKEN "${AGENTDOCK_NEXUS_TOKEN:-}" false
+  # NexusDock 身份只保存在配对文件中，安装时清除旧环境凭据，避免废弃密钥继续落盘。
+  remove_env_key AGENTDOCK_NEXUS_ENDPOINT
+  remove_env_key AGENTDOCK_NEXUS_TOKEN
 
   # 稳定签名参数只在调用方明确提供时写入，避免把任何本机证书路径写死进安装器。
   if [[ -n "${AGENTDOCK_CODESIGN_IDENTITY:-}" ]]; then

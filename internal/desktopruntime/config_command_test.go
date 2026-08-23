@@ -40,7 +40,6 @@ func TestValidateConfigUpdate(t *testing.T) {
 		{Port: 8765, LogLevel: "info"},
 		{RuntimeRoot: "runtime", Port: 0, LogLevel: "info"},
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "verbose"},
-		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", NexusEndpoint: "bad\nvalue"},
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", BrowserCDPURL: "file:///tmp/cdp"},
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", BrowserCDPURL: "http://user:pass@browser.internal:9222"},
 		{RuntimeRoot: "runtime", Port: 8765, LogLevel: "info", BrowserCDPURL: "http://browser.internal:9222/#fragment"},

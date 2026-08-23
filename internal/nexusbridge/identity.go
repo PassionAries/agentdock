@@ -30,6 +30,15 @@ type Identity struct {
 	DeviceToken string `json:"device_token"`
 }
 
+// Status 是控制面板可安全展示的配对状态，不暴露 Device Token 本身。
+type Status struct {
+	Paired            bool   `json:"paired"`
+	Endpoint          string `json:"endpoint,omitempty"`
+	NodeID            string `json:"node_id,omitempty"`
+	DeviceID          string `json:"device_id,omitempty"`
+	DeviceTokenStored bool   `json:"device_token_stored"`
+}
+
 type PairOptions struct {
 	Endpoint string
 	Code     string
@@ -115,6 +124,23 @@ func Load(agentDockHome string) (Identity, error) {
 		return Identity{}, errors.New("NexusDock 设备身份文件无效")
 	}
 	return identity, nil
+}
+
+func ReadStatus(agentDockHome string) (Status, error) {
+	identity, err := Load(agentDockHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return Status{}, nil
+	}
+	if err != nil {
+		return Status{}, err
+	}
+	return Status{
+		Paired:            true,
+		Endpoint:          identity.Endpoint,
+		NodeID:            identity.NodeID,
+		DeviceID:          identity.DeviceID,
+		DeviceTokenStored: true,
+	}, nil
 }
 
 func Save(agentDockHome string, identity Identity) error {

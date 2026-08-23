@@ -4,8 +4,6 @@ import Foundation
 struct EditableServiceSettings {
     let port: Int
     let logLevel: String
-    let nexusEndpoint: String
-    let nexusTokenReplacement: String?
     let browserEnabled: Bool
     let browserCDPURL: String
     let browserReuseExistingCDP: Bool
@@ -19,12 +17,6 @@ struct EditableServiceSettings {
         let normalizedLogLevel = ServiceConfiguration.normalizedLogLevel(logLevel)
         guard ["debug", "info", "warn", "error"].contains(normalizedLogLevel) else {
             throw ValidationError("日志级别必须是 debug、info、warn 或 error。")
-        }
-
-        let endpoint = try Self.normalizeNexusEndpoint(nexusEndpoint)
-        if let nexusTokenReplacement,
-           nexusTokenReplacement.contains("\n") || nexusTokenReplacement.contains("\r") {
-            throw ValidationError("Nexus Token 必须是单行文本。")
         }
 
         let browserCDPURL = try Self.normalizeBrowserCDPURL(browserCDPURL)
@@ -49,8 +41,6 @@ struct EditableServiceSettings {
         return EditableServiceSettings(
             port: port,
             logLevel: normalizedLogLevel,
-            nexusEndpoint: endpoint,
-            nexusTokenReplacement: nexusTokenReplacement,
             browserEnabled: browserEnabled,
             browserCDPURL: browserCDPURL,
             browserReuseExistingCDP: browserReuseExistingCDP,
@@ -77,29 +67,6 @@ struct EditableServiceSettings {
         }
         return candidate
     }
-
-    private static func normalizeNexusEndpoint(_ raw: String) throws -> String {
-        let candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty else { return "" }
-        guard var components = URLComponents(string: candidate),
-              let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              components.host?.isEmpty == false else {
-            throw ValidationError("Nexus Endpoint 必须是有效的 HTTP(S) 地址。")
-        }
-        guard components.user == nil,
-              components.password == nil,
-              components.query == nil,
-              components.fragment == nil else {
-            throw ValidationError("Nexus Endpoint 不能包含账号、查询参数或片段。")
-        }
-        components.scheme = scheme
-        guard var normalized = components.string else {
-            throw ValidationError("无法规范化 Nexus Endpoint。")
-        }
-        while normalized.hasSuffix("/") { normalized.removeLast() }
-        return normalized
-    }
 }
 
 final class ServiceConfigurationController {
@@ -118,7 +85,6 @@ final class ServiceConfigurationController {
         var replacements = [
             "AGENTDOCK_PORT": String(settings.port),
             "AGENTDOCK_LOG_LEVEL": settings.logLevel,
-            "AGENTDOCK_NEXUS_ENDPOINT": settings.nexusEndpoint,
             "AGENTDOCK_BROWSER_ENABLED": settings.browserEnabled ? "true" : "false",
             "AGENTDOCK_BROWSER_CDP_URL": settings.browserCDPURL,
             "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP": settings.browserReuseExistingCDP ? "true" : "false",
@@ -130,9 +96,6 @@ final class ServiceConfigurationController {
         if settings.acpEnabled {
             // 桌面预设依赖各 Agent 自己的登录状态，不继承上一个 Agent 的密钥映射。
             replacements["AGENTDOCK_ACP_ENV_FROM_ENV_JSON"] = "{}"
-        }
-        if let replacement = settings.nexusTokenReplacement {
-            replacements["AGENTDOCK_NEXUS_TOKEN"] = replacement
         }
         let updatedData = try environment.dataByUpdating(replacements, removing: ServiceConfiguration.removableLegacyKeys)
         let wasLoaded = service.isLoaded()

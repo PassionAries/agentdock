@@ -266,6 +266,8 @@ agentdock nexus pair --endpoint https://nexus.example.com --code pair_xxx
 
 配对完成后，AgentDock 使用 Device Token 主动建立出站 WSS 连接。只有 NexusDock 需要提供公网 HTTPS 地址；NexusDock 不需要 AgentDock 的 `/mcp` Token，也不需要能够访问设备的入站地址。AI 客户端可以只连接 NexusDock 的 `/mcp`，获得一套汇总后的工具；设备较少或需要故障兜底时，原有的 AgentDock `/mcp` 单节点直连方式仍然完整保留。
 
+Device Token 只由配对流程签发并保存在 AgentDock 私有状态目录中，同时用于 Recall、工作流、私密笔记和 Evolution API；不再存在单独的 Nexus Token 或 Nexus 凭据环境变量。Windows 和 macOS 控制面板提供相同的“地址 + 一次性配对码”流程，并且只显示 Device Token 是否已安全保存，不允许手工填写或替换 Token。
+
 NexusDock 属于可选集成。未配对时，AgentDock 的文件、命令、Git、Skill、MCP、浏览器和任务等核心能力仍可独立运行。
 
 ## 使用 OAuth 接入 ChatGPT

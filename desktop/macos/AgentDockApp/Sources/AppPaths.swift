@@ -27,14 +27,15 @@ struct AppPaths {
     var logs: URL { home.appendingPathComponent("Library/Logs/AgentDock") }
     var workDirectory: URL { home.appendingPathComponent("AgentDock") }
     var stateDirectory: URL { home.appendingPathComponent(".agentdock") }
+    var nexusDeviceIdentity: URL {
+        stateDirectory.appendingPathComponent("nexus").appendingPathComponent("device.json")
+    }
 }
 
 struct ServiceConfiguration: Equatable {
     static let editableKeys = [
         "AGENTDOCK_PORT",
         "AGENTDOCK_LOG_LEVEL",
-        "AGENTDOCK_NEXUS_ENDPOINT",
-        "AGENTDOCK_NEXUS_TOKEN",
         "AGENTDOCK_BROWSER_ENABLED",
         "AGENTDOCK_BROWSER_CDP_URL",
         "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP",
@@ -44,7 +45,12 @@ struct ServiceConfiguration: Equatable {
         "AGENTDOCK_ACP_ARGS_JSON",
         "AGENTDOCK_ACP_ENV_FROM_ENV_JSON",
     ]
-    static let removableLegacyKeys: Set<String> = ["AGENTDOCK_ACP_ALLOWED_ROOTS"]
+    // 旧 Nexus 凭据不再参与运行；保存设置时一并从环境文件清除，避免废弃密钥继续落盘。
+    static let removableLegacyKeys: Set<String> = [
+        "AGENTDOCK_ACP_ALLOWED_ROOTS",
+        "AGENTDOCK_NEXUS_ENDPOINT",
+        "AGENTDOCK_NEXUS_TOKEN",
+    ]
 
     let host: String
     let port: Int
@@ -52,8 +58,6 @@ struct ServiceConfiguration: Equatable {
     let authToken: String
     let oauthPassword: String
     let logLevel: String
-    let nexusEndpoint: String
-    let nexusToken: String
     let browserEnabled: Bool
     let browserCDPURL: String
     let browserReuseExistingCDP: Bool
@@ -78,8 +82,6 @@ struct ServiceConfiguration: Equatable {
         return URL(string: publicURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/mcp")
     }
 
-    var nexusTokenConfigured: Bool { !nexusToken.isEmpty }
-
     private func endpoint(path: String) -> URL? {
         var components = URLComponents()
         components.scheme = "http"
@@ -102,8 +104,6 @@ struct ServiceConfiguration: Equatable {
             authToken: values["AGENTDOCK_AUTH_TOKEN"] ?? "",
             oauthPassword: values["AGENTDOCK_OAUTH_PASSWORD"] ?? "",
             logLevel: normalizedLogLevel(values["AGENTDOCK_LOG_LEVEL"] ?? "info"),
-            nexusEndpoint: values["AGENTDOCK_NEXUS_ENDPOINT"] ?? "",
-            nexusToken: values["AGENTDOCK_NEXUS_TOKEN"] ?? "",
             browserEnabled: parseBool(values["AGENTDOCK_BROWSER_ENABLED"]),
             browserCDPURL: values["AGENTDOCK_BROWSER_CDP_URL"] ?? "",
             browserReuseExistingCDP: parseBool(values["AGENTDOCK_BROWSER_REUSE_EXISTING_CDP"]),
@@ -136,3 +136,53 @@ struct ServiceConfiguration: Equatable {
 }
 
 typealias RuntimeConfiguration = ServiceConfiguration
+
+struct NexusDeviceStatus {
+    let paired: Bool
+    let endpoint: String
+    let nodeID: String
+    let deviceTokenStored: Bool
+    let error: String?
+
+    static func load(from path: URL) -> NexusDeviceStatus {
+        guard FileManager.default.fileExists(atPath: path.path) else {
+            return NexusDeviceStatus(paired: false, endpoint: "", nodeID: "", deviceTokenStored: false, error: nil)
+        }
+        do {
+            let identity = try JSONDecoder().decode(NexusDeviceIdentity.self, from: Data(contentsOf: path))
+            guard !identity.endpoint.isEmpty, !identity.nodeID.isEmpty,
+                  !identity.deviceID.isEmpty, !identity.deviceToken.isEmpty else {
+                throw ValidationError("设备身份文件无效，请重新配对。")
+            }
+            return NexusDeviceStatus(
+                paired: true,
+                endpoint: identity.endpoint,
+                nodeID: identity.nodeID,
+                deviceTokenStored: true,
+                error: nil
+            )
+        } catch {
+            return NexusDeviceStatus(
+                paired: false,
+                endpoint: "",
+                nodeID: "",
+                deviceTokenStored: false,
+                error: "无法读取设备身份：\(error.localizedDescription)"
+            )
+        }
+    }
+}
+
+private struct NexusDeviceIdentity: Decodable {
+    let endpoint: String
+    let nodeID: String
+    let deviceID: String
+    let deviceToken: String
+
+    private enum CodingKeys: String, CodingKey {
+        case endpoint
+        case nodeID = "node_id"
+        case deviceID = "device_id"
+        case deviceToken = "device_token"
+    }
+}

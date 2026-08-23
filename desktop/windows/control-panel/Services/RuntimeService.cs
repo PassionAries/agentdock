@@ -17,7 +17,6 @@ public sealed class RuntimeService : IDisposable
     private const string AuthEntropy = "agentdock.startup.v1";
     private const string OAuthPasswordEntropy = "agentdock.oauth.password.v1";
     private const string TunnelTokenEntropy = "agentdock.cloudflare.tunnel.v1";
-    private const string NexusTokenEntropy = "agentdock.nexus.token.v1";
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -110,15 +109,13 @@ public sealed class RuntimeService : IDisposable
             IsCoreStartupEnabled(manifest),
             IsRunValuePresent(manifest.TrayStartupValueName, "AgentDockTray"),
             File.Exists(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi")),
-            File.Exists(Path.Combine(RuntimeRoot, "nexus-token.dpapi")),
+            ReadNexusDeviceStatus(),
             DateTimeOffset.Now);
     }
 
     public string ReadBearerToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "auth-token.dpapi"), AuthEntropy);
     public string ReadOAuthPassword() => ReadProtectedText(Path.Combine(RuntimeRoot, "oauth-password.dpapi"), OAuthPasswordEntropy);
     public string ReadTunnelToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi"), TunnelTokenEntropy);
-    public string ReadNexusToken() => ReadProtectedText(Path.Combine(RuntimeRoot, "nexus-token.dpapi"), NexusTokenEntropy);
-
     public AcpAdapterResolution ResolveAcpAdapter(
         string agent,
         string configuredCommand = "",
@@ -218,7 +215,6 @@ public sealed class RuntimeService : IDisposable
 
     public async Task SaveSettingsAsync(
         ControlPanelSettings settings,
-        string nexusToken,
         CancellationToken cancellationToken = default)
     {
         var arguments = new List<string>
@@ -226,7 +222,6 @@ public sealed class RuntimeService : IDisposable
             "update",
             "--port", settings.Port.ToString(),
             "--log-level", settings.LogLevel,
-            "--nexus-endpoint", settings.NexusEndpoint ?? "",
             "--oauth-access-token-ttl", settings.OAuthAccessTokenTtl ?? "",
             $"--browser-enabled={settings.BrowserEnabled.ToString().ToLowerInvariant()}",
             "--browser-cdp-url", settings.BrowserCdpUrl ?? "",
@@ -234,21 +229,26 @@ public sealed class RuntimeService : IDisposable
             $"--acp-enabled={settings.AcpEnabled.ToString().ToLowerInvariant()}",
             "--acp-agent", NormalizeAcpAgent(settings.AcpAgent)
         };
-        string? secretFile = null;
-        try
-        {
-            if (!string.IsNullOrWhiteSpace(nexusToken))
-            {
-                secretFile = await WriteSecretFileAsync(nexusToken, cancellationToken);
-                arguments.AddRange(["--nexus-token-file", secretFile]);
-            }
+        await RunNativeAgentDockAsync("config", arguments, cancellationToken);
+    }
 
-            await RunNativeAgentDockAsync("config", arguments, cancellationToken);
-        }
-        finally
+    public async Task PairNexusAsync(string endpoint, string pairingCode, CancellationToken cancellationToken = default)
+    {
+        endpoint = endpoint.Trim();
+        pairingCode = pairingCode.Trim();
+        if (endpoint.Length == 0 || pairingCode.Length == 0)
         {
-            DeleteSecretFile(secretFile);
+            throw new InvalidOperationException("NexusDock 地址和一次性配对码不能为空。");
         }
+
+        var binaryPath = await ResolveCoreBinaryAsync(cancellationToken);
+        var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
+        foreach (var argument in new[] { "nexus", "pair", "--endpoint", endpoint, "--code", pairingCode })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+        _ = await RunProcessAsync(startInfo, cancellationToken);
+        await RunCoreActionAsync("restart", cancellationToken);
     }
 
     public Task SetStartupAsync(string component, bool enabled, CancellationToken cancellationToken = default)
@@ -782,6 +782,31 @@ public sealed class RuntimeService : IDisposable
             StandardOutputEncoding = utf8,
             StandardErrorEncoding = utf8
         };
+    }
+
+    private static NexusDeviceStatus ReadNexusDeviceStatus()
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var path = Path.Combine(userProfile, ".agentdock", "nexus", "device.json");
+        if (!File.Exists(path))
+        {
+            return new NexusDeviceStatus(false, "", "", "", false);
+        }
+        try
+        {
+            var identity = JsonSerializer.Deserialize<NexusDeviceIdentity>(File.ReadAllText(path), JsonOptions);
+            if (identity is null || string.IsNullOrWhiteSpace(identity.Endpoint) ||
+                string.IsNullOrWhiteSpace(identity.NodeId) || string.IsNullOrWhiteSpace(identity.DeviceId) ||
+                string.IsNullOrWhiteSpace(identity.DeviceToken))
+            {
+                return new NexusDeviceStatus(false, "", "", "", false, "设备身份文件无效，请重新配对。");
+            }
+            return new NexusDeviceStatus(true, identity.Endpoint, identity.NodeId, identity.DeviceId, true);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return new NexusDeviceStatus(false, "", "", "", false, $"无法读取设备身份：{ex.Message}");
+        }
     }
 
     private static async Task<string> RunProcessAsync(ProcessStartInfo startInfo, CancellationToken cancellationToken)

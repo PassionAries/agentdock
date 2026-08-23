@@ -73,7 +73,7 @@ func newTestService(t *testing.T) (*Service, *taskstate.Store, *httptest.Server)
 		t.Fatal(err)
 	}
 	service := New(func() config.Config {
-		return config.Config{NexusEndpoint: server.URL, NexusToken: "test-nexus-token"}
+		return config.Config{NexusEndpoint: server.URL, NexusDeviceToken: "test-device-token"}
 	}, tasks)
 	return service, tasks, server
 }
@@ -151,7 +151,7 @@ func TestConcurrentExactProposalsConvergeOnOneStableEvolutionID(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(func() config.Config {
-		return config.Config{NexusEndpoint: server.URL, NexusToken: "test-nexus-token"}
+		return config.Config{NexusEndpoint: server.URL, NexusDeviceToken: "test-device-token"}
 	}, tasks)
 	candidate := Candidate{Type: "runbook", Statement: "并发节点必须收敛到同一经验", Project: "agentdock", Device: "mini"}
 
@@ -522,7 +522,7 @@ func TestClientDecodesNexusLifecycleOperationMetadata(t *testing.T) {
 	defer server.Close()
 
 	client := client{config: func() config.Config {
-		return config.Config{NexusEndpoint: server.URL, NexusToken: "test-nexus-token"}
+		return config.Config{NexusEndpoint: server.URL, NexusDeviceToken: "test-device-token"}
 	}}
 	records, err := client.query(t.Context(), Query{EvolutionID: evolutionID, Limit: 1})
 	if err != nil {

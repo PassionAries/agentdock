@@ -22,6 +22,7 @@ var managedCoreEnvironment = []string{
 	"AGENTDOCK_HOST",
 	"AGENTDOCK_PORT",
 	"AGENTDOCK_LOG_LEVEL",
+	// 仅用于清除旧服务环境，核心不再读取这两个配置。
 	"AGENTDOCK_NEXUS_ENDPOINT",
 	"AGENTDOCK_NEXUS_TOKEN",
 	"AGENTDOCK_BROWSER_ENABLED",
@@ -45,7 +46,6 @@ var managedCoreEnvironment = []string{
 type controlPanelSettings struct {
 	Port                    int      `json:"port"`
 	LogLevel                string   `json:"log_level"`
-	NexusEndpoint           string   `json:"nexus_endpoint"`
 	OAuthAccessTokenTTL     string   `json:"oauth_access_token_ttl,omitempty"`
 	BrowserEnabled          bool     `json:"browser_enabled"`
 	BrowserCDPURL           string   `json:"browser_cdp_url"`
@@ -72,6 +72,11 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 			return fmt.Errorf("清理 %s 失败: %w", name, err)
 		}
 	}
+	// Device Token 已由 ~/.agentdock/nexus/device.json 唯一管理；旧 DPAPI Token 不再读取并立即清除。
+	legacyNexusTokenPath := filepath.Join(root, "nexus-token.dpapi")
+	if err := os.Remove(legacyNexusTokenPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("删除已废弃的 Nexus Token 失败: %w", err)
+	}
 	authToken, err := readProtectedText(filepath.Join(root, "auth-token.dpapi"), "agentdock.startup.v1")
 	if err != nil {
 		return fmt.Errorf("读取 Bearer Token 失败: %w", err)
@@ -92,14 +97,6 @@ func platformPrepareCoreEnvironment(runtimeRoot string) error {
 	}
 	if settings.BrowserCDPURL != "" {
 		managed["AGENTDOCK_BROWSER_CDP_URL"] = settings.BrowserCDPURL
-	}
-	if settings.NexusEndpoint != "" {
-		managed["AGENTDOCK_NEXUS_ENDPOINT"] = settings.NexusEndpoint
-		if token, tokenErr := readOptionalProtectedText(filepath.Join(root, "nexus-token.dpapi"), "agentdock.nexus.token.v1"); tokenErr != nil {
-			return fmt.Errorf("读取 Nexus Token 失败: %w", tokenErr)
-		} else if token != "" {
-			managed["AGENTDOCK_NEXUS_TOKEN"] = token
-		}
 	}
 	if settings.ACPEnabled {
 		info, statErr := os.Stat(settings.ACPCommand)
@@ -178,7 +175,6 @@ func loadControlPanelSettings(runtimeRoot string, fallbackPort int) (controlPane
 	if settings.LogLevel != "debug" && settings.LogLevel != "info" && settings.LogLevel != "warn" && settings.LogLevel != "error" {
 		return controlPanelSettings{}, fmt.Errorf("不支持的日志级别: %s", settings.LogLevel)
 	}
-	settings.NexusEndpoint = strings.TrimSpace(settings.NexusEndpoint)
 	settings.OAuthAccessTokenTTL = strings.TrimSpace(settings.OAuthAccessTokenTTL)
 	if settings.OAuthAccessTokenTTL != "" {
 		if err := agentconfig.ValidateOAuthAccessTokenTTL(settings.OAuthAccessTokenTTL); err != nil {
@@ -211,15 +207,6 @@ func effectiveOAuthAccessTokenTTL(configured, inherited string) string {
 		return configured
 	}
 	return strings.TrimSpace(inherited)
-}
-
-func readOptionalProtectedText(path, entropy string) (string, error) {
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	} else if err != nil {
-		return "", err
-	}
-	return readProtectedText(path, entropy)
 }
 
 func readProtectedText(path, entropy string) (string, error) {

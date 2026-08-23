@@ -90,7 +90,7 @@ func newPrivateNoteProxyRuntime(t *testing.T, endpoint, token string) *Runtime {
 		AgentDockDefaultDir: t.TempDir(),
 		AgentDockHome:       filepath.Join(home, ".agentdock"),
 		NexusEndpoint:       endpoint,
-		NexusToken:          token,
+		NexusDeviceToken:    token,
 	}
 	if err := cfg.Normalize(); err != nil {
 		t.Fatal(err)

@@ -264,6 +264,8 @@ agentdock nexus pair --endpoint https://nexus.example.com --code pair_xxx
 
 AgentDock then opens an outbound WSS connection using its Device Token. Only NexusDock needs a public HTTPS endpoint; NexusDock never needs the AgentDock `/mcp` token or an inbound device URL. Clients may connect to NexusDock `/mcp` for one aggregated tool set, while direct AgentDock `/mcp` access remains fully available for small deployments and fallback.
 
+The Device Token is issued by pairing and stored in AgentDock's private state directory. It is also used for Recall, workflows, private notes, and evolution APIs; there is no separate Nexus Token or Nexus credential environment variable. The Windows and macOS control panels provide the same endpoint-and-pairing-code flow and show only whether the Device Token is securely stored.
+
 NexusDock is optional. Without pairing, AgentDock continues to provide its core file, command, Git, Skill, MCP, browser, and task capabilities independently.
 
 ## Connect ChatGPT with OAuth

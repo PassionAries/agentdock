@@ -583,13 +583,11 @@ write_env_file() {
   local port="$3"
   local token="$4"
   local log_level="$5"
-  local nexus_endpoint="$6"
-  local nexus_token="$7"
-  local server_url="$8"
-  local configure_oauth="$9"
-  local oauth_enabled="${10}"
-  local oauth_password="${11}"
-  local oauth_token_secret="${12}"
+  local server_url="$6"
+  local configure_oauth="$7"
+  local oauth_enabled="$8"
+  local oauth_password="$9"
+  local oauth_token_secret="${10}"
 
   local env_dir tmp_file managed_keys
   env_dir="$(dirname "$env_file")"
@@ -613,12 +611,6 @@ AGENTDOCK_PORT=$port
 AGENTDOCK_AUTH_TOKEN=$token
 AGENTDOCK_LOG_LEVEL=$log_level
 ENV
-    if [[ -n "$nexus_endpoint" ]]; then
-      printf 'AGENTDOCK_NEXUS_ENDPOINT=%s\n' "$nexus_endpoint"
-    fi
-    if [[ -n "$nexus_token" ]]; then
-      printf 'AGENTDOCK_NEXUS_TOKEN=%s\n' "$nexus_token"
-    fi
     if [[ -n "$server_url" ]]; then
       printf 'AGENTDOCK_SERVER_URL=%s\n' "$server_url"
     fi
@@ -1213,7 +1205,7 @@ main() {
 
   local detected_root source_default repo_url branch source_dir data_dir env_file
   local service_name service_user service_group service_manager service_manager_prompt host port token log_level
-  local install_mode release_version nexus_endpoint nexus_token update_existing run_full_check install_deps
+  local install_mode release_version update_existing run_full_check install_deps
   local oauth_password oauth_token_secret oauth_enabled configure_oauth
   local go_version public_domain smoke_url health_host build_from_source
   local tunnel_mode tunnel_default tunnel_token server_url existing_server_url existing_tunnel_token
@@ -1377,15 +1369,6 @@ INTRO
     (( ${#oauth_token_secret} >= 32 )) || die "OAuth 签名密钥至少需要 32 个字节"
   fi
 
-  nexus_endpoint="$(read_env_assignment "$env_file" AGENTDOCK_NEXUS_ENDPOINT)"
-  nexus_token="$(read_env_assignment "$env_file" AGENTDOCK_NEXUS_TOKEN)"
-  if [[ -z "$nexus_endpoint" ]] && confirm '是否配置 NexusDock endpoint？用于 Recall memory 和 workflow API' n; then
-    nexus_endpoint="$(prompt 'NexusDock endpoint，例如 https://nexus.example.com 或 http://127.0.0.1:18777' '')"
-    if [[ -n "$nexus_endpoint" ]] && confirm 'NexusDock API 是否需要 token？' y; then
-      nexus_token="$(prompt_secret 'NexusDock token')"
-    fi
-  fi
-
   public_domain=""
   if [[ "$tunnel_mode" == none ]]; then
     public_domain="$(prompt '公网域名，可留空；脚本只输出反代提示，不直接改 Caddy/Nginx' '')"
@@ -1482,7 +1465,7 @@ SUMMARY
   service_group="$(id -gn "$service_user")"
   run_root mkdir -p "$data_dir/.agentdock" "$data_dir/AgentDock"
   run_root chown -R "$service_user:$service_group" "$data_dir"
-  write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" \
+  write_env_file "$env_file" "$host" "$port" "$token" "$log_level" \
     "$server_url" "$configure_oauth" "$oauth_enabled" "$oauth_password" "$oauth_token_secret"
   # 原生运行时需要在服务用户身份下读取并原子更新公网地址；目录仅允许该服务用户访问。
   run_root chown "$service_user:$service_group" "$(dirname "$env_file")" "$env_file"
@@ -1530,7 +1513,7 @@ SUMMARY
     if [[ "$tunnel_mode" == quick ]]; then
       server_url="$TUNNEL_PUBLIC_URL"
       oauth_enabled="true"
-      write_env_file "$env_file" "$host" "$port" "$token" "$log_level" "$nexus_endpoint" "$nexus_token" \
+      write_env_file "$env_file" "$host" "$port" "$token" "$log_level" \
         "$server_url" yes true "$oauth_password" "$oauth_token_secret"
       run_root chown "$service_user:$service_group" "$env_file"
       log "已将临时公网地址写入 AgentDock OAuth 配置并重启服务"

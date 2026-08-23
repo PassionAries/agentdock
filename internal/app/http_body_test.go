@@ -37,6 +37,7 @@ func TestNexusClientsRejectOversizedResponses(t *testing.T) {
 
 	runtime, _ := newCodeToolsRuntime(t)
 	runtime.cfg.NexusEndpoint = server.URL
+	runtime.cfg.NexusDeviceToken = "test-device-token"
 	_, err := runtime.memoryRequest(context.Background(), http.MethodGet, "/v1/recall", nil)
 	var toolErr *ToolError
 	if !errors.As(err, &toolErr) || toolErr.Code != "RECALL_RESPONSE_TOO_LARGE" {
@@ -58,6 +59,7 @@ func TestNexusWorkflowJSONPreservesNonJSONHTTPError(t *testing.T) {
 
 	runtime, _ := newCodeToolsRuntime(t)
 	runtime.cfg.NexusEndpoint = server.URL
+	runtime.cfg.NexusDeviceToken = "test-device-token"
 	_, err := runtime.nexusWorkflowJSON(context.Background(), http.MethodGet, "/v1/workflow-templates/missing", nil)
 	var toolErr *ToolError
 	if !errors.As(err, &toolErr) || toolErr.Code != "NEXUS_WORKFLOW_ERROR" {
@@ -79,6 +81,7 @@ func TestNexusWorkflowJSONRejectsNonJSONSuccessResponse(t *testing.T) {
 
 	runtime, _ := newCodeToolsRuntime(t)
 	runtime.cfg.NexusEndpoint = server.URL
+	runtime.cfg.NexusDeviceToken = "test-device-token"
 	_, err := runtime.nexusWorkflowJSON(context.Background(), http.MethodGet, "/v1/workflow-templates", nil)
 	var toolErr *ToolError
 	if !errors.As(err, &toolErr) || toolErr.Code != "NEXUS_INVALID_RESPONSE" {
@@ -97,6 +100,7 @@ func TestNexusClientsPreserveCanceledContext(t *testing.T) {
 
 	runtime, _ := newCodeToolsRuntime(t)
 	runtime.cfg.NexusEndpoint = server.URL
+	runtime.cfg.NexusDeviceToken = "test-device-token"
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := runtime.memoryRequest(ctx, http.MethodGet, "/v1/recall", nil); !errors.Is(err, context.Canceled) {
@@ -104,6 +108,21 @@ func TestNexusClientsPreserveCanceledContext(t *testing.T) {
 	}
 	if _, err := runtime.nexusWorkflowJSON(ctx, http.MethodGet, "/v1/workflow-templates", nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("nexusWorkflowJSON() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestNexusClientsRequirePairedDeviceToken(t *testing.T) {
+	runtime, _ := newCodeToolsRuntime(t)
+	runtime.cfg.NexusDeviceToken = ""
+	_, err := runtime.memoryRequest(context.Background(), http.MethodGet, "/v1/recall", nil)
+	var toolErr *ToolError
+	if !errors.As(err, &toolErr) || toolErr.Code != "RECALL_NOT_CONFIGURED" {
+		t.Fatalf("memoryRequest() error = %v", err)
+	}
+	_, err = runtime.nexusWorkflowJSON(context.Background(), http.MethodGet, "/v1/workflow-templates", nil)
+	toolErr = nil
+	if !errors.As(err, &toolErr) || toolErr.Code != "NEXUS_NOT_CONFIGURED" {
+		t.Fatalf("nexusWorkflowJSON() error = %v", err)
 	}
 }
 

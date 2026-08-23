@@ -36,6 +36,7 @@ func newCodeToolsRuntime(t *testing.T) (*Runtime, string) {
 	}
 	server := newWorkflowTemplateNexusTestServer(t, rt.tasks)
 	rt.cfg.NexusEndpoint = server.URL
+	rt.cfg.NexusDeviceToken = "test-device-token"
 	return rt, root
 }
 
@@ -161,7 +162,12 @@ func newWorkflowTemplateNexusTestServer(t *testing.T, _ *taskstate.Store) *httpt
 		}
 		write(w, map[string]any{"ok": true, "template": template, "template_summary": tooltask.CompactTemplateSummary(template)})
 	})
-	server := httptest.NewServer(mux)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-device-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(server.Close)
 	return server
 }

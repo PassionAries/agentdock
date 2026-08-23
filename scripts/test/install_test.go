@@ -123,22 +123,25 @@ func TestUnifiedInstallerEntriesReplaceLegacyNames(t *testing.T) {
 	}
 }
 
-func TestInstallLinuxWritesExplicitNexusDockToken(t *testing.T) {
+func TestInstallLinuxRemovesLegacyNexusCredentials(t *testing.T) {
 	data, err := os.ReadFile("../install/install-linux-platform.sh")
 	if err != nil {
 		t.Fatalf("read install-linux-platform.sh: %v", err)
 	}
 	script := string(data)
-	checks := []string{
+	forbidden := []string{
 		"local nexus_token=\"$7\"",
 		"printf 'AGENTDOCK_NEXUS_TOKEN=%s\\n' \"$nexus_token\"",
 		"NexusDock API 是否需要 token？",
 		"nexus_token=\"$(prompt_secret 'NexusDock token')\"",
 	}
-	for _, want := range checks {
-		if !strings.Contains(script, want) {
-			t.Fatalf("install-linux-platform.sh missing NexusDock token handling: %s", want)
+	for _, value := range forbidden {
+		if strings.Contains(script, value) {
+			t.Fatalf("install-linux-platform.sh still contains legacy Nexus credential handling: %s", value)
 		}
+	}
+	if !strings.Contains(script, "AGENTDOCK_NEXUS_ENDPOINT|AGENTDOCK_NEXUS_TOKEN") {
+		t.Fatal("install-linux-platform.sh must remove legacy Nexus credentials from an existing env file")
 	}
 	for _, removed := range []string{"AGENTDOCK_NEXUS_DEVICE_NAME", "AGENTDOCK_NEXUS_HEARTBEAT_SECONDS", "Nexus 设备名"} {
 		if strings.Contains(script, removed) {
@@ -433,13 +436,15 @@ func TestWindowsControlPanelUsesNativeTunnelCommands(t *testing.T) {
 		`"configure"`,
 		`"--token-file"`,
 		`RunNativeAgentDockAsync("config"`,
-		`"--nexus-token-file"`,
+		`PairNexusAsync`,
+		`"nexus", "pair"`,
 	} {
 		if !strings.Contains(app, want) && !strings.Contains(runtimeService, want) {
 			t.Fatalf("Windows control panel missing native Tunnel behavior %q", want)
 		}
 	}
 	for _, forbidden := range []string{
+		`"--nexus-token-file"`,
 		`RunManagementScriptAsync(["-Action", "start-tunnel"]`,
 		`RunManagementScriptAsync(["-Action", "stop-tunnel"]`,
 		`RunManagementScriptAsync(["-Action", "regenerate-quick"]`,
@@ -834,7 +839,7 @@ run_root() {
   fi
   "$@"
 }
-write_env_file "$TEST_ENV_FILE" 127.0.0.1 8765 stable-token info "" "" \
+write_env_file "$TEST_ENV_FILE" 127.0.0.1 8765 stable-token info \
   https://new.trycloudflare.com yes true stable-oauth-password stable-oauth-secret-0123456789abcdef
 cloudflared_service_active() { return 0; }
 cloudflared_quick_url() { printf 'https://new.trycloudflare.com'; }

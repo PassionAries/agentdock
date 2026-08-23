@@ -99,11 +99,23 @@ public partial class MainWindow : Window
             CoreStartupCheckBox.IsChecked = snapshot.CoreStartupEnabled;
             TrayStartupCheckBox.IsChecked = snapshot.TrayStartupEnabled;
 
+            if (!NexusEndpointTextBox.IsKeyboardFocusWithin && snapshot.Nexus.Paired)
+            {
+                NexusEndpointTextBox.Text = snapshot.Nexus.Endpoint;
+            }
+            NexusDeviceTokenStatusText.Text = snapshot.Nexus.Error.Length > 0
+                ? snapshot.Nexus.Error
+                : snapshot.Nexus.Paired
+                    ? $"已安全保存 · node_id={snapshot.Nexus.NodeId}"
+                    : "尚未配对；Device Token 将由一次性配对自动生成。";
+            NexusDeviceTokenStatusText.Foreground = snapshot.Nexus.Error.Length > 0
+                ? new SolidColorBrush(Color.FromRgb(217, 45, 32))
+                : new SolidColorBrush(Color.FromRgb(102, 112, 133));
+
             if (!_settingsLoaded)
             {
                 PortTextBox.Text = snapshot.Settings.Port.ToString();
                 SelectLogLevel(snapshot.Settings.LogLevel);
-                NexusEndpointTextBox.Text = snapshot.Settings.NexusEndpoint;
                 BrowserEnabledCheckBox.IsChecked = snapshot.Settings.BrowserEnabled;
                 BrowserCdpUrlTextBox.Text = snapshot.Settings.BrowserCdpUrl;
                 SelectBrowserConnectionMode(snapshot.Settings);
@@ -382,7 +394,6 @@ public partial class MainWindow : Window
         {
             Port = port,
             LogLevel = SelectedLogLevel(),
-            NexusEndpoint = NexusEndpointTextBox.Text.Trim(),
             OAuthAccessTokenTtl = _snapshot?.Settings.OAuthAccessTokenTtl ?? "",
             BrowserEnabled = BrowserEnabledCheckBox.IsChecked == true,
             BrowserCdpUrl = browserConnectionMode == BrowserConnectionSpecified ? browserCdpUrl : "",
@@ -392,7 +403,7 @@ public partial class MainWindow : Window
         };
         var saved = await ExecuteActionAsync(
             "正在保存设置并重启…",
-            () => _runtime.SaveSettingsAsync(settings, NexusTokenPasswordBox.Password),
+            () => _runtime.SaveSettingsAsync(settings),
             SettingsStatusText);
         if (saved)
         {
@@ -400,7 +411,25 @@ public partial class MainWindow : Window
             SelectBrowserConnectionMode(settings);
             RefreshBrowserConnectionUi();
         }
-        NexusTokenPasswordBox.Clear();
+    }
+
+    private async void PairNexusButton_Click(object sender, RoutedEventArgs e)
+    {
+        var endpoint = NexusEndpointTextBox.Text.Trim();
+        var pairingCode = NexusPairingCodePasswordBox.Password.Trim();
+        if (endpoint.Length == 0 || pairingCode.Length == 0)
+        {
+            MessageBox.Show(this, "请填写 NexusDock 地址和一次性配对码。", "AgentDock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var paired = await ExecuteActionAsync(
+            "正在配对并重启 AgentDock…",
+            () => _runtime.PairNexusAsync(endpoint, pairingCode),
+            NexusDeviceTokenStatusText);
+        if (paired)
+        {
+            NexusPairingCodePasswordBox.Clear();
+        }
     }
 
     private async void ElevatedCoreCheckBox_Click(object sender, RoutedEventArgs e)
