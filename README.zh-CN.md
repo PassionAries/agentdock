@@ -250,7 +250,7 @@ AgentDock 可以选择作为 ACP Client 原生托管本地 Coding Agent adapter�
 
 ### Recall 与 NexusDock 集成
 
-AgentDock 可以选择接入 NexusDock，为多个设备和 Agent 提供中心化能力：
+AgentDock 可以选择与 NexusDock 配对，将它作为多设备汇总入口：
 
 - 长期项目记忆
 - 运行手册和经验记录
@@ -258,7 +258,15 @@ AgentDock 可以选择接入 NexusDock，为多个设备和 Agent 提供中心�
 - 私密笔记
 - 多设备状态协同
 
-NexusDock 属于可选集成。未配置时，AgentDock 的基础文件、命令、Git、Skill、MCP、浏览器和任务能力仍可独立运行。
+先在 NexusDock 生成一次性配对码，再到 AgentDock 设备上运行：
+
+```bash
+agentdock nexus pair --endpoint https://nexus.example.com --code pair_xxx
+```
+
+配对完成后，AgentDock 使用 Device Token 主动建立出站 WSS 连接。只有 NexusDock 需要提供公网 HTTPS 地址；NexusDock 不需要 AgentDock 的 `/mcp` Token，也不需要能够访问设备的入站地址。AI 客户端可以只连接 NexusDock 的 `/mcp`，获得一套汇总后的工具；设备较少或需要故障兜底时，原有的 AgentDock `/mcp` 单节点直连方式仍然完整保留。
+
+NexusDock 属于可选集成。未配对时，AgentDock 的文件、命令、Git、Skill、MCP、浏览器和任务等核心能力仍可独立运行。
 
 ## 使用 OAuth 接入 ChatGPT
 

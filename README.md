@@ -248,7 +248,7 @@ AgentDock can optionally act as a native ACP client and host a local coding-agen
 
 ### Recall and NexusDock integration
 
-AgentDock can optionally connect to NexusDock to provide centralized capabilities for multiple devices and agents:
+AgentDock can optionally pair with NexusDock as a multi-device aggregation entrypoint:
 
 - Long-term project memory
 - Runbooks and experience records
@@ -256,7 +256,15 @@ AgentDock can optionally connect to NexusDock to provide centralized capabilitie
 - Private notes
 - Multi-device state coordination
 
-NexusDock is optional. Without it, AgentDock still provides its core file, command, Git, Skill, MCP, browser, and task capabilities independently.
+Generate a one-time pairing code in NexusDock, then run on the AgentDock device:
+
+```bash
+agentdock nexus pair --endpoint https://nexus.example.com --code pair_xxx
+```
+
+AgentDock then opens an outbound WSS connection using its Device Token. Only NexusDock needs a public HTTPS endpoint; NexusDock never needs the AgentDock `/mcp` token or an inbound device URL. Clients may connect to NexusDock `/mcp` for one aggregated tool set, while direct AgentDock `/mcp` access remains fully available for small deployments and fallback.
+
+NexusDock is optional. Without pairing, AgentDock continues to provide its core file, command, Git, Skill, MCP, browser, and task capabilities independently.
 
 ## Connect ChatGPT with OAuth
 

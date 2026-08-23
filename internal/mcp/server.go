@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +57,33 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 
 func (s *Server) AgentDockContext(ctx context.Context) (app.Result, error) {
 	return s.runtime.AgentDockContext(ctx)
+}
+
+func (s *Server) ToolNames() []string {
+	if s == nil || s.runtime == nil {
+		return nil
+	}
+	return s.runtime.ToolNames()
+}
+
+func (s *Server) ToolContractHash() string {
+	encoded, err := json.Marshal(s.ToolDescriptors())
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(encoded))
+}
+
+func (s *Server) ToolDescriptors() []map[string]any {
+	return toolDescriptorsForNames(s.ToolNames())
+}
+
+func (s *Server) Invoke(ctx context.Context, name string, arguments map[string]any) (map[string]any, error) {
+	if s == nil || s.runtime == nil {
+		return nil, errors.New("AgentDock runtime is not initialized")
+	}
+	result, err := s.runtime.Call(ctx, name, arguments)
+	return toolEnvelope(name, result, err), nil
 }
 
 func (s *Server) HTTPHandler() http.Handler {
@@ -174,6 +202,13 @@ func toolDescriptorsForNames(names []string) []map[string]any {
 			"description":  def.Description,
 			"inputSchema":  inputSchema(name),
 			"outputSchema": outputSchema(name),
+		}
+		if def.Annotations != nil {
+			descriptor["annotations"] = map[string]any{
+				"title": def.Annotations.Title, "readOnlyHint": def.Annotations.ReadOnlyHint,
+				"destructiveHint": def.Annotations.DestructiveHint, "idempotentHint": def.Annotations.IdempotentHint,
+				"openWorldHint": def.Annotations.OpenWorldHint,
+			}
 		}
 		meta := toolMetadata(def)
 		if paths, ok := meta["file_arg_rewrite_paths"].([]string); ok {

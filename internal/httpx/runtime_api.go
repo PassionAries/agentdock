@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,31 @@ import (
 	"github.com/uvwt/agentdock/internal/config"
 	"github.com/uvwt/agentdock/internal/mcp"
 )
+
+type RuntimeBridgeRequest struct {
+	Method string          `json:"method"`
+	Path   string          `json:"path"`
+	Query  url.Values      `json:"query,omitempty"`
+	Body   json.RawMessage `json:"body,omitempty"`
+}
+
+func DispatchRuntimeBridgeRequest(ctx context.Context, server *mcp.Server, request RuntimeBridgeRequest) (map[string]any, error) {
+	method := strings.ToUpper(strings.TrimSpace(request.Method))
+	path := strings.TrimSpace(request.Path)
+	if !strings.HasPrefix(path, "/internal/runtime/") || !runtimeAPIMethodAllowed(method, path) {
+		return nil, &app.ToolError{Code: "NOT_FOUND", Message: "runtime API route not found", Category: "not_found"}
+	}
+	if len(request.Body) > 64*1024 {
+		return nil, &app.ToolError{Code: "INVALID_ARGUMENT", Message: "runtime request body is too large", Category: "validation"}
+	}
+	parsed := &url.URL{Path: path, RawQuery: request.Query.Encode()}
+	httpRequest := &http.Request{
+		Method: method,
+		URL:    parsed,
+		Body:   io.NopCloser(bytes.NewReader(request.Body)),
+	}
+	return dispatchRuntimeAPI(ctx, server, httpRequest)
+}
 
 func registerRuntimeAPI(mux *http.ServeMux, server *mcp.Server, cfg config.Config, oauthStore *auth.OAuthStore) {
 	h := runtimeAPIHandler(server, cfg, oauthStore)

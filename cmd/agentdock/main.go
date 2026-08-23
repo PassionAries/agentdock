@@ -21,6 +21,7 @@ import (
 	"github.com/uvwt/agentdock/internal/desktopruntime"
 	"github.com/uvwt/agentdock/internal/httpx"
 	"github.com/uvwt/agentdock/internal/mcp"
+	"github.com/uvwt/agentdock/internal/nexusbridge"
 	"github.com/uvwt/agentdock/internal/selfupdate"
 	skills "github.com/uvwt/agentdock/internal/skill"
 	skillbundle "github.com/uvwt/agentdock/internal/skill/bundle"
@@ -81,7 +82,40 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "skill" {
 		return runSkillCommand(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "nexus" {
+		return runNexusCommand(ctx, args[1:], stdout, stderr)
+	}
 	return runServer(ctx, args, stderr)
+}
+
+func runNexusCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "pair" {
+		return errors.New("用法：agentdock nexus pair --endpoint <URL> --code <配对码> [--name <名称>]")
+	}
+	flags := flag.NewFlagSet("agentdock nexus pair", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	endpoint := flags.String("endpoint", "", "NexusDock public base URL")
+	code := flags.String("code", "", "one-time pairing code")
+	name := flags.String("name", "", "device display name (defaults to hostname)")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("用法：agentdock nexus pair --endpoint <URL> --code <配对码> [--name <名称>]")
+	}
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Normalize(); err != nil {
+		return err
+	}
+	identity, err := nexusbridge.Pair(ctx, cfg.AgentDockHome, nexusbridge.PairOptions{Endpoint: *endpoint, Code: *code, Name: *name})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "AgentDock 已配对到 NexusDock，node_id=%s；重启 AgentDock 后自动连接。\n", identity.NodeID)
+	return nil
 }
 
 func runServiceCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -173,6 +207,7 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "  agentdock service <status|start|stop|restart|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock tunnel <status|start|stop|restart|regenerate|configure|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock skill bootstrap --bundle <目录>")
+		fmt.Fprintln(stderr, "  agentdock nexus pair --endpoint <URL> --code <配对码> [--name <名称>]")
 		fmt.Fprintln(stderr, "\n服务参数：")
 		flags.PrintDefaults()
 	}
@@ -200,6 +235,15 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	if err := cfg.ValidateAuth(); err != nil {
 		return err
 	}
+	identity, identityErr := nexusbridge.Load(cfg.AgentDockHome)
+	if identityErr == nil && cfg.NexusEndpoint == "" {
+		// 配对后的 Device Token 同时用于 AgentDock 主动访问 Nexus 中心工具，
+		// 这样临时直连单节点时仍保留完整 Recall 能力，无需再配置旧 Nexus API Token。
+		cfg.NexusEndpoint = identity.Endpoint
+		cfg.NexusToken = identity.DeviceToken
+	} else if identityErr != nil && !errors.Is(identityErr, os.ErrNotExist) {
+		slog.Error("NexusDock device identity ignored", "error", identityErr)
+	}
 	logx.Setup(cfg.LogLevel)
 	if err := selfupdate.RepairDesktopRuntimeIfNeeded(ctx, stderr); err != nil {
 		// Windows v0.7.4 及更早版本只会替换 core。新版 core 启动时尝试补齐同版本控制面板，
@@ -219,6 +263,9 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	server := mcp.NewServer(runtime, cfg)
 	if cfg.Stdio {
 		return serveStdio(ctx, server)
+	}
+	if identityErr == nil {
+		go nexusbridge.NewClient(identity, server).Run(ctx)
 	}
 	runtimeRoot := strings.TrimSpace(os.Getenv("AGENTDOCK_RUNTIME_ROOT"))
 	if runtimeRoot == "" {
