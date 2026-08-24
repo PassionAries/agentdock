@@ -67,6 +67,8 @@ func OutputSchema(name string) map[string]any {
 		props["path"] = stringProp("Host directory path. Relative paths resolve from ~/AgentDock.")
 		props["files"] = arrayProp("Matched files.")
 		props["truncated"] = boolProp("Whether files were truncated.")
+		props["partial"] = boolProp("Whether unreadable descendant paths were skipped while returning readable matches.")
+		props["skipped_paths"] = arrayProp("Unreadable descendant paths skipped during traversal.")
 	case "search_text":
 		props["matches"] = arrayProp("Text search matches.")
 		props["engine"] = stringProp("Search engine used: rg or go_fallback.")

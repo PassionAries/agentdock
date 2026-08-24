@@ -32,5 +32,10 @@ func (m *Manager) handleNotification(method string, params json.RawMessage) {
 	if json.Unmarshal(notification.Update, &updateType) == nil && updateType.SessionUpdate != "" {
 		eventType = updateType.SessionUpdate
 	}
+	// agent_thought_chunk 属于模型私有推理过程，不是面向调用方的会话输出。
+	// 在事件进入持久的 run ring 之前丢弃，避免后续 MCP/HTTP 客户端读取到内部思考内容。
+	if eventType == "agent_thought_chunk" {
+		return
+	}
 	run.appendSessionUpdate(Event{Type: eventType, Update: append(json.RawMessage(nil), notification.Update...)})
 }

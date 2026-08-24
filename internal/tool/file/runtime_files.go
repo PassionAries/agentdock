@@ -2,6 +2,7 @@ package file
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -218,11 +219,23 @@ func (svc *Service) ListFiles(ctx context.Context, args map[string]any) (Result,
 	includeIgnored := boolArg(args, "include_ignored", false)
 	ignore := loadIgnoreMatcher(svc.ws.Root())
 	files := make([]map[string]any, 0)
+	skippedPaths := make([]string, 0)
 	err = filepath.WalkDir(p.Abs, func(abs string, d os.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if walkErr != nil {
+			// 搜索树中的单个后代目录可能由其他进程创建且当前用户不可读。
+			// 这不应让已经可读取的匹配结果全部丢失；根目录本身不可读仍按真实错误返回。
+			if abs != p.Abs && errors.Is(walkErr, os.ErrPermission) {
+				if rel, relErr := svc.ws.Relative(abs); relErr == nil {
+					skippedPaths = append(skippedPaths, rel)
+				}
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			return walkErr
 		}
 		rel, relErr := svc.ws.Relative(abs)
@@ -261,5 +274,10 @@ func (svc *Service) ListFiles(ctx context.Context, args map[string]any) (Result,
 		}
 		return nil
 	})
-	return addFileRuntimeResult(Result{"path": p.Display, "files": files, "truncated": maxResults > 0 && len(files) >= maxResults}, selection), err
+	result := Result{"path": p.Display, "files": files, "truncated": maxResults > 0 && len(files) >= maxResults}
+	if len(skippedPaths) > 0 {
+		result["partial"] = true
+		result["skipped_paths"] = skippedPaths
+	}
+	return addFileRuntimeResult(result, selection), err
 }

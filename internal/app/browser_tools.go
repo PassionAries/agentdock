@@ -35,7 +35,10 @@ func (r *Runtime) browserSession(ctx context.Context, args map[string]any) (Resu
 		result["browser_ok"] = true
 		return result, nil
 	case "close":
-		if err := validateBrowserKeys(args, "action", "session_id"); err != nil {
+		if err := validateBrowserKeys(args, "action", "session_id", "timeout_ms"); err != nil {
+			return browserFailure(err), nil
+		}
+		if _, err := durationArg(args, "timeout_ms", 30*time.Second, time.Millisecond, 5*time.Minute); err != nil {
 			return browserFailure(err), nil
 		}
 		sessionID, err := requiredString(args, "session_id")
@@ -50,7 +53,10 @@ func (r *Runtime) browserSession(ctx context.Context, args map[string]any) (Resu
 		result["browser_ok"] = true
 		return result, nil
 	case "cleanup_stale":
-		if err := validateBrowserKeys(args, "action", "max_age_ms"); err != nil {
+		if err := validateBrowserKeys(args, "action", "max_age_ms", "timeout_ms"); err != nil {
+			return browserFailure(err), nil
+		}
+		if _, err := durationArg(args, "timeout_ms", 30*time.Second, time.Millisecond, 5*time.Minute); err != nil {
 			return browserFailure(err), nil
 		}
 		maxAge, err := durationArg(args, "max_age_ms", 6*time.Hour, time.Millisecond, 365*24*time.Hour)
