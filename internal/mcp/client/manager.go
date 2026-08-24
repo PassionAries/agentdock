@@ -393,10 +393,10 @@ func (m *Manager) Call(ctx context.Context, qualifiedName string, arguments map[
 	}
 	result, err := state.client.callTool(ctx, name, arguments)
 	if err != nil {
-		state.lastError = err.Error()
+		// 工具调用失败是请求级结果，不代表 MCP server 的连接或发现状态失效。
+		// server 的 lastError 只记录 refresh / initialize / tools/list 生命周期故障。
 		return nil, err
 	}
-	state.lastError = ""
 	return result, nil
 }
 
