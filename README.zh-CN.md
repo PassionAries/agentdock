@@ -11,7 +11,7 @@
 打开网页版 ChatGPT，即可管理多台电脑与服务器：在真实设备上写代码、改配置、跑命令与部署，执行发生在你的机器上，不消耗Codex额度。
 
 
-[快速开始](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/install) · [在线文档](https://uvwt.github.io/agentdock-docs/zh-CN/) · [版本发布](https://github.com/uvwt/agentdock/releases) · [问题反馈](https://github.com/uvwt/agentdock/issues)
+[在线文档](https://uvwt.github.io/agentdock-docs/zh-CN/) · [下载安装](https://github.com/uvwt/agentdock/releases) · [QQ群](https://qun.qq.com/universal-share/share?ac=1&authKey=Rp86bSzI7vqm87KoYlKawgsPZ440Ubhyezw6Qkgcn3JISwX3zXxsXkbS5598RrY5&busi_data=eyJncm91cENvZGUiOiIxMDgxMzM3MDE5IiwidG9rZW4iOiJ0Mlg1bUU1ZWtuZzF3SHJDT3pSaGsrOURIMlNYaXBlYllOUjNLZ1BUb1hzM2lJSTZjeVNldzU0ajl0SjRVZkx2IiwidWluIjoiMzIwMjA4ODAzMiJ9&data=W28mWvuqaLf_Fwnf0CgAJXuDs6l3A78V7AoWZnizPboCpKoQMzHzZ-UlluYo47U3tmIBHK2xIgWEVEJbTiGsPQ&svctype=4&tempid=h5_group_info)
 
 [![CI](https://github.com/uvwt/agentdock/actions/workflows/ci.yml/badge.svg)](https://github.com/uvwt/agentdock/actions/workflows/ci.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/uvwt/agentdock?display_name=tag&logo=github)](https://github.com/uvwt/agentdock/releases)
@@ -67,17 +67,6 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 - 用同一套工具模型连接 macOS、Linux、Windows 与容器环境
 - 等等
 
-## 典型场景：跨设备完成内网穿透
-
-例如你有一台位于内网中的电脑。要让外部访问它，通常需要：
-
-1. **本地电脑**：启动并检查穿透客户端
-2. **服务器**：配置转发、端口、域名和反向代理
-
-过去需要分别登录两台设备来回操作。现在只需打开一个 ChatGPT 网页，把两台机器上的 AgentDock 都接入对话，即可让 AI 同时操作电脑和服务器，完成整套流程。
-
-这类能力可以继续扩展到更多实际场景：多机部署、本地开发联调公网服务、跨环境排障、批量配置与状态巡检等。
-
 
 ## 快速开始
 
@@ -85,61 +74,15 @@ AgentDock 不提供聊天界面，也不负责模型推理。它专注于解决�
 
 完整步骤见 [安装 AgentDock](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/install)。
 
-| 平台 | 推荐安装方式 |
+
+| 平台 | 文档 |
 | --- | --- |
-| Windows 11 | Windows 图形安装程序（.exe） |
-| macOS 13 或更高版本 | 通用 DMG 图形应用 |
-| Linux | 官方自动安装脚本 |
-| 已安装 Docker | Docker Compose |
+| Docker | [Docker 快速部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker) |
+| Linux | [Linux 自动安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/linux) |
+| Linux / VPS | [systemd 部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/vps) |
+| macOS | [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos) |
+| Windows | [Windows 图形安装程序](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows) |
 
-### Windows
-
-1. 打开 [最新 Release](https://github.com/uvwt/agentdock/releases/latest)。
-2. 大多数 Intel/AMD 电脑下载 `AgentDockSetup-amd64.exe`；Windows ARM 设备下载 `AgentDockSetup-arm64.exe`。
-3. 双击安装程序，并按界面提示继续。
-4. 根据 MCP 客户端所在位置和实际使用方式选择连接方式。
-5. 点击“完成”后会打开控制面板；“添加桌面快捷方式”默认已勾选。
-
-安装包已经包含 AgentDock 核心、控制面板、核心 Skill 和 Cloudflare 组件。升级时重新运行最新版 Setup，默认会保留任务、Skill、配置、连接方式和工作目录。
-
-详细说明见 [Windows 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows)。
-
-### macOS
-
-1. 从 [最新 Release](https://github.com/uvwt/agentdock/releases/latest) 下载 `AgentDock-macos-universal.dmg`。
-2. 打开 DMG，把 `AgentDock.app` 拖到“应用程序”。
-3. 第一次启动时，在“应用程序”中右键 AgentDock 并选择“打开”。
-4. 在图形界面中选择“仅本机”“临时地址”或“固定域名”，然后点击“安装并启动”。
-
-同一个 DMG 支持 Apple 芯片和 Intel Mac。当前版本尚未经过 Apple 公证，因此第一次启动需要手动确认一次，不需要关闭 Gatekeeper。
-
-详细说明见 [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos)。
-
-### Linux
-
-在终端运行：
-
-```bash
-curl -fsSL https://github.com/uvwt/agentdock/releases/latest/download/install.sh \
-  -o /tmp/install-agentdock.sh
-sudo env AGENTDOCK_NONINTERACTIVE=true sh /tmp/install-agentdock.sh
-```
-
-安装器会使用安全默认值完成安装、启动和健康检查。详细说明见 [Linux 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/linux)。
-
-### Docker
-
-```bash
-mkdir agentdock && cd agentdock
-curl -fL \
-  https://raw.githubusercontent.com/uvwt/agentdock/main/docker-compose.yml \
-  -o docker-compose.yml
-export AGENTDOCK_AUTH_TOKEN="$(openssl rand -hex 32)"
-docker compose pull
-docker compose up -d
-```
-
-默认 MCP 地址是 `http://127.0.0.1:8765/mcp`。数据持久化和公网访问见 [Docker 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker)。
 
 ### 连接方式如何选择
 
@@ -166,30 +109,6 @@ AgentDock 通过 MCP Streamable HTTP 提供工具能力。下面是一个通用�
 }
 ```
 
-如果 AgentDock 仅监听本机回环地址并明确关闭认证，可以不发送 `Authorization` 请求头。对局域网或公网开放时，必须启用认证，并配置 HTTPS 和网络访问控制。
-
-## 平台安装
-
-| 平台 | 文档 |
-| --- | --- |
-| Docker | [Docker 快速部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/docker) |
-| Linux | [Linux 自动安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/linux) |
-| Linux / VPS | [systemd 部署](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/vps) |
-| macOS | [macOS 安装](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/macos) |
-| Windows | [Windows 图形安装程序](https://uvwt.github.io/agentdock-docs/zh-CN/docs/getting-started/windows) |
-
-每个平台文档均包含安装步骤、启动检查、MCP 地址和认证方式。浏览器自动化、macOS 桌面操作、Windows / WSL、反向代理和数据迁移等内容位于对应进阶文档。
-
-## 版本更新
-
-正式 Release 二进制支持直接查看版本和更新：
-
-```bash
-agentdock --version
-agentdock update
-```
-
-`agentdock update` 会下载匹配当前平台的最新 Release，校验 SHA-256 并验证新二进制，然后备份和替换当前版本。检测到 LaunchAgent、systemd、Windows Service、最高权限计划任务或 Windows 用户启动项时，会自动重启并验证新版本；失败时恢复旧版本。开发构建不能通过该命令更新。Windows 托盘调用的也是这条核心更新链路；托盘程序和 Setup 本身通过重新运行新版 `AgentDockSetup.exe` 更新。
 
 ## 核心能力
 
@@ -229,7 +148,7 @@ AgentDock 可以选择作为 ACP Client 原生托管本地 Coding Agent adapter�
 - 桌面控制面板提供 Codex、Claude 和 Grok 预设；是否启用 ACP 以及选择哪个 adapter 由宿主配置决定。
 - 使用 `acp_session` 创建和管理会话，使用 `acp_prompt` 发起并观察 prompt，使用 `acp_interaction` 响应 Agent 的权限请求。
 - 可选 ACP 操作只会在已连接 adapter 声明相应能力时开放。
-- ACP 工作目录遵循宿主进程或容器的安全边界，而不是 AgentDock 文件系统 allowlist；具体边界见下方“安全模型”。
+- ACP 工作目录遵循宿主进程或容器的安全边界，而不是 AgentDock 文件系统 allowlist。
 
 ### 浏览器与桌面自动化
 
@@ -258,83 +177,12 @@ AgentDock 可以选择与 NexusDock 配对，将它作为多设备汇总入口�
 - 私密笔记
 - 多设备状态协同
 
-先在 NexusDock 生成一次性配对码，再到 AgentDock 设备上运行：
-
-```bash
-agentdock nexus pair --endpoint https://nexus.example.com --code pair_xxx
-```
-
-配对完成后，AgentDock 使用 Device Token 主动建立出站 WSS 连接。只有 NexusDock 需要提供公网 HTTPS 地址；NexusDock 不需要 AgentDock 的 `/mcp` Token，也不需要能够访问设备的入站地址。AI 客户端可以只连接 NexusDock 的 `/mcp`，获得一套汇总后的工具；设备较少或需要故障兜底时，原有的 AgentDock `/mcp` 单节点直连方式仍然完整保留。
-
-Device Token 只由配对流程签发并保存在 AgentDock 私有状态目录中，同时用于 Recall、工作流、私密笔记和 Evolution API；不再存在单独的 Nexus Token 或 Nexus 凭据环境变量。Windows 和 macOS 控制面板提供相同的“地址 + 一次性配对码”流程，并且只显示 Device Token 是否已安全保存，不允许手工填写或替换 Token。
-
-NexusDock 属于可选集成。未配对时，AgentDock 的文件、命令、Git、Skill、MCP、浏览器和任务等核心能力仍可独立运行。
-
-## 使用 OAuth 接入 ChatGPT
-
-ChatGPT 通过自定义 MCP 插件访问公网 AgentDock 时，推荐启用 OAuth。AgentDock 支持 Authorization Code、PKCE S256、动态客户端注册和 Refresh Token，ChatGPT 可以自动完成客户端注册，不需要手动创建 Client ID 或 Client Secret。
-
-服务端至少配置：
-
-```bash
-AGENTDOCK_OAUTH_ENABLED=true
-AGENTDOCK_SERVER_URL=https://agentdock.example.com
-AGENTDOCK_OAUTH_PASSWORD=<至少-12-个字符的授权密码>
-AGENTDOCK_OAUTH_TOKEN_SECRET=<至少-32-字节的随机签名密钥>
-# 可选，默认 1h；支持 Go duration、999999d 这类整数天数，或 never（服务端永不过期）
-# never 模式会为兼容 OAuth 客户端对外声明 999999d，但服务端不会让 Access Token 到期
-AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL=1h
-```
-
-然后进入 ChatGPT 的 **设置 > 插件 > 高级设置**，开启开发人员模式并创建插件，MCP Server URL 填写：
-
-```text
-https://agentdock.example.com/mcp
-```
-
-保存插件后，浏览器会打开 AgentDock 授权页。确认请求来自刚刚创建的 ChatGPT 插件，输入 `AGENTDOCK_OAUTH_PASSWORD` 并完成授权，再通过一次 `server_info` 或其他只读工具调用验证连接。
-
-公网入口必须使用 HTTPS，`AGENTDOCK_SERVER_URL` 只填写 Origin，不附加 `/mcp`。完整步骤、端点验证和常见问题见 [ChatGPT 接入教程](https://uvwt.github.io/agentdock-docs/zh-CN/docs/guides/chatgpt)。
-
-Windows 桌面端可在控制面板“高级设置”中配置 OAuth Access Token TTL，支持 `1h`、`30d`、`never` 等与 `AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL` 相同的语法。保存后普通启动和管理员计划任务都会读取同一份 `control-panel-settings.json`；留空时才继承启动环境里的 `AGENTDOCK_OAUTH_ACCESS_TOKEN_TTL`，两者都未设置则使用核心默认的 `1h`。桌面端也会把误填的 `https://agentdock.example.com/mcp` 自动规范为 Origin。
-
-## 镜像版本
-
-| 镜像标签 | 用途 |
-| --- | --- |
-| `latest` / `<version>` | 正式运行镜像，不包含 Go 编译工具链 |
-| `dev-latest` / `dev-<version>` | 开发镜像，包含 Go、C 和 C++ 构建工具链 |
-| `browser-latest` / `browser-<version>` | Go 原生 CDP 浏览器自动化镜像，包含 Chromium 运行环境 |
-
-浏览器工具（`browser_session`、`browser_act`、`browser_snapshot`）使用 Go 原生 CDP。非 browser 镜像环境默认需要本机安装 Chrome、Chromium 或 Microsoft Edge；AgentDock 不自动下载浏览器，浏览器能力不依赖 Node.js 或 Playwright。
-
-也可以直接复用已经开启远程调试的 Chromium 系浏览器：`browser_session start` 的 `cdp_url` 只接受本机 loopback 地址；Docker 或其他远端场景请由用户通过环境变量或桌面设置配置 `AGENTDOCK_BROWSER_CDP_URL`。AgentDock 会在外部浏览器中创建并仅管理自己的目标页，关闭 AgentDock session 不会退出外部浏览器，也不会把既有用户标签页纳入 session。外部 session 不允许注入 Cookie 或 localStorage，避免修改用户现有浏览器 profile。
-
-`AGENTDOCK_BROWSER_REUSE_EXISTING_CDP=true` 可由用户配置开启本机自动复用，默认关闭，工具调用不能临时覆盖开启。发现逻辑只跟随 Chromium 系浏览器进程的 `--remote-debugging-port` 和对应 `DevToolsActivePort`，CDP HTTP 探测不会继承宿主机代理；没有候选时继续按原逻辑启动 AgentDock 自己的浏览器，唯一候选才自动连接，多个候选会要求用户显式配置 CDP 地址。Docker 容器无法枚举宿主机进程或 profile，因此容器接入宿主机已有浏览器时应显式配置可达的 CDP 地址。
-
-正式镜像同步发布到：
-
-```text
-ghcr.io/uvwt/agentdock
-agentdockio/agentdock
-```
-
-正式环境建议固定具体版本，不要长期直接依赖 `latest`：
-
-```yaml
-services:
-  agentdock:
-    image: ghcr.io/uvwt/agentdock:<version>
-```
-
 ## 运行目录
 
 | 路径 | 用途 |
 | --- | --- |
 | `~/AgentDock` | 相对文件操作的默认工作目录 |
 | `~/.agentdock` | AgentDock 状态、配置、会话和扩展数据 |
-
-Docker 部署默认使用 named volume 保存持久化数据，以减少 Linux bind mount 的 UID 和 GID 冲突。需要让 AgentDock 访问宿主机目录时，应显式挂载所需路径，不要直接挂载整个根目录。
 
 ## 端口说明
 
@@ -344,53 +192,7 @@ Docker、原生安装和本地开发的默认 MCP 地址：
 
 端口可以通过配置调整，客户端应以实际部署配置为准。
 
-## 安全模型
-
-AgentDock 会直接操作宿主机或容器内的真实资源，应将其视为基础设施服务进行部署和授权。
-
-### 网络安全
-
-- 仅监听回环地址时，可以根据实际需求关闭认证
-- 监听非回环地址时，必须启用 Bearer Token 或 OAuth
-- 对公网提供服务时，必须配置 HTTPS
-- 推荐配合防火墙、反向代理和网络访问控制
-- 不要直接将未认证的 MCP 服务暴露到公网
-
-### 权限边界
-
-- 使用独立系统用户运行 AgentDock
-- 只授予完成实际任务所需的文件权限
-- Docker 中只挂载需要访问的目录
-- 不授予不必要的 root、Docker Socket 或宿主机权限
-- Skill 与动态 MCP 的敏感变量使用独立环境存储
-- ACP executable、参数和环境映射只能由宿主机配置，不能通过远程工具修改
-- ACP 工作目录不受 AgentDock 允许根目录限制；实际安全边界是 AgentDock 进程用户以及宿主机或容器的 ACL、挂载和网络策略
-
-### 执行验证
-
-- 命令退出状态与工具调用状态分离
-- 文件修改后检查真实差异
-- 部署后验证进程、端口、日志和服务响应
-- 长任务设置明确的完成条件
-- 不仅根据“命令已执行”判断任务成功
-
-## 从源码运行
-
-本节面向 AgentDock 贡献者和需要调试运行时的开发者。
-
-```bash
-git clone https://github.com/uvwt/agentdock.git
-cd agentdock
-
-make check
-make run
-```
-
-源码开发模式默认监听：
-
-```text
-http://127.0.0.1:8765/mcp
-```
+公网部署必须启用 Bearer Token 或 OAuth 认证并使用 HTTPS，不要将未认证的 MCP 服务暴露到公网。
 
 ## 开发与贡献
 
@@ -406,12 +208,6 @@ make check
 
 提交问题或功能建议请使用 [GitHub Issues](https://github.com/uvwt/agentdock/issues)。
 
-## 项目边界
-
-AgentDock 是工具运行层，不是完整的 AI 应用平台。
-
-它不包含聊天界面、大模型推理服务、模型账号或 API 额度，也不会绕过认证或系统安全控制。AgentDock 可以被 ChatGPT、Claude、Codex 或其他支持 MCP 的 Agent 客户端调用，实际接入方式取决于客户端对 MCP 传输和认证配置的支持。
-
 ## 相关链接
 
 - [在线文档](https://uvwt.github.io/agentdock-docs/zh-CN/)
@@ -424,3 +220,7 @@ AgentDock 是工具运行层，不是完整的 AI 应用平台。
 ## License
 
 Apache License 2.0. See [LICENSE](./LICENSE).
+
+## 交流反馈
+
+[加入 QQ 群（1081337019）](https://qun.qq.com/universal-share/share?ac=1&authKey=Rp86bSzI7vqm87KoYlKawgsPZ440Ubhyezw6Qkgcn3JISwX3zXxsXkbS5598RrY5&busi_data=eyJncm91cENvZGUiOiIxMDgxMzM3MDE5IiwidG9rZW4iOiJ0Mlg1bUU1ZWtuZzF3SHJDT3pSaGsrOURIMlNYaXBlYllOUjNLZ1BUb1hzM2lJSTZjeVNldzU0ajl0SjRVZkx2IiwidWluIjoiMzIwMjA4ODAzMiJ9&data=W28mWvuqaLf_Fwnf0CgAJXuDs6l3A78V7AoWZnizPboCpKoQMzHzZ-UlluYo47U3tmIBHK2xIgWEVEJbTiGsPQ&svctype=4&tempid=h5_group_info)
