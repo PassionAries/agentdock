@@ -20,12 +20,13 @@ import (
 
 type Server struct {
 	runtime     *app.Runtime
+	cfg         config.Config
 	sdk         *mcpsdk.Server
 	httpHandler http.Handler
 }
 
 func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
-	server := &Server{runtime: runtime}
+	server := &Server{runtime: runtime, cfg: cfg}
 	serverOptions := &mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}}
 	if cfg.Instructions != "" {
 		// 可选说明文字随 initialize 响应下发，由支持 MCP instructions 的客户端注入模型上下文。
@@ -75,7 +76,7 @@ func (s *Server) ToolContractHash() string {
 }
 
 func (s *Server) ToolDescriptors() []map[string]any {
-	return toolDescriptorsForNames(s.ToolNames())
+	return toolDescriptorsForNames(s.ToolNames(), s.cfg)
 }
 
 func (s *Server) Invoke(ctx context.Context, name string, arguments map[string]any) (map[string]any, error) {
@@ -192,7 +193,7 @@ type writeCloser struct{ io.Writer }
 
 func (writeCloser) Close() error { return nil }
 
-func toolDescriptorsForNames(names []string) []map[string]any {
+func toolDescriptorsForNames(names []string, cfg config.Config) []map[string]any {
 	descriptors := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		def, _ := toolDefinition(name)
@@ -200,8 +201,8 @@ func toolDescriptorsForNames(names []string) []map[string]any {
 			"name":         name,
 			"title":        def.Title,
 			"description":  def.Description,
-			"inputSchema":  inputSchema(name),
-			"outputSchema": outputSchema(name),
+			"inputSchema":  app.InputSchemaForConfig(name, cfg),
+			"outputSchema": app.OutputSchemaForConfig(name, cfg),
 		}
 		if def.Annotations != nil {
 			descriptor["annotations"] = map[string]any{

@@ -15,7 +15,7 @@ import (
 )
 
 func TestToolDescriptorsDoNotExposePermissionAnnotations(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package"})
+	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package"}, config.Config{})
 	byName := map[string]map[string]any{}
 	for _, descriptor := range descriptors {
 		name, _ := descriptor["name"].(string)
@@ -29,7 +29,7 @@ func TestToolDescriptorsDoNotExposePermissionAnnotations(t *testing.T) {
 }
 
 func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"file_publish"})
+	descriptors := toolDescriptorsForNames([]string{"file_publish"}, config.Config{})
 	byName := map[string]map[string]any{}
 	for _, descriptor := range descriptors {
 		name, _ := descriptor["name"].(string)
@@ -42,6 +42,28 @@ func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
 	meta, ok := byName["file_publish"]["_meta"].(map[string]any)
 	if !ok || meta["file_arg_rewrite_paths"] == nil || meta["openai/fileParams"] == nil {
 		t.Fatalf("file_publish _meta missing: %#v", meta)
+	}
+}
+
+func TestToolDescriptorsUseConfigAwareTaskManageSchema(t *testing.T) {
+	withoutNexus := toolDescriptorsForNames([]string{"task_manage"}, config.Config{})[0]
+	withoutProps := withoutNexus["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := withoutProps["template_id"]; ok {
+		t.Fatal("task_manage descriptor should hide Nexus-only fields without Nexus")
+	}
+	withoutOutputProps := withoutNexus["outputSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := withoutOutputProps["guidance_context"]; ok {
+		t.Fatal("task_manage descriptor should hide Nexus-only output fields without Nexus")
+	}
+
+	withNexus := toolDescriptorsForNames([]string{"task_manage"}, config.Config{NexusEndpoint: "http://127.0.0.1:18777"})[0]
+	withProps := withNexus["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := withProps["template_id"]; !ok {
+		t.Fatal("task_manage descriptor should expose Nexus fields with Nexus")
+	}
+	withOutputProps := withNexus["outputSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := withOutputProps["guidance_context"]; !ok {
+		t.Fatal("task_manage descriptor should expose Nexus output fields with Nexus")
 	}
 }
 
