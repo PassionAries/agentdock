@@ -19,6 +19,9 @@ import (
 	processcontrol "github.com/uvwt/agentdock/internal/process"
 )
 
+// go-sdk 公开 jsonrpc 包未导出 ErrRejected，只能通过稳定的 wire code 识别。
+const sdkTransportRejectedCode int64 = -32005
+
 type protocolClient interface {
 	initialize(context.Context) error
 	listTools(context.Context) ([]Tool, error)
@@ -198,6 +201,10 @@ func (c *sdkProtocolClient) wrapSDKError(operation string, err error) error {
 		message := strings.TrimSpace(rpcErr.Message)
 		if message == "" {
 			message = fmt.Sprintf("MCP JSON-RPC error %d", rpcErr.Code)
+		}
+		// go-sdk 的 transport rejection 是请求级故障，并明确保留逻辑连接可用。
+		if rpcErr.Code == sdkTransportRejectedCode {
+			return newError("MCP_TRANSPORT_REJECTED", message, true, details, err)
 		}
 		return newError("MCP_REMOTE_ERROR", message, false, details, err)
 	}
