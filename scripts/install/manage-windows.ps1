@@ -293,7 +293,6 @@ $AuthTokenPath = Join-Path $RuntimeRoot 'auth-token.dpapi'
 $OAuthPasswordPath = Join-Path $RuntimeRoot 'oauth-password.dpapi'
 $OAuthSecretPath = Join-Path $RuntimeRoot 'oauth-token-secret.dpapi'
 $TunnelTokenPath = Join-Path $RuntimeRoot 'cloudflared-token.dpapi'
-$NexusTokenPath = Join-Path $RuntimeRoot 'nexus-token.dpapi'
 $TunnelModePath = Join-Path $RuntimeRoot 'cloudflared-mode.txt'
 $ServerUrlPath = Join-Path $RuntimeRoot 'server-url.txt'
 $NamedServerUrlPath = Join-Path $RuntimeRoot 'named-server-url.txt'
@@ -356,7 +355,6 @@ function Get-ControlPanelSettings {
     return [pscustomobject][ordered]@{
         port = $storedPort
         log_level = $storedLogLevel
-        nexus_endpoint = [string] (Get-ObjectProperty -Object $stored -Name 'nexus_endpoint' -Default '')
         browser_enabled = Convert-ToBoolean -Value (Get-ObjectProperty -Object $stored -Name 'browser_enabled' -Default $false)
         acp_enabled = Convert-ToBoolean -Value (Get-ObjectProperty -Object $stored -Name 'acp_enabled' -Default $false)
         acp_agent = $storedACPAgent

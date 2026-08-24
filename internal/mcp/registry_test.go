@@ -172,7 +172,7 @@ func TestPrivateNoteManageIsHiddenWithoutNexus(t *testing.T) {
 	}
 	for _, name := range rt.ToolNames() {
 		if name == "private_note_manage" {
-			t.Fatal("private_note_manage must be hidden when AGENTDOCK_NEXUS_ENDPOINT is not configured")
+			t.Fatal("private_note_manage must be hidden when AgentDock is not paired with NexusDock")
 		}
 	}
 }

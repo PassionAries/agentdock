@@ -54,6 +54,24 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestNexusStatusReportsUnpairedWithoutExposingToken(t *testing.T) {
+	t.Setenv("AGENTDOCK_HOME", t.TempDir())
+	var stdout bytes.Buffer
+	if err := run(context.Background(), []string{"nexus", "status", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Paired            bool `json:"paired"`
+		DeviceTokenStored bool `json:"device_token_stored"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		t.Fatalf("nexus status --json returned invalid JSON: %v", err)
+	}
+	if status.Paired || status.DeviceTokenStored || strings.Contains(stdout.String(), "device_token\"") {
+		t.Fatalf("unexpected unpaired status: %s", stdout.String())
+	}
+}
+
 func TestRunServiceLaunchCoreRequiresRuntimeRoot(t *testing.T) {
 	if runtime.GOOS == "darwin" {
 		if desktopruntime.DefaultRuntimeRoot() == "" {

@@ -41,7 +41,7 @@ type Config struct {
 	OAuthAccessTokenNeverExpires bool
 	LogLevel                     string
 	NexusEndpoint                string
-	NexusToken                   string
+	NexusDeviceToken             string
 	BrowserEnabled               bool
 	BrowserExecutablePath        string
 	BrowserCDPURL                string
@@ -125,8 +125,6 @@ func FromEnv() (Config, error) {
 		OAuthAccessTokenTTLSeconds:   oauthAccessTokenTTLSeconds,
 		OAuthAccessTokenNeverExpires: oauthAccessTokenNeverExpires,
 		LogLevel:                     getenv("AGENTDOCK_LOG_LEVEL", "info"),
-		NexusEndpoint:                getenv("AGENTDOCK_NEXUS_ENDPOINT", ""),
-		NexusToken:                   os.Getenv("AGENTDOCK_NEXUS_TOKEN"),
 		BrowserEnabled:               browserEnabled,
 		BrowserExecutablePath:        os.Getenv("AGENTDOCK_BROWSER_EXECUTABLE_PATH"),
 		BrowserCDPURL:                strings.TrimSpace(os.Getenv("AGENTDOCK_BROWSER_CDP_URL")),

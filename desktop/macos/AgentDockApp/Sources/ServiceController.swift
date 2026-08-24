@@ -124,6 +124,28 @@ final class ServiceController: @unchecked Sendable {
         }
     }
 
+    func nexusDeviceStatus() -> NexusDeviceStatus {
+        NexusDeviceStatus.load(from: paths.nexusDeviceIdentity)
+    }
+
+    func pairNexus(endpoint: String, pairingCode: String) async throws {
+        let endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pairingCode = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty, !pairingCode.isEmpty else {
+            throw ValidationError("NexusDock 地址和一次性配对码不能为空。")
+        }
+        let result = try await runInBackground {
+            try runProcess(
+                executable: self.paths.binary.path,
+                arguments: ["nexus", "pair", "--endpoint", endpoint, "--code", pairingCode]
+            )
+        }
+        guard result.status == 0 else {
+            throw ValidationError(commandError(result.output, action: "NexusDock 配对"))
+        }
+        try await restart()
+    }
+
     func setAutostart(enabled: Bool) async throws {
         if enabled {
             try await start()

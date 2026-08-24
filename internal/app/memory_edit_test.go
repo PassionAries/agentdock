@@ -16,6 +16,9 @@ import (
 func newMemoryTestRuntime(t *testing.T, store map[string]string) (*Runtime, func()) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-device-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/recall/"):
@@ -79,7 +82,10 @@ func newMemoryTestRuntime(t *testing.T, store map[string]string) (*Runtime, func
 			http.NotFound(w, r)
 		}
 	}))
-	cfg := config.Config{AgentDockDefaultDir: t.TempDir(), AgentDockHome: filepath.Join(t.TempDir(), ".agentdock"), NexusEndpoint: server.URL}
+	cfg := config.Config{
+		AgentDockDefaultDir: t.TempDir(), AgentDockHome: filepath.Join(t.TempDir(), ".agentdock"),
+		NexusEndpoint: server.URL, NexusDeviceToken: "test-device-token",
+	}
 	if err := cfg.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
 	}

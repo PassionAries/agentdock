@@ -21,6 +21,7 @@ import (
 	"github.com/uvwt/agentdock/internal/desktopruntime"
 	"github.com/uvwt/agentdock/internal/httpx"
 	"github.com/uvwt/agentdock/internal/mcp"
+	"github.com/uvwt/agentdock/internal/nexusbridge"
 	"github.com/uvwt/agentdock/internal/selfupdate"
 	skills "github.com/uvwt/agentdock/internal/skill"
 	skillbundle "github.com/uvwt/agentdock/internal/skill/bundle"
@@ -81,7 +82,87 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 0 && args[0] == "skill" {
 		return runSkillCommand(ctx, args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "nexus" {
+		return runNexusCommand(ctx, args[1:], stdout, stderr)
+	}
 	return runServer(ctx, args, stderr)
+}
+
+func runNexusCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return nexusCommandUsageError()
+	}
+	switch args[0] {
+	case "pair":
+		return runNexusPairCommand(ctx, args[1:], stdout, stderr)
+	case "status":
+		return runNexusStatusCommand(args[1:], stdout, stderr)
+	default:
+		return nexusCommandUsageError()
+	}
+}
+
+func runNexusPairCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("agentdock nexus pair", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	endpoint := flags.String("endpoint", "", "NexusDock public base URL")
+	code := flags.String("code", "", "one-time pairing code")
+	name := flags.String("name", "", "device display name (defaults to hostname)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("用法：agentdock nexus pair --endpoint <URL> --code <配对码> [--name <名称>]")
+	}
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Normalize(); err != nil {
+		return err
+	}
+	identity, err := nexusbridge.Pair(ctx, cfg.AgentDockHome, nexusbridge.PairOptions{Endpoint: *endpoint, Code: *code, Name: *name})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "AgentDock 已配对到 NexusDock，node_id=%s；重启 AgentDock 后自动连接。\n", identity.NodeID)
+	return nil
+}
+
+func runNexusStatusCommand(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("agentdock nexus status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	jsonOutput := flags.Bool("json", false, "print machine-readable status")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return nexusCommandUsageError()
+	}
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
+	if err := cfg.Normalize(); err != nil {
+		return err
+	}
+	status, err := nexusbridge.ReadStatus(cfg.AgentDockHome)
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return json.NewEncoder(stdout).Encode(status)
+	}
+	if !status.Paired {
+		_, err = fmt.Fprintln(stdout, "AgentDock 尚未与 NexusDock 配对。")
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "AgentDock 已配对到 %s，node_id=%s，Device Token 已保存。\n", status.Endpoint, status.NodeID)
+	return err
+}
+
+func nexusCommandUsageError() error {
+	return errors.New("用法：agentdock nexus <pair --endpoint <URL> --code <配对码> [--name <名称>] | status [--json]>")
 }
 
 func runServiceCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -158,6 +239,10 @@ func printVersion(output io.Writer) {
 }
 
 func runServer(ctx context.Context, args []string, stderr io.Writer) error {
+	// 旧 Nexus 环境凭据已被配对身份取代。启动前主动清除，避免废弃密钥
+	// 继续留在进程环境并被后续启动的本地工具继承。
+	_ = os.Unsetenv("AGENTDOCK_NEXUS_ENDPOINT")
+	_ = os.Unsetenv("AGENTDOCK_NEXUS_TOKEN")
 	cfg, err := config.FromEnv()
 	if err != nil {
 		return err
@@ -173,13 +258,14 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "  agentdock service <status|start|stop|restart|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock tunnel <status|start|stop|restart|regenerate|configure|autostart> --runtime-root <目录>")
 		fmt.Fprintln(stderr, "  agentdock skill bootstrap --bundle <目录>")
+		fmt.Fprintln(stderr, "  agentdock nexus pair --endpoint <URL> --code <配对码> [--name <名称>]")
+		fmt.Fprintln(stderr, "  agentdock nexus status [--json]")
 		fmt.Fprintln(stderr, "\n服务参数：")
 		flags.PrintDefaults()
 	}
 	flags.StringVar(&cfg.Host, "host", cfg.Host, "HTTP bind host")
 	flags.IntVar(&cfg.Port, "port", cfg.Port, "HTTP bind port")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "log level: debug, info, warn, error")
-	flags.StringVar(&cfg.NexusEndpoint, "nexus-endpoint", cfg.NexusEndpoint, "optional NexusDock base URL for Recall memory and workflow APIs")
 	flags.BoolVar(&cfg.BrowserEnabled, "browser-enabled", cfg.BrowserEnabled, "expose optional browser automation tools")
 	flags.StringVar(&cfg.BrowserExecutablePath, "browser-executable-path", cfg.BrowserExecutablePath, "optional absolute Chrome, Chromium, or Edge executable path")
 	flags.StringVar(&cfg.BrowserCDPURL, "browser-cdp-url", cfg.BrowserCDPURL, "optional existing Chromium CDP endpoint to attach")
@@ -200,6 +286,15 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	if err := cfg.ValidateAuth(); err != nil {
 		return err
 	}
+	identity, identityErr := nexusbridge.Load(cfg.AgentDockHome)
+	if identityErr == nil {
+		// Nexus 地址和 Device Token 只来自配对身份，避免环境变量、控制面板与
+		// 配对文件形成多套凭据来源和不明确的优先级。
+		cfg.NexusEndpoint = identity.Endpoint
+		cfg.NexusDeviceToken = identity.DeviceToken
+	} else if identityErr != nil && !errors.Is(identityErr, os.ErrNotExist) {
+		slog.Error("NexusDock device identity ignored", "error", identityErr)
+	}
 	logx.Setup(cfg.LogLevel)
 	if err := selfupdate.RepairDesktopRuntimeIfNeeded(ctx, stderr); err != nil {
 		// Windows v0.7.4 及更早版本只会替换 core。新版 core 启动时尝试补齐同版本控制面板，
@@ -219,6 +314,9 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	server := mcp.NewServer(runtime, cfg)
 	if cfg.Stdio {
 		return serveStdio(ctx, server)
+	}
+	if identityErr == nil {
+		go nexusbridge.NewClient(identity, server).Run(ctx)
 	}
 	runtimeRoot := strings.TrimSpace(os.Getenv("AGENTDOCK_RUNTIME_ROOT"))
 	if runtimeRoot == "" {

@@ -151,7 +151,10 @@ func TestRecallMaintainReindexCardsUsesCanonicalPrefix(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := config.Config{AgentDockDefaultDir: t.TempDir(), AgentDockHome: filepath.Join(t.TempDir(), ".agentdock"), NexusEndpoint: server.URL}
+	cfg := config.Config{
+		AgentDockDefaultDir: t.TempDir(), AgentDockHome: filepath.Join(t.TempDir(), ".agentdock"),
+		NexusEndpoint: server.URL, NexusDeviceToken: "test-device-token",
+	}
 	if err := cfg.Normalize(); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +187,10 @@ func TestRecallSearchCardsUsesCanonicalPrefix(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := config.Config{AgentDockDefaultDir: t.TempDir(), AgentDockHome: filepath.Join(t.TempDir(), ".agentdock"), NexusEndpoint: server.URL}
+	cfg := config.Config{
+		AgentDockDefaultDir: t.TempDir(), AgentDockHome: filepath.Join(t.TempDir(), ".agentdock"),
+		NexusEndpoint: server.URL, NexusDeviceToken: "test-device-token",
+	}
 	if err := cfg.Normalize(); err != nil {
 		t.Fatal(err)
 	}

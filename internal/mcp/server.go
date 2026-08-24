@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,12 +20,13 @@ import (
 
 type Server struct {
 	runtime     *app.Runtime
+	cfg         config.Config
 	sdk         *mcpsdk.Server
 	httpHandler http.Handler
 }
 
 func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
-	server := &Server{runtime: runtime}
+	server := &Server{runtime: runtime, cfg: cfg}
 	serverOptions := &mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}}
 	if cfg.Instructions != "" {
 		// 可选说明文字随 initialize 响应下发，由支持 MCP instructions 的客户端注入模型上下文。
@@ -56,6 +58,33 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 
 func (s *Server) AgentDockContext(ctx context.Context) (app.Result, error) {
 	return s.runtime.AgentDockContext(ctx)
+}
+
+func (s *Server) ToolNames() []string {
+	if s == nil || s.runtime == nil {
+		return nil
+	}
+	return s.runtime.ToolNames()
+}
+
+func (s *Server) ToolContractHash() string {
+	encoded, err := json.Marshal(s.ToolDescriptors())
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(encoded))
+}
+
+func (s *Server) ToolDescriptors() []map[string]any {
+	return toolDescriptorsForNames(s.ToolNames(), s.cfg)
+}
+
+func (s *Server) Invoke(ctx context.Context, name string, arguments map[string]any) (map[string]any, error) {
+	if s == nil || s.runtime == nil {
+		return nil, errors.New("AgentDock runtime is not initialized")
+	}
+	result, err := s.runtime.Call(ctx, name, arguments)
+	return toolEnvelope(name, result, err), nil
 }
 
 func (s *Server) HTTPHandler() http.Handler {
@@ -164,7 +193,7 @@ type writeCloser struct{ io.Writer }
 
 func (writeCloser) Close() error { return nil }
 
-func toolDescriptorsForNames(names []string) []map[string]any {
+func toolDescriptorsForNames(names []string, cfg config.Config) []map[string]any {
 	descriptors := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		def, _ := toolDefinition(name)
@@ -172,8 +201,15 @@ func toolDescriptorsForNames(names []string) []map[string]any {
 			"name":         name,
 			"title":        def.Title,
 			"description":  def.Description,
-			"inputSchema":  inputSchema(name),
-			"outputSchema": outputSchema(name),
+			"inputSchema":  app.InputSchemaForConfig(name, cfg),
+			"outputSchema": app.OutputSchemaForConfig(name, cfg),
+		}
+		if def.Annotations != nil {
+			descriptor["annotations"] = map[string]any{
+				"title": def.Annotations.Title, "readOnlyHint": def.Annotations.ReadOnlyHint,
+				"destructiveHint": def.Annotations.DestructiveHint, "idempotentHint": def.Annotations.IdempotentHint,
+				"openWorldHint": def.Annotations.OpenWorldHint,
+			}
 		}
 		meta := toolMetadata(def)
 		if paths, ok := meta["file_arg_rewrite_paths"].([]string); ok {

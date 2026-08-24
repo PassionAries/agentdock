@@ -178,15 +178,20 @@
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="150" />
                   <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="地址" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <TextBox x:Name="NexusEndpointTextBox" Grid.Column="1" Margin="0,0,0,10" />
-                <TextBlock Text="Token" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
-                <PasswordBox x:Name="NexusTokenPasswordBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
+                <TextBox x:Name="NexusEndpointTextBox" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ToolTip="NexusDock 公网 HTTPS 地址" />
+                <TextBlock Text="一次性配对码" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <PasswordBox x:Name="NexusPairingCodePasswordBox" Grid.Row="1" Grid.Column="1" Margin="0,0,8,10" PreviewKeyDown="PasswordBox_PreviewKeyDown" />
+                <Button Grid.Row="1" Grid.Column="2" Content="配对并重启" Click="PairNexusButton_Click" Margin="0,0,0,10" />
+                <TextBlock Text="Device Token" Grid.Row="2" VerticalAlignment="Center" />
+                <TextBlock x:Name="NexusDeviceTokenStatusText" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="尚未配对" Foreground="#667085" TextWrapping="Wrap" />
               </Grid>
             </GroupBox>
 

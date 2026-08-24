@@ -72,7 +72,7 @@ func TestTaskFinalReviewAutomaticallyResolvesPreboundLearningCheck(t *testing.T)
 	home := t.TempDir()
 	runtime, err := NewRuntime(config.Config{
 		AgentDockHome: home, AgentDockDefaultDir: home,
-		NexusEndpoint: nexus.URL, NexusToken: "nexus-token",
+		NexusEndpoint: nexus.URL, NexusDeviceToken: "device-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestRuntimeEvolveStageThreeIsProposalOnlyAndForcesProvisional(t *testing.T)
 	var stored map[string]any
 	nexus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.Header.Get("Authorization") != "Bearer nexus-token" {
+		if r.Header.Get("Authorization") != "Bearer device-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
 		}
 		switch r.URL.Path {
@@ -157,7 +157,7 @@ func TestRuntimeEvolveStageThreeIsProposalOnlyAndForcesProvisional(t *testing.T)
 	home := t.TempDir()
 	runtime, err := NewRuntime(config.Config{
 		AgentDockHome: home, AgentDockDefaultDir: home,
-		NexusEndpoint: nexus.URL, NexusToken: "nexus-token",
+		NexusEndpoint: nexus.URL, NexusDeviceToken: "device-token",
 	})
 	if err != nil {
 		t.Fatal(err)

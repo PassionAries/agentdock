@@ -61,9 +61,6 @@ public sealed class ControlPanelSettings
     [JsonPropertyName("log_level")]
     public string LogLevel { get; set; } = "info";
 
-    [JsonPropertyName("nexus_endpoint")]
-    public string NexusEndpoint { get; set; } = "";
-
     [JsonPropertyName("oauth_access_token_ttl")]
     public string OAuthAccessTokenTtl { get; set; } = "";
 
@@ -110,8 +107,31 @@ public sealed record RuntimeSnapshot(
     bool CoreStartupEnabled,
     bool TrayStartupEnabled,
     bool TunnelTokenStored,
-    bool NexusTokenStored,
+    NexusDeviceStatus Nexus,
     DateTimeOffset CheckedAt);
+
+public sealed record NexusDeviceStatus(
+    bool Paired,
+    string Endpoint,
+    string NodeId,
+    string DeviceId,
+    bool DeviceTokenStored,
+    string Error = "");
+
+internal sealed class NexusDeviceIdentity
+{
+    [JsonPropertyName("endpoint")]
+    public string Endpoint { get; set; } = "";
+
+    [JsonPropertyName("node_id")]
+    public string NodeId { get; set; } = "";
+
+    [JsonPropertyName("device_id")]
+    public string DeviceId { get; set; } = "";
+
+    [JsonPropertyName("device_token")]
+    public string DeviceToken { get; set; } = "";
+}
 
 public sealed record UrlTestResult(bool Success, int? StatusCode, TimeSpan Elapsed, string Message);
 

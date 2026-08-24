@@ -150,13 +150,14 @@ test "$(plutil -extract tunnel_mode raw -o - "$result_file")" = "none"
 test "$(plutil -extract public_mcp_url raw -o - "$result_file")" = ""
 test "$(plutil -extract auth_token raw -o - "$result_file")" = "initial token with spaces"
 
-# 模拟用户维护已有 Nexus 配置，重复安装不得覆盖它和既有 Token。
+# 模拟旧版本遗留 Nexus 环境凭据；重复安装必须删除，配对身份只保存在 device.json。
 python3 - "$agentdock_env" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 text = path.read_text()
-text = text.replace("AGENTDOCK_NEXUS_ENDPOINT=''", "AGENTDOCK_NEXUS_ENDPOINT=https://nexus.example.test")
+text += "AGENTDOCK_NEXUS_ENDPOINT=https://nexus.example.test\n"
+text += "AGENTDOCK_NEXUS_TOKEN=obsolete-secret\n"
 path.write_text(text)
 PY
 
@@ -172,7 +173,8 @@ assert_file_contains "$agentdock_env" 'AGENTDOCK_HOST=127.0.0.2'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_PORT=18888'
 assert_file_contains "$agentdock_env" 'AGENTDOCK_AUTH_TOKEN=initial\ token\ with\ spaces'
 assert_file_not_contains "$agentdock_env" 'replacement token must be ignored'
-assert_file_contains "$agentdock_env" 'AGENTDOCK_NEXUS_ENDPOINT=https://nexus.example.test'
+assert_file_not_contains "$agentdock_env" 'AGENTDOCK_NEXUS_ENDPOINT'
+assert_file_not_contains "$agentdock_env" 'AGENTDOCK_NEXUS_TOKEN'
 backup_count="$(find "$backup_dir" -type f -name 'agentdock.*' | wc -l | tr -d ' ')"
 test "$backup_count" = "1"
 

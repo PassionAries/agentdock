@@ -486,7 +486,7 @@ func (s *Service) NexusWorkflowJSON(ctx context.Context, method, path string, pa
 	cfg := s.config()
 	base := strings.TrimRight(strings.TrimSpace(cfg.NexusEndpoint), "/")
 	if base == "" {
-		return nil, toolErrorDetails("NEXUS_NOT_CONFIGURED", "AGENTDOCK_NEXUS_ENDPOINT is required for workflow_template_manage", "configuration", map[string]any{"retryable": false})
+		return nil, toolErrorDetails("NEXUS_NOT_CONFIGURED", "pair this AgentDock device with NexusDock to use workflow_template_manage", "configuration", map[string]any{"retryable": false})
 	}
 	var body io.Reader
 	if payload != nil {
@@ -505,9 +505,11 @@ func (s *Service) NexusWorkflowJSON(ctx context.Context, method, path string, pa
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if token := strings.TrimSpace(cfg.NexusToken); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	token := strings.TrimSpace(cfg.NexusDeviceToken)
+	if token == "" {
+		return nil, toolErrorDetails("NEXUS_NOT_CONFIGURED", "NexusDock Device Token is unavailable; pair this AgentDock device again", "configuration", map[string]any{"retryable": false})
 	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, toolErrorCause("NEXUS_REQUEST_FAILED", err.Error(), "network", map[string]any{"retryable": true}, err)

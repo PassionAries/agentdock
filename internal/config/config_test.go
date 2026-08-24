@@ -57,6 +57,18 @@ func TestFromEnvIgnoresOldDirectoryConfig(t *testing.T) {
 	}
 }
 
+func TestFromEnvIgnoresRemovedNexusCredentials(t *testing.T) {
+	t.Setenv("AGENTDOCK_NEXUS_ENDPOINT", "https://legacy-nexus.example.com")
+	t.Setenv("AGENTDOCK_NEXUS_TOKEN", "legacy-secret")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv() error = %v", err)
+	}
+	if cfg.NexusEndpoint != "" || cfg.NexusDeviceToken != "" {
+		t.Fatalf("legacy Nexus credentials were loaded: %#v", cfg)
+	}
+}
+
 func TestFromEnvUsesExplicitAgentDockDirectories(t *testing.T) {
 	profile := t.TempDir()
 	setTestUserHome(t, profile)

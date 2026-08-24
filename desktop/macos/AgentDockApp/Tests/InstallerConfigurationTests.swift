@@ -32,6 +32,7 @@ struct InstallerConfigurationTests {
         AGENTDOCK_PORT=8765
         AGENTDOCK_AUTH_TOKEN='secret-token'
         AGENTDOCK_NEXUS_ENDPOINT=https://nexus.example.com
+        AGENTDOCK_NEXUS_TOKEN=obsolete-secret
         AGENTDOCK_PORT=9999
         """
         let environment = ManagedEnvironment(
@@ -39,23 +40,33 @@ struct InstallerConfigurationTests {
             values: ManagedEnvironment.parseValues(environmentText)
         )
         precondition(environment.values["AGENTDOCK_PORT"] == "9999")
-        precondition(environment.values["AGENTDOCK_NEXUS_ENDPOINT"] == "https://nexus.example.com")
         let updatedData = try environment.dataByUpdating([
             "AGENTDOCK_PORT": "8877",
             "AGENTDOCK_LOG_LEVEL": "debug",
-            "AGENTDOCK_NEXUS_TOKEN": "quote'and space",
             "AGENTDOCK_BROWSER_CDP_URL": "http://127.0.0.1:9222",
             "AGENTDOCK_BROWSER_REUSE_EXISTING_CDP": "true",
-        ])
+        ], removing: ServiceConfiguration.removableLegacyKeys)
         let updatedText = String(decoding: updatedData, as: UTF8.self)
         let updatedValues = ManagedEnvironment.parseValues(updatedText)
         precondition(updatedValues["AGENTDOCK_PORT"] == "8877")
         precondition(updatedValues["AGENTDOCK_AUTH_TOKEN"] == "secret-token")
         precondition(updatedValues["AGENTDOCK_LOG_LEVEL"] == "debug")
-        precondition(updatedValues["AGENTDOCK_NEXUS_TOKEN"] == "quote'and space")
+        precondition(updatedValues["AGENTDOCK_NEXUS_ENDPOINT"] == nil)
+        precondition(updatedValues["AGENTDOCK_NEXUS_TOKEN"] == nil)
         precondition(updatedValues["AGENTDOCK_BROWSER_CDP_URL"] == "http://127.0.0.1:9222")
         precondition(updatedValues["AGENTDOCK_BROWSER_REUSE_EXISTING_CDP"] == "true")
         precondition(updatedText.components(separatedBy: "AGENTDOCK_PORT=").count == 2)
+
+        let nexusIdentityURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentdock-nexus-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: nexusIdentityURL) }
+        try Data(#"{"endpoint":"https://nexus.example.com","node_id":"node_test","device_id":"device_test","device_token":"secret"}"#.utf8)
+            .write(to: nexusIdentityURL)
+        let nexusStatus = NexusDeviceStatus.load(from: nexusIdentityURL)
+        precondition(nexusStatus.paired)
+        precondition(nexusStatus.endpoint == "https://nexus.example.com")
+        precondition(nexusStatus.nodeID == "node_test")
+        precondition(nexusStatus.deviceTokenStored)
 
         let acpEnvironmentData = try environment.dataByUpdating([
             "AGENTDOCK_ACP_ENABLED": "true",

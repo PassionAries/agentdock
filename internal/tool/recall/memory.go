@@ -207,7 +207,7 @@ func RecallRequestTimeout(endpoint string) time.Duration {
 func (svc *Service) Request(ctx context.Context, method, endpoint string, payload any) (Result, error) {
 	base := strings.TrimRight(strings.TrimSpace(svc.config().NexusEndpoint), "/")
 	if base == "" {
-		return nil, toolError("RECALL_NOT_CONFIGURED", "AGENTDOCK_NEXUS_ENDPOINT is required for NexusDock Recall APIs", "configuration")
+		return nil, toolError("RECALL_NOT_CONFIGURED", "pair this AgentDock device with NexusDock to use Recall", "configuration")
 	}
 	var body io.Reader
 	if payload != nil {
@@ -226,9 +226,11 @@ func (svc *Service) Request(ctx context.Context, method, endpoint string, payloa
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if token := strings.TrimSpace(svc.config().NexusToken); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	token := strings.TrimSpace(svc.config().NexusDeviceToken)
+	if token == "" {
+		return nil, toolError("RECALL_NOT_CONFIGURED", "NexusDock Device Token is unavailable; pair this AgentDock device again", "configuration")
 	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, toolErrorCause("RECALL_REQUEST_FAILED", err.Error(), "network", map[string]any{"endpoint": endpoint}, err)

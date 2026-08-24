@@ -45,8 +45,9 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private let acpAgent = NSPopUpButton(frame: .zero, pullsDown: false)
     private let acpStatus = NSTextField(wrappingLabelWithString: "")
     private let nexusEndpoint = NSTextField(string: "")
-    private let nexusToken = NSSecureTextField(string: "")
-    private let nexusTokenStatus = NSTextField(labelWithString: "")
+    private let nexusPairingCode = NSSecureTextField(string: "")
+    private let nexusPairButton = NSButton(title: "配对并重启", target: nil, action: nil)
+    private let nexusDeviceTokenStatus = NSTextField(wrappingLabelWithString: "")
     private let progress = NSProgressIndicator()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let applyButton = NSButton(title: "应用并重启", target: nil, action: nil)
@@ -57,7 +58,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     private var initialMenuAutostart = true
     private var initialPort = 8765
     private var initialLogLevel = "info"
-    private var initialNexusEndpoint = ""
     private var initialBrowserEnabled = false
     private var initialBrowserCDPURL = ""
     private var initialBrowserConnectionMode = BrowserConnectionMode.managed
@@ -99,7 +99,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         initialMenuAutostart = menuLoginAgent.isEnabled
         initialPort = configuration.port
         initialLogLevel = configuration.logLevel
-        initialNexusEndpoint = configuration.nexusEndpoint
         initialBrowserEnabled = configuration.browserEnabled
         initialBrowserCDPURL = configuration.browserCDPURL
         initialBrowserConnectionMode = BrowserConnectionMode.resolve(
@@ -118,12 +117,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         selectBrowserConnectionMode(initialBrowserConnectionMode)
         acpEnabled.state = initialACPEnabled ? .on : .off
         acpAgent.selectItem(withTitle: initialACPAgent.title)
-        nexusEndpoint.stringValue = initialNexusEndpoint
-        nexusToken.stringValue = ""
-        nexusToken.placeholderString = configuration.nexusTokenConfigured
-            ? "留空表示保留现有 Token"
-            : "可选 Nexus Token"
-        nexusTokenStatus.stringValue = configuration.nexusTokenConfigured ? "当前已配置 Token" : "当前未配置 Token"
+        nexusPairingCode.stringValue = ""
+        refreshNexusStatus()
         refreshBrowserStatus()
         refreshACPStatus()
         showStatus("", isError: false)
@@ -189,11 +184,15 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         nexusEndpoint.target = self
         nexusEndpoint.action = #selector(markChanged)
         nexusEndpoint.delegate = self
-        nexusToken.target = self
-        nexusToken.action = #selector(markChanged)
-        nexusToken.delegate = self
-        nexusTokenStatus.textColor = .secondaryLabelColor
-        nexusTokenStatus.font = .systemFont(ofSize: 12)
+        nexusPairingCode.placeholderString = "NexusDock 生成的一次性配对码"
+        nexusPairingCode.target = self
+        nexusPairingCode.action = #selector(markChanged)
+        nexusPairingCode.delegate = self
+        nexusPairButton.target = self
+        nexusPairButton.action = #selector(pairNexusPressed)
+        nexusDeviceTokenStatus.textColor = .secondaryLabelColor
+        nexusDeviceTokenStatus.font = .systemFont(ofSize: 12)
+        nexusDeviceTokenStatus.widthAnchor.constraint(equalToConstant: 390).isActive = true
 
         progress.style = .spinning
         progress.controlSize = .small
@@ -251,14 +250,15 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
 
         let nexusStack = NSStackView(views: [
             formRow(title: "Endpoint", control: nexusEndpoint),
-            formRow(title: "Token", control: nexusToken),
-            nexusTokenStatus,
+            formRow(title: "配对码", control: nexusPairingCode),
+            nexusPairButton,
+            formRow(title: "Device Token", control: nexusDeviceTokenStatus),
         ])
         nexusStack.orientation = .vertical
         nexusStack.alignment = .leading
         nexusStack.spacing = 8
         nexusEndpoint.widthAnchor.constraint(equalToConstant: 390).isActive = true
-        nexusToken.widthAnchor.constraint(equalToConstant: 390).isActive = true
+        nexusPairingCode.widthAnchor.constraint(equalToConstant: 390).isActive = true
 
         let utilityRow = NSStackView(views: [openLogs, openConfig])
         utilityRow.orientation = .horizontal
@@ -362,7 +362,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
 
     @objc private func applyPressed() {
         guard let configuration = currentConfiguration else { return }
-        let tokenReplacement = nexusToken.stringValue.isEmpty ? nil : nexusToken.stringValue
         let selectedAgent = selectedACPAgent()
         let sameAgent = selectedAgent == configuration.acpAgent
         let browserMode = selectedBrowserConnectionMode()
@@ -374,8 +373,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         let settings = EditableServiceSettings(
             port: portField.integerValue,
             logLevel: logLevel.titleOfSelectedItem ?? "info",
-            nexusEndpoint: nexusEndpoint.stringValue,
-            nexusTokenReplacement: tokenReplacement,
             browserEnabled: browserEnabled.state == .on,
             browserCDPURL: browserMode == .specifiedCDP ? configuredCDP : "",
             browserReuseExistingCDP: browserMode == .reuseExisting,
@@ -402,7 +399,6 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 initialMenuAutostart = menuAutostartValue
                 initialPort = validatedSettings.port
                 initialLogLevel = validatedSettings.logLevel
-                initialNexusEndpoint = validatedSettings.nexusEndpoint
                 initialBrowserEnabled = validatedSettings.browserEnabled
                 initialBrowserCDPURL = validatedSettings.browserCDPURL
                 initialBrowserConnectionMode = BrowserConnectionMode.resolve(
@@ -413,10 +409,8 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
                 initialACPAgent = validatedSettings.acpAgent
                 portField.integerValue = initialPort
                 logLevel.selectItem(withTitle: initialLogLevel)
-                nexusEndpoint.stringValue = initialNexusEndpoint
                 browserCDPURL.stringValue = initialBrowserCDPURL
                 selectBrowserConnectionMode(initialBrowserConnectionMode)
-                nexusToken.stringValue = ""
                 if let updatedConfiguration = ServiceConfiguration.load(from: service.paths.environment) {
                     currentConfiguration = updatedConfiguration
                 }
@@ -434,6 +428,31 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
     }
 
     @objc private func cancelPressed() { close() }
+
+    @objc private func pairNexusPressed() {
+        let endpoint = nexusEndpoint.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pairingCode = nexusPairingCode.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty, !pairingCode.isEmpty else {
+            showStatus("请填写 NexusDock 地址和一次性配对码。", isError: true)
+            return
+        }
+        setBusy(true)
+        showStatus("正在配对并重启 AgentDock…", isError: false)
+        Task {
+            do {
+                try await service.pairNexus(endpoint: endpoint, pairingCode: pairingCode)
+                nexusPairingCode.stringValue = ""
+                refreshNexusStatus()
+                showStatus("NexusDock 配对完成，Device Token 已安全保存。", isError: false)
+                setBusy(false)
+                onChanged()
+            } catch {
+                setBusy(false)
+                showStatus(error.localizedDescription, isError: true)
+            }
+        }
+    }
+
     @objc private func openLogsPressed() { service.openLogs() }
     @objc private func openConfigurationPressed() { service.openConfiguration() }
 
@@ -506,6 +525,19 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
         }
     }
 
+    private func refreshNexusStatus() {
+        let status = service.nexusDeviceStatus()
+        if status.paired {
+            nexusEndpoint.stringValue = status.endpoint
+            nexusDeviceTokenStatus.stringValue = "已安全保存 · node_id=\(status.nodeID)"
+            nexusDeviceTokenStatus.textColor = .secondaryLabelColor
+            return
+        }
+        nexusDeviceTokenStatus.stringValue = status.error
+            ?? "尚未配对；Device Token 将由一次性配对自动生成。"
+        nexusDeviceTokenStatus.textColor = status.error == nil ? .secondaryLabelColor : .systemRed
+    }
+
     private func refreshApplyState() {
         guard !isBusy, currentConfiguration != nil else {
             applyButton.isEnabled = false
@@ -522,18 +554,19 @@ final class AdvancedSettingsWindowController: NSWindowController, NSTextFieldDel
             || (menuAutostart.state == .on) != initialMenuAutostart
             || portField.integerValue != initialPort
             || (logLevel.titleOfSelectedItem ?? "info") != initialLogLevel
-            || nexusEndpoint.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) != initialNexusEndpoint
-            || !nexusToken.stringValue.isEmpty
             || (browserEnabled.state == .on) != initialBrowserEnabled
             || browserMode != initialBrowserConnectionMode
             || browserCDP != initialBrowserCDPURL
             || acpSettingsChanged
         applyButton.isEnabled = changed
+        nexusPairButton.isEnabled = !isBusy
+            && !nexusEndpoint.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !nexusPairingCode.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func setBusy(_ busy: Bool) {
         isBusy = busy
-        for control in [serviceAutostart, menuAutostart, portField, logLevel, browserEnabled, browserConnectionMode, browserCDPURL, acpEnabled, nexusEndpoint, nexusToken] {
+        for control in [serviceAutostart, menuAutostart, portField, logLevel, browserEnabled, browserConnectionMode, browserCDPURL, acpEnabled, nexusEndpoint, nexusPairingCode, nexusPairButton] {
             control.isEnabled = !busy
         }
         refreshBrowserStatus()
