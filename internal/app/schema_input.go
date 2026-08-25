@@ -259,6 +259,21 @@ func InputSchema(name string) map[string]any {
 		props["path"] = stringProp("Local file or directory path visible to this AgentDock instance. Relative paths resolve from ~/AgentDock.")
 		props["retention_seconds"] = intProp("Signed URL retention in seconds. Defaults to 86400 and is capped at 604800.")
 		required = []string{}
+	case "render_task_progress":
+		props["task"] = objectProp("Task or task_summary already returned by task_manage. Serialized JSON is capped at 262144 bytes.")
+		props["title"] = stringProp("Optional display title for the task progress view.")
+		required = []string{"task"}
+	case "render_file_diff":
+		props["diff"] = map[string]any{"type": "string", "maxLength": maxRenderedDiffChars, "description": "Unified diff text already returned by a data tool."}
+		props["path"] = stringProp("Optional file or repository path label.")
+		props["summary"] = stringProp("Optional short diff summary.")
+		props["insertions"] = map[string]any{"type": "integer", "minimum": 0, "maximum": maxRenderedInteger, "description": "Optional inserted line count."}
+		props["deletions"] = map[string]any{"type": "integer", "minimum": 0, "maximum": maxRenderedInteger, "description": "Optional deleted line count."}
+		required = []string{"diff"}
+	case "render_acp_status":
+		props["state"] = objectProp("ACP session, prompt, or permission-interaction state already returned by an ACP data tool. Serialized JSON is capped at 262144 bytes.")
+		props["title"] = stringProp("Optional display title for the ACP status view.")
+		required = []string{"state"}
 	case "recall_bootstrap":
 		props["max_bytes"] = intProp("Maximum combined NexusDock Recall pack bytes. Does not expose section bodies by itself; use include_body or recall_read when body text is needed.")
 		props["include_raw"] = boolProp("Include raw Markdown as raw_content. Defaults to false to avoid duplicating body/content tokens.")
@@ -406,7 +421,7 @@ func InputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
-	case "exec_command", "acp_session", "acp_prompt", "acp_interaction", "recall_bootstrap", "recall_search", "recall_read", "search", "fetch", "recall_write", "recall_maintain", "private_note_manage", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call", "browser_session", "browser_act", "browser_snapshot":
+	case "exec_command", "acp_session", "acp_prompt", "acp_interaction", "recall_bootstrap", "recall_search", "recall_read", "search", "fetch", "recall_write", "recall_maintain", "private_note_manage", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call", "browser_session", "browser_act", "browser_snapshot", "render_task_progress", "render_file_diff", "render_acp_status":
 		// 这些工具的参数契约需要严格收敛，避免删除或拼错的字段被静默忽略。
 		schema["additionalProperties"] = false
 	}

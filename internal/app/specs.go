@@ -18,6 +18,8 @@ type ToolSpec struct {
 	Description            string
 	OpenAIInvokingText     string
 	OpenAIInvokedText      string
+	OpenAIOutputTemplate   string
+	UIResourceURI          string
 	FileArgRewritePaths    []string
 	FileResultRewritePaths []string
 	InputSchema            func() map[string]any
@@ -41,6 +43,8 @@ type ToolDefinition struct {
 	Description            string
 	OpenAIInvokingText     string
 	OpenAIInvokedText      string
+	OpenAIOutputTemplate   string
+	UIResourceURI          string
 	FileArgRewritePaths    []string
 	FileResultRewritePaths []string
 	InputSchema            map[string]any
@@ -64,6 +68,8 @@ func (s ToolSpec) definition() ToolDefinition {
 		Description:            s.Description,
 		OpenAIInvokingText:     s.OpenAIInvokingText,
 		OpenAIInvokedText:      s.OpenAIInvokedText,
+		OpenAIOutputTemplate:   s.OpenAIOutputTemplate,
+		UIResourceURI:          s.UIResourceURI,
 		FileArgRewritePaths:    append([]string(nil), s.FileArgRewritePaths...),
 		FileResultRewritePaths: append([]string(nil), s.FileResultRewritePaths...),
 		InputSchema:            s.InputSchema(),
@@ -192,6 +198,9 @@ func allToolSpecs() []ToolSpec {
 		{Name: "file_publish", Title: "Publish signed file", Description: "Publish a local file or directory as an immutable Artifact snapshot under ~/.agentdock/public-artifacts. Returns artifact_id and, when a reachable base URL is available, a temporary signed download URL. Directories are packaged as tar.gz.", OpenAIInvokingText: "Publishing file…", OpenAIInvokedText: "File published.", Annotations: mutatingToolAnnotations(false, true), FileArgRewritePaths: []string{"file"}, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.media.FilePublish(ctx, args)
 		}},
+		{Name: "render_task_progress", Title: "Render task progress", Description: "Render an already-fetched task or task_summary as an optional MCP App view. Call task_manage first; this tool does not read or mutate task state.", OpenAIOutputTemplate: TaskProgressUIResourceURI, UIResourceURI: TaskProgressUIResourceURI, Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).renderTaskProgress)},
+		{Name: "render_file_diff", Title: "Render file diff", Description: "Render an already-fetched unified diff as an optional MCP App view. Obtain the diff from file_edit dry-run, git_read, recall_write diff, or another data tool first; this tool never reads or writes files.", OpenAIOutputTemplate: FileDiffUIResourceURI, UIResourceURI: FileDiffUIResourceURI, Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).renderFileDiff)},
+		{Name: "render_acp_status", Title: "Render ACP status", Description: "Render already-fetched ACP session, prompt, or permission-interaction state as an optional MCP App view. Call acp_session, acp_prompt, or acp_interaction first; this tool never acts on ACP state.", OpenAIOutputTemplate: ACPStatusUIResourceURI, UIResourceURI: ACPStatusUIResourceURI, Annotations: readOnlyToolAnnotations(false), Availability: requiresACP, Handler: toolHandler((*Runtime).renderACPStatus)},
 	})
 }
 

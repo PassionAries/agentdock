@@ -41,6 +41,7 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 		serverOptions,
 	)
 	if runtime != nil {
+		server.registerAppResources()
 		for _, name := range runtime.ToolNames() {
 			server.registerTool(name, cfg)
 		}
@@ -175,6 +176,12 @@ func toolMetadata(def ToolDefinition) map[string]any {
 	}
 	if def.OpenAIInvokedText != "" {
 		meta["openai/toolInvocation/invoked"] = def.OpenAIInvokedText
+	}
+	if def.UIResourceURI != "" {
+		meta["ui/resourceUri"] = def.UIResourceURI
+	}
+	if def.OpenAIOutputTemplate != "" {
+		meta["openai/outputTemplate"] = def.OpenAIOutputTemplate
 	}
 	if len(def.FileArgRewritePaths) > 0 {
 		paths := append([]string(nil), def.FileArgRewritePaths...)
