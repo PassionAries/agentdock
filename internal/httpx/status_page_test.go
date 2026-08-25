@@ -43,6 +43,9 @@ func TestStatusPageRendersConnectionAndResourceLinks(t *testing.T) {
 		"github.com/uvwt/agentdock",
 		"uvwt.github.io/agentdock-docs",
 		"1081337019",
+		`class="state-enabled"`,
+		`class="state-auth"`,
+		`class="resource resource-documentation"`,
 		">OAuth<",
 		">Enabled<",
 		"navigator.clipboard.writeText",
@@ -50,6 +53,27 @@ func TestStatusPageRendersConnectionAndResourceLinks(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("status page missing %q", expected)
 		}
+	}
+}
+
+func TestVisibleCommitHidesMissingBuildMetadata(t *testing.T) {
+	tests := []struct {
+		name   string
+		commit string
+		want   string
+	}{
+		{name: "empty", commit: "", want: ""},
+		{name: "unknown", commit: "unknown", want: ""},
+		{name: "unknown uppercase", commit: "UNKNOWN", want: ""},
+		{name: "trimmed commit", commit: " 79d9b70a7b25 ", want: "79d9b70a7b25"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := visibleCommit(test.commit); got != test.want {
+				t.Fatalf("visibleCommit(%q) = %q, want %q", test.commit, got, test.want)
+			}
+		})
 	}
 }
 

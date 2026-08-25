@@ -137,9 +137,13 @@ type statusPageData struct {
 	Platform         string
 	ToolCount        int
 	MCPEndpoint      string
+	ACPEnabled       bool
 	ACPStatus        string
+	RecallEnabled    bool
 	RecallStatus     string
+	BrowserEnabled   bool
 	BrowserStatus    string
+	AuthEnabled      bool
 	AuthStatus       string
 	RepositoryURL    string
 	DocumentationURL string
@@ -161,16 +165,22 @@ func statusPageHandler(server *mcp.Server, cfg config.Config) http.HandlerFunc {
 
 		text := preferredStatusPageText(r.Header.Get("Accept-Language"))
 		build := buildinfo.Current()
+		recallEnabled := strings.TrimSpace(cfg.NexusEndpoint) != ""
+		authEnabled := cfg.AuthRequired()
 		data := statusPageData{
 			Text:             text,
 			Version:          build.Version,
-			Commit:           build.Commit,
+			Commit:           visibleCommit(build.Commit),
 			Platform:         build.Platform,
 			ToolCount:        len(server.ToolNames()),
 			MCPEndpoint:      issuerFor(cfg, r) + "/mcp",
+			ACPEnabled:       cfg.ACPEnabled,
 			ACPStatus:        enabledLabel(text, cfg.ACPEnabled),
-			RecallStatus:     enabledLabel(text, strings.TrimSpace(cfg.NexusEndpoint) != ""),
+			RecallEnabled:    recallEnabled,
+			RecallStatus:     enabledLabel(text, recallEnabled),
+			BrowserEnabled:   cfg.BrowserEnabled,
 			BrowserStatus:    enabledLabel(text, cfg.BrowserEnabled),
+			AuthEnabled:      authEnabled,
 			AuthStatus:       authLabel(text, cfg),
 			RepositoryURL:    agentDockRepositoryURL,
 			DocumentationURL: text.DocumentationURL,
@@ -237,6 +247,14 @@ func preferredStatusPageText(header string) statusPageText {
 		return statusPageChinese
 	}
 	return statusPageEnglish
+}
+
+func visibleCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if commit == "" || strings.EqualFold(commit, "unknown") {
+		return ""
+	}
+	return commit
 }
 
 func enabledLabel(text statusPageText, enabled bool) string {
