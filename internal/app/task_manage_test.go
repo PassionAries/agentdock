@@ -290,13 +290,7 @@ func createTestWorkflowTemplate(t *testing.T, rt *Runtime, template taskstate.Te
 	if err := remarshal(template, &templateMap); err != nil {
 		t.Fatalf("template map: %v", err)
 	}
-	if _, err := rt.workflowTemplateManage(context.Background(), map[string]any{"action": "save", "template": templateMap}); err != nil {
-		t.Fatalf("save template: %v", err)
-	}
-	if _, err := rt.workflowTemplateManage(context.Background(), map[string]any{"action": "validate", "template_id": template.ID, "template_version": template.Version}); err != nil {
-		t.Fatalf("validate template: %v", err)
-	}
-	if _, err := rt.workflowTemplateManage(context.Background(), map[string]any{"action": "publish", "template_id": template.ID, "template_version": template.Version}); err != nil {
+	if _, err := rt.workflowTemplateManage(context.Background(), map[string]any{"action": "publish", "template": templateMap}); err != nil {
 		t.Fatalf("publish template: %v", err)
 	}
 }
@@ -352,14 +346,25 @@ func TestWorkflowTemplateGetWithoutVersionResolvesActiveVersion(t *testing.T) {
 	}
 }
 
-func TestWorkflowTemplateMutationRequiresExactVersion(t *testing.T) {
+func TestWorkflowTemplateLegacyActionsAreRejected(t *testing.T) {
+	rt, _ := newCodeToolsRuntime(t)
+	for _, action := range []string{"save", "validate"} {
+		_, err := rt.workflowTemplateManage(context.Background(), map[string]any{"action": action})
+		var toolErr *ToolError
+		if !errors.As(err, &toolErr) || toolErr.Code != "INVALID_ACTION" {
+			t.Fatalf("legacy action %q error = %v", action, err)
+		}
+	}
+}
+
+func TestWorkflowTemplateRetireRequiresExactVersion(t *testing.T) {
 	rt, _ := newCodeToolsRuntime(t)
 	_, err := rt.workflowTemplateManage(context.Background(), map[string]any{
-		"action": "validate", "template_id": "active.template",
+		"action": "retire", "template_id": "active.template",
 	})
 	var toolErr *ToolError
 	if !errors.As(err, &toolErr) || toolErr.Code != "VALIDATION_ERROR" {
-		t.Fatalf("validate without version error = %v", err)
+		t.Fatalf("retire without version error = %v", err)
 	}
 	if toolErr.Message != "template_id and template_version are required" {
 		t.Fatalf("unexpected validation message: %q", toolErr.Message)

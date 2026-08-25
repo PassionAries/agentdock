@@ -195,7 +195,7 @@ func TestNexusUnavailableHidesWorkflowTemplateCapability(t *testing.T) {
 	}
 	contextText := result["context"].(string)
 	for _, hidden := range []string{
-		"任务模板", "workflow_template_manage", "source_template_ids",
+		"工作流模板", "workflow_template_manage", "source_template_ids",
 		"记忆精简摘要", "recall_search", "recall_read", "NexusDock Recall 未配置",
 		"Evolution", "自进化",
 	} {
@@ -221,7 +221,7 @@ func TestNexusAvailableExposesWorkflowTemplateCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	contextText := result["context"].(string)
-	for _, want := range []string{"## 任务模板索引", "workflow_template_manage match", "source_template_ids"} {
+	for _, want := range []string{"## 工作流模板索引", "workflow_template_manage match", "source_template_ids"} {
 		if !strings.Contains(contextText, want) {
 			t.Fatalf("context missing %q with Nexus: %s", want, contextText)
 		}

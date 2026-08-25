@@ -32,10 +32,10 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 	if requiresNexus(r.cfg) {
 		memorySummary, _, _ := r.memoryCapabilitySummary(ctx)
 		_, templateSummary, _ := r.templateCapabilityIndex(ctx)
-		sections = append(sections, capabilitySection{Title: "任务模板索引", Lines: splitNonEmptyLines(templateSummary)})
+		sections = append(sections, capabilitySection{Title: "工作流模板索引", Lines: splitNonEmptyLines(templateSummary)})
 		rules = append(rules,
 			"涉及多步骤开发、部署、排障、迁移、Docker、VPS 或 Git 提交推送时，先 workflow_template_manage match；无合适模板时创建普通可恢复任务。",
-			"当多个 Workflow 模板同时适合当前任务时，调用 workflow_template_manage get_many 读取详情；模型必须结合用户目标裁剪、去重、排序并生成最终 steps 和 completion_conditions，再用 source_template_ids 创建任务，服务端不会自动拼接模板。",
+			"当多个工作流模板同时适合当前任务时，调用 workflow_template_manage get_many 读取详情；模型必须结合用户目标裁剪、去重、排序并生成最终 steps 和 completion_conditions，再用 source_template_ids 创建任务，服务端不会自动拼接模板。",
 			"普通项目记忆走 recall_*；private_note_manage 只在用户明确要求私密笔记，或内容明显包含 secret、凭据、个人敏感信息时使用。私密检索只返回名称、简介、标签、分类和路径等元数据；正文必须显式 read，Git 只备份 age 密文。",
 		)
 		sections = append(sections, capabilitySection{Title: "记忆精简摘要", Lines: splitNonEmptyLines(memorySummary)})
@@ -162,11 +162,11 @@ func (r *Runtime) skillCapabilityIndex() ([]capabilitySkillItem, string, string)
 func (r *Runtime) templateCapabilityIndex(ctx context.Context) ([]capabilityTemplateItem, string, string) {
 	result, err := r.workflowTemplateManage(ctx, map[string]any{"action": "list", "template_status": "active"})
 	if err != nil {
-		return nil, "- 任务模板索引暂不可用；多步骤任务仍应先 workflow_template_manage match。", err.Error()
+		return nil, "- 工作流模板索引暂不可用；多步骤任务仍应先 workflow_template_manage match。", err.Error()
 	}
 	var listed capabilityTemplateList
 	if err := remarshal(result, &listed); err != nil {
-		return nil, "- 任务模板索引暂不可用；多步骤任务仍应先 workflow_template_manage match。", err.Error()
+		return nil, "- 工作流模板索引暂不可用；多步骤任务仍应先 workflow_template_manage match。", err.Error()
 	}
 	items := make([]capabilityTemplateItem, 0, len(listed.Templates))
 	for _, listedItem := range listed.Templates {

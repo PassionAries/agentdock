@@ -5,7 +5,6 @@ import "time"
 type TemplateStatus string
 
 const (
-	TemplateDraft   TemplateStatus = "draft"
 	TemplateActive  TemplateStatus = "active"
 	TemplateRetired TemplateStatus = "retired"
 )

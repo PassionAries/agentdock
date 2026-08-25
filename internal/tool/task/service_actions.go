@@ -17,7 +17,7 @@ import (
 
 var taskActions = []string{"create", "list", "get", "checkpoint", "block", "resume", "final_review", "complete"}
 
-var workflowTemplateActions = []string{"save", "validate", "publish", "retire", "list", "get", "get_many", "match", "vector_index"}
+var workflowTemplateActions = []string{"publish", "retire", "list", "get", "get_many", "match", "vector_index"}
 
 type taskManageInput struct {
 	Action               string
@@ -57,7 +57,7 @@ type workflowTemplateInput struct {
 	LongTemplateReason   string
 }
 
-type workflowTemplateDraftRequest struct {
+type workflowTemplatePublishRequest struct {
 	Template taskstate.Template `json:"template"`
 }
 
@@ -120,7 +120,7 @@ func parseWorkflowTemplateInput(args map[string]any) (workflowTemplateInput, err
 		input.AllowLongTemplateSet = true
 		input.AllowLongTemplate = boolArg(args, "allow_long_template", false)
 	}
-	if input.Action == "save" {
+	if input.Action == "publish" {
 		if err := remarshal(mapArg(args, "template"), &input.Template); err != nil {
 			return input, taskToolError(err)
 		}
@@ -299,16 +299,16 @@ func (s *Service) WorkflowManage(ctx context.Context, args map[string]any) (Resu
 		return nil, err
 	}
 	switch input.Action {
-	case "save":
-		request := workflowTemplateDraftRequest{Template: input.Template}
-		return compactNexusTemplateMutationResult(s.NexusWorkflowJSON(ctx, "POST", "/v1/workflow-templates/drafts", request))
-	case "validate", "publish", "retire":
+	case "publish":
+		request := workflowTemplatePublishRequest{Template: input.Template}
+		return compactNexusTemplateMutationResult(s.NexusWorkflowJSON(ctx, "POST", "/v1/workflow-templates/publish", request))
+	case "retire":
 		if input.TemplateID == "" || input.TemplateVersion == "" {
 			return nil, toolErrorDetails("VALIDATION_ERROR", "template_id and template_version are required", "validation", map[string]any{
 				"action": input.Action,
 			})
 		}
-		return compactNexusTemplateMutationResult(s.NexusWorkflowJSON(ctx, "POST", input.escapedTemplatePath(input.Action), struct{}{}))
+		return compactNexusTemplateMutationResult(s.NexusWorkflowJSON(ctx, "POST", input.escapedTemplatePath("retire"), struct{}{}))
 	case "get":
 		if input.TemplateID == "" {
 			return nil, toolErrorDetails("VALIDATION_ERROR", "template_id is required", "validation", nil)

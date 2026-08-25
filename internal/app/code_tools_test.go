@@ -101,7 +101,11 @@ func newWorkflowTemplateNexusTestServer(t *testing.T, _ *taskstate.Store) *httpt
 		items := listSummaries(taskstate.TemplateStatus(r.URL.Query().Get("status")))
 		write(w, map[string]any{"ok": true, "items": items, "templates": items, "count": len(items)})
 	})
-	mux.HandleFunc("/v1/workflow-templates/drafts", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/workflow-templates/publish", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		var req struct {
 			Template taskstate.Template `json:"template"`
 		}
@@ -111,9 +115,19 @@ func newWorkflowTemplateNexusTestServer(t *testing.T, _ *taskstate.Store) *httpt
 			return
 		}
 		template := req.Template
-		template.Status = taskstate.TemplateDraft
-		template.Hash = ""
-		template.PublishedAt = nil
+		if _, exists := templates[key(template.ID, template.Version)]; exists {
+			w.WriteHeader(http.StatusConflict)
+			write(w, map[string]any{"error": map[string]any{"message": "published template version is immutable"}})
+			return
+		}
+		for existingKey, existing := range templates {
+			if existing.ID == template.ID && existing.Status == taskstate.TemplateActive {
+				existing.Status = taskstate.TemplateRetired
+				templates[existingKey] = existing
+			}
+		}
+		template.Status = taskstate.TemplateActive
+		template.Hash = "sha256:" + template.ID + "@" + template.Version
 		template.RetiredAt = nil
 		templates[key(template.ID, template.Version)] = template
 		write(w, map[string]any{"ok": true, "template": template, "template_summary": tooltask.CompactTemplateSummary(template)})
@@ -141,22 +155,15 @@ func newWorkflowTemplateNexusTestServer(t *testing.T, _ *taskstate.Store) *httpt
 			write(w, map[string]any{"error": map[string]any{"message": "template not found"}})
 			return
 		}
-		if r.Method == http.MethodPost && len(parts) == 3 {
-			switch parts[2] {
-			case "validate":
-			case "publish":
-				template.Status = taskstate.TemplateActive
-				template.Hash = "sha256:" + template.ID + "@" + template.Version
-				templates[key(id, version)] = template
-			case "retire":
-				template.Status = taskstate.TemplateRetired
-				templates[key(id, version)] = template
-			default:
+		if r.Method == http.MethodPost && len(parts) == 3 && parts[2] == "retire" {
+			if template.Status != taskstate.TemplateActive {
 				w.WriteHeader(http.StatusBadRequest)
-				write(w, map[string]any{"error": map[string]any{"message": "unknown action"}})
+				write(w, map[string]any{"error": map[string]any{"message": "template is not active"}})
 				return
 			}
-		} else if r.Method != http.MethodGet {
+			template.Status = taskstate.TemplateRetired
+			templates[key(id, version)] = template
+		} else if r.Method != http.MethodGet || len(parts) != 2 {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
