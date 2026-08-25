@@ -819,9 +819,13 @@ function Wait-QuickTunnelUrl {
             try {
                 if (Test-Path -LiteralPath $logPath -PathType Leaf) {
                     $content = Get-Content -LiteralPath $logPath -Raw -ErrorAction Stop
-                    $match = [Regex]::Match($content, 'https://[A-Za-z0-9-]+\.trycloudflare\.com')
+                    # Provisioning failures also print the trycloudflare API URL; require the creation marker first.
+                    $match = [Regex]::Match(
+                        $content,
+                        '(?s)Your quick Tunnel has been created! Visit it at.*?(https://[A-Za-z0-9-]+\.trycloudflare\.com)'
+                    )
                     if ($match.Success) {
-                        return $match.Value
+                        return $match.Groups[1].Value
                     }
                 }
             } catch {
@@ -1367,12 +1371,13 @@ function Get-QuickTunnelUrl {
         foreach (`$logPath in `$LogPaths) {
             try {
                 if (Test-Path -LiteralPath `$logPath -PathType Leaf) {
+                    # Provisioning failures also print the trycloudflare API URL; require the creation marker first.
                     `$match = [Regex]::Match(
                         (Get-Content -LiteralPath `$logPath -Raw -ErrorAction Stop),
-                        'https://[A-Za-z0-9-]+\.trycloudflare\.com'
+                        '(?s)Your quick Tunnel has been created! Visit it at.*?(https://[A-Za-z0-9-]+\.trycloudflare\.com)'
                     )
                     if (`$match.Success) {
-                        return `$match.Value
+                        return `$match.Groups[1].Value
                     }
                 }
             } catch {

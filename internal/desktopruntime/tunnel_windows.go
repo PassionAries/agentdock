@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -19,8 +18,6 @@ import (
 func platformLaunchTunnel(context.Context, string) error {
 	return errors.New("Windows Tunnel 使用后台进程启动，不支持 launch 内部入口")
 }
-
-var quickTunnelURLPattern = regexp.MustCompile(`https://[A-Za-z0-9-]+\.trycloudflare\.com`)
 
 func platformTunnelStatus(ctx context.Context, runtimeRoot string) (TunnelStatus, error) {
 	runtime, err := loadTunnelRuntime(runtimeRoot)
@@ -225,8 +222,8 @@ func waitQuickTunnelURL(ctx context.Context, runtime tunnelRuntime, timeout time
 		for _, path := range []string{runtime.files.stdoutLog, runtime.files.stderrLog} {
 			data, err := os.ReadFile(path)
 			if err == nil {
-				if match := quickTunnelURLPattern.Find(data); len(match) > 0 {
-					return string(match), nil
+				if publicURL := findQuickTunnelURL(data); publicURL != "" {
+					return publicURL, nil
 				}
 			}
 		}

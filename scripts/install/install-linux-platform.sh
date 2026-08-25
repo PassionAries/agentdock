@@ -969,7 +969,14 @@ cloudflared_quick_url() {
     openrc) output="$(run_root tail -n 200 "/var/log/${tunnel_service_name}.log" "/var/log/${tunnel_service_name}.err" 2>/dev/null || true)" ;;
     *) return 1 ;;
   esac
-  printf '%s\n' "$output" | grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' | tail -n 1
+  # provisioning 失败日志也会出现 trycloudflare.com API 地址，必须先确认 cloudflared 已报告创建成功。
+  printf '%s\n' "$output" | awk '
+    /Your quick Tunnel has been created! Visit it at/ { created = 1 }
+    created && match($0, /https:\/\/[[:alnum:]-]+\.trycloudflare\.com/) {
+      print substr($0, RSTART, RLENGTH)
+      exit
+    }
+  '
 }
 
 wait_for_cloudflared() {

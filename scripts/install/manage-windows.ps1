@@ -582,12 +582,13 @@ function Get-QuickTunnelUrlFromLogs {
                 continue
             }
             try {
+                # Provisioning failures also print the trycloudflare API URL; require the creation marker first.
                 $match = [Regex]::Match(
                     (Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction Stop),
-                    'https://[A-Za-z0-9-]+\.trycloudflare\.com'
+                    '(?s)Your quick Tunnel has been created! Visit it at.*?(https://[A-Za-z0-9-]+\.trycloudflare\.com)'
                 )
                 if ($match.Success) {
-                    return $match.Value
+                    return $match.Groups[1].Value
                 }
             } catch {
             }

@@ -844,14 +844,34 @@ stop_tunnel_if_loaded() {
   ! launchctl print "$domain/$TUNNEL_LABEL" >/dev/null 2>&1
 }
 
+quick_tunnel_url_from_log() {
+  local log_path="$1"
+  [[ -f "$log_path" && ! -L "$log_path" ]] || return 1
+  # provisioning 失败日志也会出现 trycloudflare.com API 地址，必须先确认 cloudflared 已报告创建成功。
+  awk '
+    /Your quick Tunnel has been created! Visit it at/ { created = 1 }
+    created && match($0, /https:\/\/[[:alnum:]-]+\.trycloudflare\.com/) {
+      print substr($0, RSTART, RLENGTH)
+      exit
+    }
+  ' "$log_path" 2>/dev/null
+}
+
 quick_tunnel_url() {
   if [[ -f "$QUICK_TUNNEL_URL_FILE" && ! -L "$QUICK_TUNNEL_URL_FILE" ]]; then
     tail -n 1 "$QUICK_TUNNEL_URL_FILE"
     return
   fi
-  grep -Eho 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
-    "$QUICK_TUNNEL_RUNTIME_LOG" "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG" \
-    2>/dev/null | tail -n 1
+
+  local log_path public_url
+  for log_path in "$QUICK_TUNNEL_RUNTIME_LOG" "$TUNNEL_STDOUT_LOG" "$TUNNEL_STDERR_LOG"; do
+    public_url="$(quick_tunnel_url_from_log "$log_path" || true)"
+    if [[ -n "$public_url" ]]; then
+      print -r -- "$public_url"
+      return 0
+    fi
+  done
+  return 1
 }
 
 tunnel_launch_process_matches() {

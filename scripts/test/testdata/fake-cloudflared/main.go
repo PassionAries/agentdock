@@ -32,8 +32,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Match the shape of cloudflared output that the managed launcher parses.
-	fmt.Fprintf(os.Stderr, "INF Quick Tunnel available at %s\n", publicURL)
+	// Match the success marker emitted by cloudflared before the generated Quick Tunnel URL.
+	fmt.Fprintln(os.Stderr, "INF Your quick Tunnel has been created! Visit it at:")
+	fmt.Fprintln(os.Stderr, publicURL)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

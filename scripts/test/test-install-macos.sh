@@ -438,7 +438,8 @@ chmod 0600 "$quick_runtime_env" "$quick_runtime_support/cloudflared.env"
 chmod 0755 "$quick_runtime_home/.local/bin/agentdock"
 cat > "$quick_runtime_home/.local/bin/cloudflared" <<'SCRIPT'
 #!/bin/zsh
-print -u2 -- 'INF Quick Tunnel available at https://rebooted.trycloudflare.com'
+print -u2 -- 'INF Your quick Tunnel has been created! Visit it at:'
+print -u2 -- 'https://rebooted.trycloudflare.com'
 sleep 2
 SCRIPT
 cat > "$quick_runtime_bin/launchctl" <<'SCRIPT'

@@ -12,14 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/uvwt/agentdock/internal/envstore"
 	"github.com/uvwt/agentdock/internal/fs/atomicfile"
 )
-
-var unixQuickURLPattern = regexp.MustCompile(`https://[A-Za-z0-9-]+\.trycloudflare\.com`)
 
 func loadTunnelEnvironment(runtimeRoot string) (unixRuntimeManifest, string, map[string]string, error) {
 	manifest, root, err := loadUnixRuntime(runtimeRoot)
@@ -235,6 +232,7 @@ func runQuickTunnel(ctx context.Context, manifest unixRuntimeManifest, root, run
 	}()
 
 	addressApplied := false
+	quickURLParser := quickTunnelLogParser{}
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -242,7 +240,7 @@ func runQuickTunnel(ctx context.Context, manifest unixRuntimeManifest, root, run
 		if addressApplied {
 			continue
 		}
-		publicURL := unixQuickURLPattern.FindString(line)
+		publicURL := quickURLParser.URL(line)
 		if publicURL == "" {
 			continue
 		}
