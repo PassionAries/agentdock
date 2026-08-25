@@ -56,27 +56,6 @@ func TestStatusPageRendersConnectionAndResourceLinks(t *testing.T) {
 	}
 }
 
-func TestVisibleCommitHidesMissingBuildMetadata(t *testing.T) {
-	tests := []struct {
-		name   string
-		commit string
-		want   string
-	}{
-		{name: "empty", commit: "", want: ""},
-		{name: "unknown", commit: "unknown", want: ""},
-		{name: "unknown uppercase", commit: "UNKNOWN", want: ""},
-		{name: "trimmed commit", commit: " 79d9b70a7b25 ", want: "79d9b70a7b25"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := visibleCommit(test.commit); got != test.want {
-				t.Fatalf("visibleCommit(%q) = %q, want %q", test.commit, got, test.want)
-			}
-		})
-	}
-}
-
 func TestStatusPageUsesChineseForChineseBrowserLanguage(t *testing.T) {
 	cfg := testConfig(t)
 	request := httptest.NewRequest(http.MethodGet, "https://dock.example/", nil)
@@ -99,6 +78,35 @@ func TestStatusPageUsesChineseForChineseBrowserLanguage(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("Chinese status page missing %q", expected)
 		}
+	}
+}
+
+func TestAuthLabelCoversConfiguredAuthModes(t *testing.T) {
+	tests := []struct {
+		name    string
+		oauth   bool
+		token   string
+		english string
+		chinese string
+	}{
+		{name: "none", english: "None", chinese: "无"},
+		{name: "token", token: "secret", english: "Token", chinese: "访问令牌"},
+		{name: "oauth", oauth: true, english: "OAuth", chinese: "OAuth"},
+		{name: "oauth and token", oauth: true, token: "secret", english: "OAuth + Token", chinese: "OAuth + 访问令牌"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.OAuthEnabled = test.oauth
+			cfg.AuthToken = test.token
+			if got := authLabel(statusPageEnglish, cfg); got != test.english {
+				t.Fatalf("English auth label = %q, want %q", got, test.english)
+			}
+			if got := authLabel(statusPageChinese, cfg); got != test.chinese {
+				t.Fatalf("Chinese auth label = %q, want %q", got, test.chinese)
+			}
+		})
 	}
 }
 

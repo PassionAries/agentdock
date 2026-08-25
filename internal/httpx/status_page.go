@@ -35,7 +35,6 @@ type statusPageText struct {
 	ReadyTitle        string
 	ReadyDescription  string
 	Version           string
-	Commit            string
 	System            string
 	Capabilities      string
 	Tools             string
@@ -45,6 +44,8 @@ type statusPageText struct {
 	Enabled           string
 	Disabled          string
 	None              string
+	Token             string
+	OAuthAndToken     string
 	MCPEndpoint       string
 	Copy              string
 	Copied            string
@@ -69,7 +70,6 @@ var statusPageEnglish = statusPageText{
 	ReadyTitle:        "Ready for AI agents.",
 	ReadyDescription:  "This AgentDock instance is online and ready to expose local capabilities through MCP.",
 	Version:           "Version",
-	Commit:            "Commit",
 	System:            "System",
 	Capabilities:      "Capabilities",
 	Tools:             "Tools",
@@ -79,6 +79,8 @@ var statusPageEnglish = statusPageText{
 	Enabled:           "Enabled",
 	Disabled:          "Disabled",
 	None:              "None",
+	Token:             "Token",
+	OAuthAndToken:     "OAuth + Token",
 	MCPEndpoint:       "MCP Endpoint",
 	Copy:              "Copy",
 	Copied:            "Copied",
@@ -103,7 +105,6 @@ var statusPageChinese = statusPageText{
 	ReadyTitle:        "已准备好为 AI Agent 提供能力。",
 	ReadyDescription:  "当前 AgentDock 实例在线，可通过 MCP 提供本机能力。",
 	Version:           "版本",
-	Commit:            "提交",
 	System:            "系统",
 	Capabilities:      "能力",
 	Tools:             "工具",
@@ -113,6 +114,8 @@ var statusPageChinese = statusPageText{
 	Enabled:           "已启用",
 	Disabled:          "未启用",
 	None:              "无",
+	Token:             "访问令牌",
+	OAuthAndToken:     "OAuth + 访问令牌",
 	MCPEndpoint:       "MCP 端点",
 	Copy:              "复制",
 	Copied:            "已复制",
@@ -133,7 +136,6 @@ var statusPageChinese = statusPageText{
 type statusPageData struct {
 	Text             statusPageText
 	Version          string
-	Commit           string
 	Platform         string
 	ToolCount        int
 	MCPEndpoint      string
@@ -170,7 +172,6 @@ func statusPageHandler(server *mcp.Server, cfg config.Config) http.HandlerFunc {
 		data := statusPageData{
 			Text:             text,
 			Version:          build.Version,
-			Commit:           visibleCommit(build.Commit),
 			Platform:         build.Platform,
 			ToolCount:        len(server.ToolNames()),
 			MCPEndpoint:      issuerFor(cfg, r) + "/mcp",
@@ -249,14 +250,6 @@ func preferredStatusPageText(header string) statusPageText {
 	return statusPageEnglish
 }
 
-func visibleCommit(commit string) string {
-	commit = strings.TrimSpace(commit)
-	if commit == "" || strings.EqualFold(commit, "unknown") {
-		return ""
-	}
-	return commit
-}
-
 func enabledLabel(text statusPageText, enabled bool) string {
 	if enabled {
 		return text.Enabled
@@ -265,11 +258,15 @@ func enabledLabel(text statusPageText, enabled bool) string {
 }
 
 func authLabel(text statusPageText, cfg config.Config) string {
+	hasToken := strings.TrimSpace(cfg.AuthToken) != ""
+	if cfg.OAuthEnabled && hasToken {
+		return text.OAuthAndToken
+	}
 	if cfg.OAuthEnabled {
 		return "OAuth"
 	}
-	if strings.TrimSpace(cfg.AuthToken) != "" {
-		return "Bearer"
+	if hasToken {
+		return text.Token
 	}
 	return text.None
 }
