@@ -294,7 +294,7 @@ func InputSchema(name string) map[string]any {
 		props["max_bytes"] = intProp("Maximum diff/output bytes.")
 		required = []string{"target", "action"}
 	case "recall_maintain":
-		props["action"] = map[string]any{"type": "string", "description": "Maintenance action.", "enum": []string{"sync_status", "list", "lint", "embedding_status", "reindex", "reindex_cards"}}
+		props["action"] = map[string]any{"type": "string", "description": "Maintenance action.", "enum": []string{"list", "lint", "embedding_status", "reindex", "reindex_cards"}}
 		props["prefix"] = stringProp("Optional NexusDock Recall-relative prefix.")
 		props["terms"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Terms or regex patterns for lint."}
 		props["regex"] = boolProp("Treat terms as regex patterns for lint.")

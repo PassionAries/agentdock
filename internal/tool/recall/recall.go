@@ -114,16 +114,8 @@ func invalidRecallTargetAction(target, action string) error {
 }
 
 func (svc *Service) Maintain(ctx context.Context, args map[string]any) (Result, error) {
-	action := strings.ToLower(strings.TrimSpace(stringArg(args, "action", "sync_status")))
+	action := strings.ToLower(strings.TrimSpace(stringArg(args, "action", "list")))
 	switch action {
-	case "sync_status", "sync", "status":
-		result, err := svc.Request(ctx, http.MethodGet, "/v1/sync/status", nil)
-		if err != nil {
-			return nil, err
-		}
-		decorateRecallResult(result)
-		result["recall_action"] = "sync_status"
-		return result, nil
 	case "list":
 		listArgs, err := recallMaintainListArgs(args)
 		if err != nil {

@@ -343,9 +343,14 @@ func TestRecallModelChoiceFieldsUseEnums(t *testing.T) {
 	}
 
 	maintainProps := schemaProperties(t, "recall_maintain")
-	for _, want := range []string{"sync_status", "list", "lint", "embedding_status", "reindex", "reindex_cards"} {
+	for _, want := range []string{"list", "lint", "embedding_status", "reindex", "reindex_cards"} {
 		if !containsString(enumStrings(t, maintainProps["action"]), want) {
 			t.Fatalf("recall_maintain action enum missing %s: %#v", want, maintainProps["action"])
+		}
+	}
+	for _, removed := range []string{"sync_status", "sync", "status"} {
+		if containsString(enumStrings(t, maintainProps["action"]), removed) {
+			t.Fatalf("recall_maintain still exposes removed sync action %s: %#v", removed, maintainProps["action"])
 		}
 	}
 }

@@ -294,10 +294,6 @@ func OutputSchema(name string) map[string]any {
 		props["files_scanned"] = intProp("Files scanned for action=lint.")
 		props["finding_count"] = intProp("Finding count for action=lint.")
 		props["findings"] = arrayProp("Lint findings.")
-		props["git_repo"] = boolProp("Whether the NexusDock Recall store is a Git repository for action=sync_status.")
-		props["auto_sync_enabled"] = boolProp("Whether NexusDock Recall auto sync is enabled.")
-		props["pending_push"] = boolProp("Whether NexusDock Recall has remote sync work.")
-		props["conflict"] = boolProp("Whether NexusDock Recall detected a sync conflict.")
 	case "private_note_manage":
 		props["root"] = stringProp("NexusDock private notes root path.")
 		props["private_note_store"] = stringProp("Private note store name, fixed to NexusDock Private Notes.")
