@@ -55,6 +55,7 @@ func Serve(ctx context.Context, server *mcp.Server, cfg config.Config) error {
 		return fmt.Errorf("clean public artifacts: %w", err)
 	}
 	slog.Info("http server configured", "host", cfg.Host, "port", cfg.Port, "auth_required", authRequired, "endpoint", "/mcp")
+	mux.HandleFunc("/", statusPageHandler(server, cfg))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		writeJSON(w, map[string]any{"ok": true, "version": buildinfo.Version})
