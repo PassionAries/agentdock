@@ -41,7 +41,8 @@ func newMemoryTestRuntime(t *testing.T, store map[string]string) (*Runtime, func
 				t.Fatal(err)
 			}
 			query := strings.ToLower(fmt.Sprint(payload["query"]))
-			prefix := strings.TrimSpace(fmt.Sprint(payload["prefix"]))
+			prefix, _ := payload["prefix"].(string)
+			prefix = strings.TrimSpace(prefix)
 			terms := strings.Fields(query)
 			results := []map[string]any{}
 			for p, content := range store {

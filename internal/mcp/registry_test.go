@@ -144,7 +144,7 @@ func TestNexusDockRecallToolNamesHideLegacyMemoryTools(t *testing.T) {
 	for _, name := range rt.ToolNames() {
 		seen[name] = true
 	}
-	for _, name := range []string{"recall_bootstrap", "recall_search", "recall_read", "recall_write", "recall_maintain", "private_note_manage"} {
+	for _, name := range []string{"recall_bootstrap", "recall_search", "recall_read", "search", "fetch", "recall_write", "recall_maintain", "private_note_manage"} {
 		if !seen[name] {
 			t.Fatalf("full profile missing memory tool %q", name)
 		}
@@ -351,7 +351,7 @@ func TestRecallModelChoiceFieldsUseEnums(t *testing.T) {
 }
 
 func TestRecallPublicSchemasAreClosedForModelFacingArgs(t *testing.T) {
-	for _, name := range []string{"recall_bootstrap", "recall_search", "recall_read", "recall_write", "recall_maintain", "private_note_manage"} {
+	for _, name := range []string{"recall_bootstrap", "recall_search", "recall_read", "search", "fetch", "recall_write", "recall_maintain", "private_note_manage"} {
 		schema := inputSchema(name)
 		if got, _ := schema["additionalProperties"].(bool); got {
 			t.Fatalf("%s input schema should be closed to keep hidden compatibility args out of model-facing schema: %#v", name, schema)

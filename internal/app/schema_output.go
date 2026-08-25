@@ -270,6 +270,29 @@ func OutputSchema(name string) map[string]any {
 	case "recall_read":
 		props["recall_endpoint"] = stringProp("Configured NexusDock Recall endpoint.")
 		props["recall"] = objectProp("NexusDock Recall document returned by the backing service. Raw Markdown is omitted by default and returned as raw_content only when include_raw=true.")
+	case "search":
+		required = []string{"results"}
+		props["results"] = map[string]any{
+			"type":        "array",
+			"description": "Company knowledge search results backed by NexusDock Recall.",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":    stringProp("Stable Recall document id accepted by fetch."),
+					"title": stringProp("Human-readable document title."),
+					"url":   stringProp("Absolute user-openable source URL."),
+				},
+				"required":             []string{"id", "title", "url"},
+				"additionalProperties": false,
+			},
+		}
+	case "fetch":
+		required = []string{"id", "title", "text", "url", "metadata"}
+		props["id"] = stringProp("Stable Recall document id returned by search.")
+		props["title"] = stringProp("Human-readable document title.")
+		props["text"] = stringProp("Complete source document text.")
+		props["url"] = stringProp("Absolute user-openable source URL.")
+		props["metadata"] = objectProp("Source metadata such as Recall path, frontmatter, and size.")
 	case "recall_write":
 		props["recall_endpoint"] = stringProp("Configured NexusDock Recall endpoint.")
 		props["recall_target"] = stringProp("Recall target used.")
