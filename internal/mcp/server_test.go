@@ -14,18 +14,43 @@ import (
 	"github.com/uvwt/agentdock/internal/config"
 )
 
-func TestToolDescriptorsDoNotExposePermissionAnnotations(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package"}, config.Config{})
+func TestToolDescriptorsExposeSafetyAnnotations(t *testing.T) {
+	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package", "task_manage", "file_publish"}, config.Config{})
 	byName := map[string]map[string]any{}
 	for _, descriptor := range descriptors {
 		name, _ := descriptor["name"].(string)
 		byName[name] = descriptor
 	}
-	for _, tool := range []string{"read_file", "skill_package"} {
-		if _, ok := byName[tool]["annotations"]; ok {
-			t.Fatalf("%s should not expose permission annotations", tool)
+
+	assertToolAnnotation(t, byName["read_file"], true, false, false)
+	assertToolAnnotation(t, byName["skill_package"], false, true, true)
+	assertToolAnnotation(t, byName["task_manage"], false, false, false)
+	assertToolAnnotation(t, byName["file_publish"], false, false, true)
+
+	for _, def := range app.ToolDefinitions() {
+		if def.Annotations == nil {
+			t.Fatalf("%s has no safety annotations", def.Name)
 		}
 	}
+}
+
+func assertToolAnnotation(t *testing.T, descriptor map[string]any, readOnly, destructive, openWorld bool) {
+	t.Helper()
+	annotations, ok := descriptor["annotations"].(map[string]any)
+	if !ok {
+		t.Fatalf("descriptor has no annotations: %#v", descriptor)
+	}
+	if got, _ := annotations["readOnlyHint"].(bool); got != readOnly {
+		t.Fatalf("readOnlyHint = %v, want %v", got, readOnly)
+	}
+	assertBoolPointer := func(key string, want bool) {
+		value, ok := annotations[key].(*bool)
+		if !ok || value == nil || *value != want {
+			t.Fatalf("%s = %#v, want %v", key, annotations[key], want)
+		}
+	}
+	assertBoolPointer("destructiveHint", destructive)
+	assertBoolPointer("openWorldHint", openWorld)
 }
 
 func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {

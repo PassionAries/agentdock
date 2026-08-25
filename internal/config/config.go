@@ -57,6 +57,7 @@ type Config struct {
 	TrustedProxyCIDRs            []string
 	InstructionsFile             string
 	Instructions                 string
+	MCPExportedSkills            []string
 }
 
 func FromEnv() (Config, error) {
@@ -139,6 +140,7 @@ func FromEnv() (Config, error) {
 		Stdio:                        stdio,
 		TrustedProxyCIDRs:            splitCommaSeparated(os.Getenv("AGENTDOCK_TRUSTED_PROXY_CIDRS")),
 		InstructionsFile:             strings.TrimSpace(os.Getenv("AGENTDOCK_INSTRUCTIONS_FILE")),
+		MCPExportedSkills:            splitCommaSeparated(os.Getenv("AGENTDOCK_MCP_EXPORTED_SKILLS")),
 	}, nil
 }
 
@@ -242,6 +244,10 @@ func (c *Config) Normalize() error {
 		if c.Instructions == "" {
 			return fmt.Errorf("InstructionsFile must contain non-empty instructions: %s", c.InstructionsFile)
 		}
+	}
+	c.MCPExportedSkills = uniqueStrings(c.MCPExportedSkills)
+	if len(c.MCPExportedSkills) > 5 {
+		return fmt.Errorf("AGENTDOCK_MCP_EXPORTED_SKILLS accepts at most 5 skills, got %d", len(c.MCPExportedSkills))
 	}
 	if err := c.normalizeACP(); err != nil {
 		return err
@@ -377,6 +383,23 @@ func splitCommaSeparated(value string) []string {
 		if cleaned := strings.TrimSpace(part); cleaned != "" {
 			result = append(result, cleaned)
 		}
+	}
+	return result
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
 	}
 	return result
 }

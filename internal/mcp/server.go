@@ -19,18 +19,22 @@ import (
 )
 
 type Server struct {
-	runtime     *app.Runtime
-	cfg         config.Config
-	sdk         *mcpsdk.Server
-	httpHandler http.Handler
+	runtime      *app.Runtime
+	cfg          config.Config
+	sdk          *mcpsdk.Server
+	skillCatalog skillCatalogCache
+	httpHandler  http.Handler
 }
 
 func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	server := &Server{runtime: runtime, cfg: cfg}
-	serverOptions := &mcpsdk.ServerOptions{Capabilities: &mcpsdk.ServerCapabilities{}}
-	if cfg.Instructions != "" {
-		// 可选说明文字随 initialize 响应下发，由支持 MCP instructions 的客户端注入模型上下文。
-		serverOptions.Instructions = cfg.Instructions
+	capabilities := &mcpsdk.ServerCapabilities{}
+	if runtime != nil && len(cfg.MCPExportedSkills) > 0 {
+		capabilities.AddExtension(skillsExtensionName, nil)
+	}
+	serverOptions := &mcpsdk.ServerOptions{
+		Capabilities: capabilities,
+		Instructions: serverInstructions(cfg.Instructions),
 	}
 	server.sdk = mcpsdk.NewServer(
 		&mcpsdk.Implementation{Name: config.ServerName, Version: buildinfo.Version},
@@ -39,6 +43,9 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	if runtime != nil {
 		for _, name := range runtime.ToolNames() {
 			server.registerTool(name, cfg)
+		}
+		if len(cfg.MCPExportedSkills) > 0 {
+			server.registerSkillExtension()
 		}
 	}
 	server.httpHandler = mcpsdk.NewStreamableHTTPHandler(

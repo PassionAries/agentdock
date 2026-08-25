@@ -60,7 +60,7 @@ func TestServeStdioRejectsUninitializedServer(t *testing.T) {
 	}
 }
 
-func TestServeStdioAdvertisesInstructions(t *testing.T) {
+func TestServeStdioAdvertisesBaseAndOperatorInstructions(t *testing.T) {
 	server := NewServer(nil, config.Config{Instructions: "Use absolute paths under /srv."})
 	clientInput, serverOutput := io.Pipe()
 	serverInput, clientOutput := io.Pipe()
@@ -80,8 +80,11 @@ func TestServeStdioAdvertisesInstructions(t *testing.T) {
 		t.Fatalf("Connect() error = %v", err)
 	}
 	result := session.InitializeResult()
-	if result == nil || result.Instructions != "Use absolute paths under /srv." {
-		t.Fatalf("InitializeResult() = %#v, want instructions", result)
+	if result == nil || !strings.HasPrefix(result.Instructions, baseServerInstructions) {
+		t.Fatalf("InitializeResult() = %#v, want AgentDock base instructions first", result)
+	}
+	if !strings.Contains(result.Instructions, "Additional operator instructions:\nUse absolute paths under /srv.") {
+		t.Fatalf("InitializeResult() = %#v, want operator instructions appended", result)
 	}
 	if err := session.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
