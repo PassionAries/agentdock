@@ -203,6 +203,23 @@ User documentation is maintained separately in [`uvwt/agentdock-docs`](https://g
 
 Submit bugs and feature requests through [GitHub Issues](https://github.com/uvwt/agentdock/issues).
 
+## ♥️ Support the project
+
+<p>If <b>AgentDock</b> helps you, please consider giving it a <b>Star</b> ⭐. Thank you for your support!</p>
+<table>
+<thead>
+<tr>
+<th align="center">WeChat</th>
+<th align="center">Alipay</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="center"><img src="./docs/assets/donation/wechat-cropped.JPG" alt="WeChat donation QR code" height="200"></td>
+<td align="center"><img src="./docs/assets/donation/alipay.JPG" alt="Alipay donation QR code" height="200"></td>
+</tr>
+</tbody>
+</table>
+
 ## Related links
 
 - [Documentation](https://uvwt.github.io/agentdock-docs/)
