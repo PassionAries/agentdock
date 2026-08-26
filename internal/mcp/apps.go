@@ -122,19 +122,19 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
   const expectedView="{{VIEW}}";
   const root=document.getElementById("content");
   let lastSerialized="";
+  let rpcID=0;
+  const pendingRequests=new Map();
 
   const el=(tag,className,text)=>{const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=String(text);return node};
   const isObject=value=>value!==null&&typeof value==="object"&&!Array.isArray(value);
   const scalar=value=>value===null||["string","number","boolean"].includes(typeof value);
   const actionLabel=value=>String(value||"").replaceAll("_"," ").toUpperCase();
-
-  function extract(payload){
-    if(!isObject(payload))return null;
-    const candidates=[payload.structuredContent,payload.toolOutput,payload.result&&payload.result.structuredContent,payload.params&&payload.params.structuredContent,payload.params&&payload.params.toolOutput,payload.params&&payload.params.result&&payload.params.result.structuredContent];
-    for(const value of candidates){if(isObject(value))return value}
-    if(payload.view===expectedView)return payload;
-    return null;
-  }
+  const rpcNotify=(method,params)=>window.parent.postMessage({jsonrpc:"2.0",method,params:params||{}},"*");
+  const rpcRequest=(method,params)=>new Promise((resolve,reject)=>{
+    const id=++rpcID;
+    pendingRequests.set(id,{resolve,reject});
+    window.parent.postMessage({jsonrpc:"2.0",id,method,params:params||{}},"*");
+  });
 
 
   function headline(fragment,action,primary,secondary){
@@ -277,7 +277,39 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     if(expectedView==="task_progress")renderTask(data);else if(expectedView==="file_change")renderFileChange(data);else renderACP(data);
   }
 
-  window.addEventListener("message",event=>{const data=extract(event.data);if(data)render(data)});
+  window.addEventListener("message",event=>{
+    if(event.source!==window.parent)return;
+    const message=event.data;
+    if(!isObject(message)||message.jsonrpc!=="2.0")return;
+
+    if(message.id!==undefined&&!message.method){
+      const pending=pendingRequests.get(message.id);
+      if(!pending)return;
+      pendingRequests.delete(message.id);
+      if(message.error)pending.reject(message.error);else pending.resolve(message.result);
+      return;
+    }
+
+    if(message.method==="ui/notifications/tool-result"){
+      const data=message.params&&message.params.structuredContent;
+      if(isObject(data))render(data);
+    }
+  },{passive:true});
+
+  async function initializeBridge(){
+    try{
+      await rpcRequest("ui/initialize",{
+        appInfo:{name:"agentdock-"+expectedView,version:"1.0.0"},
+        appCapabilities:{},
+        protocolVersion:"2026-01-26"
+      });
+      rpcNotify("ui/notifications/initialized",{});
+    }catch(_){
+      root.textContent="Unable to initialize MCP App.";
+    }
+  }
+
+  initializeBridge();
 })();
 </script>
 </body>

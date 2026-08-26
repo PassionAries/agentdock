@@ -155,6 +155,24 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		if len(read.Contents) != 1 || read.Contents[0].MIMEType != mcpAppMIMEType || !strings.Contains(read.Contents[0].Text, `window.addEventListener("message"`) || !strings.Contains(read.Contents[0].Text, "connect-src 'none'") {
 			t.Fatalf("ReadResource(%s) = %#v", uri, read.Contents)
 		}
+		html := read.Contents[0].Text
+		for _, marker := range []string{
+			`window.parent.postMessage({jsonrpc:"2.0",id,method`,
+			`rpcRequest("ui/initialize"`,
+			`protocolVersion:"2026-01-26"`,
+			`rpcNotify("ui/notifications/initialized"`,
+			`message.method==="ui/notifications/tool-result"`,
+			`message.params&&message.params.structuredContent`,
+		} {
+			if !strings.Contains(html, marker) {
+				t.Fatalf("resource %s missing standard MCP Apps bridge marker %q", uri, marker)
+			}
+		}
+		for _, legacy := range []string{"window.openai", "toolOutput", "openai/widget", "openai/outputTemplate", "ui/resourceUri"} {
+			if strings.Contains(html, legacy) {
+				t.Fatalf("resource %s contains legacy bridge marker %q", uri, legacy)
+			}
+		}
 		assertResourceUIMeta(t, resource.Meta, widgetDomain)
 		assertResourceUIMeta(t, read.Contents[0].Meta, widgetDomain)
 	}
