@@ -315,8 +315,9 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	if cfg.Stdio {
 		return serveStdio(ctx, server)
 	}
+	nexusStatus := &nexusbridge.ConnectionState{}
 	if identityErr == nil {
-		go nexusbridge.NewClient(identity, server).Run(ctx)
+		go nexusbridge.NewClient(identity, server, nexusStatus).Run(ctx)
 	}
 	runtimeRoot := strings.TrimSpace(os.Getenv("AGENTDOCK_RUNTIME_ROOT"))
 	if runtimeRoot == "" {
@@ -330,7 +331,13 @@ func runServer(ctx context.Context, args []string, stderr io.Writer) error {
 	done := make(chan error, 2)
 	go func() { done <- httpx.Serve(runtimeCtx, server, cfg) }()
 	go func() {
-		done <- desktopcontrol.Serve(runtimeCtx, runtimeRoot, desktopruntime.DispatchControlRequest)
+		done <- desktopcontrol.Serve(runtimeCtx, runtimeRoot, func(controlCtx context.Context, request desktopcontrol.Request) (any, error) {
+			return desktopruntime.DispatchControlRequest(
+				controlCtx,
+				request,
+				desktopruntime.ControlRuntimeStatus{NexusConnected: nexusStatus.Connected()},
+			)
+		})
 	}()
 	err = <-done
 	cancel()

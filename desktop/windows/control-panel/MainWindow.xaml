@@ -22,9 +22,15 @@
           <TextBlock Text="AgentDock" FontSize="24" FontWeight="SemiBold" />
           <TextBlock Text="Windows 控制面板" Foreground="#667085" Margin="0,3,0,0" />
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-          <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#98A2B3" Margin="0,0,8,0" />
-          <TextBlock x:Name="HeaderStatusText" Text="正在读取状态…" VerticalAlignment="Center" />
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#98A2B3" Margin="0,0,8,0" />
+            <TextBlock x:Name="HeaderStatusText" Text="正在读取状态…" VerticalAlignment="Center" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
+            <Ellipse x:Name="NexusStatusDot" Width="8" Height="8" Fill="#98A2B3" Margin="0,0,8,0" />
+            <TextBlock x:Name="NexusHeaderStatusText" Text="Nexus · 未配置" Foreground="#667085" VerticalAlignment="Center" />
+          </StackPanel>
         </StackPanel>
       </Grid>
     </Border>

@@ -13,9 +13,13 @@ type controlActionParams struct {
 	RuntimeRoot string `json:"runtime_root"`
 }
 
+type ControlRuntimeStatus struct {
+	NexusConnected bool
+}
+
 // DispatchControlRequest 是后台核心的本地控制 API。这里只暴露桌面日常管理能力，
 // 安装、卸载和提权仍由系统安装器负责。
-func DispatchControlRequest(ctx context.Context, request desktopcontrol.Request) (any, error) {
+func DispatchControlRequest(ctx context.Context, request desktopcontrol.Request, runtimeStatus ControlRuntimeStatus) (any, error) {
 	var params controlActionParams
 	if len(request.Params) > 0 {
 		if err := json.Unmarshal(request.Params, &params); err != nil {
@@ -29,7 +33,12 @@ func DispatchControlRequest(ctx context.Context, request desktopcontrol.Request)
 	case "ping":
 		return map[string]bool{"ready": true}, nil
 	case "service.status":
-		return platformServiceStatus(ctx, params.RuntimeRoot)
+		status, err := platformServiceStatus(ctx, params.RuntimeRoot)
+		if err != nil {
+			return nil, err
+		}
+		status.NexusConnected = runtimeStatus.NexusConnected
+		return status, nil
 	case "tunnel.status":
 		return platformTunnelStatus(ctx, params.RuntimeRoot)
 	default:

@@ -45,3 +45,43 @@ func TestWindowsUpdateProgressWindowSizesToContent(t *testing.T) {
 		t.Fatal("Windows update progress button row must size to its content")
 	}
 }
+
+func TestWindowsControlPanelShowsLiveNexusStatusBesideRuntimeStatus(t *testing.T) {
+	root := filepath.Join("..", "..", "desktop", "windows", "control-panel")
+	files := map[string][]string{
+		"MainWindow.xaml": {
+			`x:Name="NexusStatusDot"`,
+			`x:Name="NexusHeaderStatusText"`,
+		},
+		"MainWindow.xaml.cs": {
+			`Nexus · 已连接`,
+			`Nexus · 未连接`,
+			`Nexus · 未配置`,
+			`Nexus · 配置异常`,
+			`snapshot.NexusConnected`,
+			`GetSnapshotAsync(includeNexusConnection: true)`,
+		},
+		filepath.Join("Models", "RuntimeModels.cs"): {
+			`bool NexusConnected`,
+			`JsonPropertyName("nexus_connected")`,
+		},
+		filepath.Join("Services", "RuntimeService.cs"): {
+			`bool includeNexusConnection = false`,
+			`ReadNexusConnectionAsync`,
+			`"service", "status", "--runtime-root", RuntimeRoot`,
+		},
+	}
+
+	for relativePath, wants := range files {
+		data, err := os.ReadFile(filepath.Join(root, relativePath))
+		if err != nil {
+			t.Fatalf("read %s: %v", relativePath, err)
+		}
+		content := string(data)
+		for _, want := range wants {
+			if !strings.Contains(content, want) {
+				t.Fatalf("Windows Nexus status contract missing %q in %s", want, relativePath)
+			}
+		}
+	}
+}

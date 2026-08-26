@@ -18,6 +18,7 @@ type ServiceStatus struct {
 	Running        bool `json:"running"`
 	Healthy        bool `json:"healthy"`
 	StartupEnabled bool `json:"startup_enabled"`
+	NexusConnected bool `json:"nexus_connected"`
 }
 
 type serviceCommandResult struct {

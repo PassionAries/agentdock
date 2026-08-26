@@ -7,6 +7,31 @@ struct HealthPayload: Decodable {
     let version: String
 }
 
+struct DesktopServiceStatusPayload: Decodable {
+    let nexusConnected: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case nexusConnected = "nexus_connected"
+    }
+}
+
+enum NexusConnectionState: Equatable {
+    case unconfigured
+    case connected
+    case disconnected
+    case configurationError
+
+    static func resolve(device: NexusDeviceStatus, connected: Bool) -> NexusConnectionState {
+        if device.error != nil {
+            return .configurationError
+        }
+        guard device.paired else {
+            return .unconfigured
+        }
+        return connected ? .connected : .disconnected
+    }
+}
+
 struct DesktopUpdateCheck: Decodable {
     let updateAvailable: Bool
     let message: String
@@ -37,6 +62,7 @@ struct ServiceStatus {
     let autostartEnabled: Bool
     let requiresApproval: Bool
     let migrationRequired: Bool
+    let nexusConnection: NexusConnectionState
 
     static let missing = ServiceStatus(
         installed: false,
@@ -46,7 +72,8 @@ struct ServiceStatus {
         configuration: nil,
         autostartEnabled: false,
         requiresApproval: false,
-        migrationRequired: false
+        migrationRequired: false,
+        nexusConnection: .unconfigured
     )
 }
 
@@ -72,11 +99,13 @@ final class ServiceController: @unchecked Sendable {
         guard installed else { return .missing }
 
         let configuration = ServiceConfiguration.load(from: paths.environment)
+        let nexusDevice = nexusDeviceStatus()
         let registration = coreService.status
         let requiresApproval = registration == .requiresApproval
         let enabled = registration == .enabled
         let registered = enabled || requiresApproval
         let loaded = enabled && isLoaded(label: Self.coreLabel)
+        let nexusConnected = loaded && nexusDevice.paired ? await fetchNexusConnected() : false
 
         guard loaded, let healthURL = configuration?.healthURL else {
             return ServiceStatus(
@@ -87,7 +116,8 @@ final class ServiceController: @unchecked Sendable {
                 configuration: configuration,
                 autostartEnabled: registered,
                 requiresApproval: requiresApproval,
-                migrationRequired: migrationRequired
+                migrationRequired: migrationRequired,
+                nexusConnection: .resolve(device: nexusDevice, connected: nexusConnected)
             )
         }
 
@@ -100,7 +130,8 @@ final class ServiceController: @unchecked Sendable {
             configuration: configuration,
             autostartEnabled: registered,
             requiresApproval: requiresApproval,
-            migrationRequired: migrationRequired
+            migrationRequired: migrationRequired,
+            nexusConnection: .resolve(device: nexusDevice, connected: nexusConnected)
         )
     }
 
@@ -538,6 +569,25 @@ final class ServiceController: @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.5)
         }
         return false
+    }
+
+    private func fetchNexusConnected() async -> Bool {
+        do {
+            let result = try await runInBackground {
+                try runProcess(
+                    executable: self.paths.binary.path,
+                    arguments: ["service", "status", "--runtime-root", self.paths.appSupport.path]
+                )
+            }
+            guard result.status == 0,
+                  let data = result.output.data(using: .utf8),
+                  let payload = try? JSONDecoder().decode(DesktopServiceStatusPayload.self, from: data) else {
+                return false
+            }
+            return payload.nexusConnected
+        } catch {
+            return false
+        }
     }
 
     private func fetchHealth(url: URL) async -> HealthPayload? {

@@ -18,6 +18,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let titleLabel = NSTextField(labelWithString: "AgentDock")
     private let subtitleLabel = NSTextField(labelWithString: "本机 MCP 服务与公网连接管理")
     private let stateLabel = NSTextField(labelWithString: "未安装")
+    private let nexusStateLabel = NSTextField(labelWithString: "Nexus · 未配置")
 
     private let serviceSection = NSStackView()
     private let localAddress = NSTextField(labelWithString: "未安装")
@@ -141,6 +142,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             oauthPasswordValue = ""
             select(mode: .local)
         }
+        updateNexusState(status.nexusConnection)
         refreshCredentialFields()
         refreshChangeState()
         updateWindowHeight()
@@ -155,6 +157,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         guard status.installed else { return }
         updateServiceSection(status)
+        updateNexusState(status.nexusConnection)
         refreshCredentialFields()
     }
 
@@ -175,12 +178,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         subtitleLabel.textColor = .secondaryLabelColor
         stateLabel.alignment = .right
         stateLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nexusStateLabel.alignment = .right
+        nexusStateLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        nexusStateLabel.textColor = .secondaryLabelColor
 
         let headerText = NSStackView(views: [titleLabel, subtitleLabel])
         headerText.orientation = .vertical
         headerText.alignment = .leading
         headerText.spacing = 3
-        let header = NSStackView(views: [headerText, NSView(), stateLabel])
+        let headerStatus = NSStackView(views: [stateLabel, nexusStateLabel])
+        headerStatus.orientation = .vertical
+        headerStatus.alignment = .trailing
+        headerStatus.spacing = 3
+        let header = NSStackView(views: [headerText, NSView(), headerStatus])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.widthAnchor.constraint(equalToConstant: 564).isActive = true
@@ -342,6 +352,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             startStopButton.isEnabled = status.installed && !migrationRequired
             restartButton.isEnabled = status.installed && !status.requiresApproval && !migrationRequired
             updateButton.isEnabled = status.installed && !migrationRequired
+        }
+    }
+
+    private func updateNexusState(_ state: NexusConnectionState) {
+        switch state {
+        case .connected:
+            nexusStateLabel.stringValue = "Nexus ● 已连接"
+            nexusStateLabel.textColor = .systemGreen
+        case .disconnected:
+            nexusStateLabel.stringValue = "Nexus ● 未连接"
+            nexusStateLabel.textColor = .systemOrange
+        case .unconfigured:
+            nexusStateLabel.stringValue = "Nexus · 未配置"
+            nexusStateLabel.textColor = .secondaryLabelColor
+        case .configurationError:
+            nexusStateLabel.stringValue = "Nexus ● 配置异常"
+            nexusStateLabel.textColor = .systemRed
         }
     }
 

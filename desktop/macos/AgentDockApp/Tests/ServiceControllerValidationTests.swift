@@ -54,6 +54,7 @@ struct ServiceControllerValidationTests {
 
         try testConfiguredTunnelMode(root: root, appBundle: appBundle)
         testServiceRegistrationStatusClassification()
+        try testNexusConnectionStateResolution(root: root)
         try testDesktopUpdateCheckDecoding()
 
         print("service controller validation tests passed")
@@ -85,6 +86,30 @@ struct ServiceControllerValidationTests {
         precondition(ServiceController.isUnregistered(.notFound))
         precondition(!ServiceController.isUnregistered(.enabled))
         precondition(!ServiceController.isUnregistered(.requiresApproval))
+    }
+
+    private static func testNexusConnectionStateResolution(root: URL) throws {
+        let identityURL = root.appendingPathComponent("nexus-device.json")
+        try Data(#"{"endpoint":"https://nexus.example.com","node_id":"node_test","device_id":"device_test","device_token":"secret"}"#.utf8)
+            .write(to: identityURL)
+        let paired = NexusDeviceStatus.load(from: identityURL)
+
+        let connectedStatus = try JSONDecoder().decode(
+            DesktopServiceStatusPayload.self,
+            from: Data(#"{"nexus_connected":true}"#.utf8)
+        )
+        precondition(connectedStatus.nexusConnected)
+        precondition(NexusConnectionState.resolve(device: paired, connected: connectedStatus.nexusConnected) == .connected)
+        precondition(NexusConnectionState.resolve(device: paired, connected: false) == .disconnected)
+
+        let missing = NexusDeviceStatus.load(from: root.appendingPathComponent("missing-device.json"))
+        precondition(NexusConnectionState.resolve(device: missing, connected: true) == .unconfigured)
+
+        let invalidIdentityURL = root.appendingPathComponent("invalid-device.json")
+        try Data("not-json".utf8).write(to: invalidIdentityURL)
+        let invalid = NexusDeviceStatus.load(from: invalidIdentityURL)
+        precondition(invalid.error != nil)
+        precondition(NexusConnectionState.resolve(device: invalid, connected: true) == .configurationError)
     }
 
     private static func testDesktopUpdateCheckDecoding() throws {
