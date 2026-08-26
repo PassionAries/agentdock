@@ -194,7 +194,7 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("agent context resource = %#v", contextRead.Contents)
 	}
 	contextHTML := contextRead.Contents[0].Text
-	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionLines", "contextNamedItems", "appendContextStat", "appendContextSection", `appendContextSection(fragment,"Skills"`, `appendContextSection(fragment,"MCP"`, `appendContextSection(fragment,"ACP"`, `appendContextSection(fragment,"Workflow"`, `recall?"Recall":"No Recall"`} {
+	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionLines", "contextNamedItems", "appendContextOverview", "appendContextSection", "contextPill", `appendContextSection(groups,"Skills"`, `appendContextSection(groups,"MCP"`, `appendContextSection(groups,"ACP"`, `appendContextSection(groups,"Workflow"`, `contextPill(recall?"ON":"OFF","Recall")`, ".context-overview", ".context-list{display:grid;grid-template-columns:repeat(2", ".compact-context"} {
 		if !strings.Contains(contextHTML, marker) {
 			t.Fatalf("agent context resource missing structured summary marker %q", marker)
 		}
@@ -213,23 +213,23 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
 	}
 	fileChangeHTML := fileChangeRead.Contents[0].Text
-	for _, marker := range []string{"body{margin:0;padding:0;background:transparent", ".compact-toggle{width:100%;min-height:64px;border:0", ".compact-toggle.single-line{min-height:42px", ".compact-secondary", `end.append(el("span","brand","AgentDock"))`, ".detail-panel{border-top:1px solid #ececec", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.classList.add("single-line")`, `toggle.addEventListener("click"`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`} {
+	for _, marker := range []string{"body{margin:0;padding:0;background:transparent", ".compact-toggle{width:100%;min-height:68px;border:0", ".compact-toggle.single-line{min-height:44px", ".compact-row", ".compact-path", ".compact-file-meta", `end.append(el("span","brand","AgentDock"))`, ".detail-panel{border-top:1px solid #ececec", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.classList.add("single-line")`, `toggle.addEventListener("click"`, `compactRows.push(el("span","compact-path",pathText))`, `compactShell({action:data.action||"change",title:fileName},compactRows,fragment)`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`, `@media(max-width:560px){`, `.brand,.compact-action{display:none}`, `@media(max-width:400px){`, `.compact-progress-meta,.compact-file-meta{display:none}`} {
 		if !strings.Contains(fileChangeHTML, marker) {
 			t.Fatalf("file change resource missing simplified UI marker %q", marker)
 		}
 	}
-	for _, nestedFrame := range []string{"border:1px solid #dedede", "border-radius:999px"} {
+	for _, nestedFrame := range []string{".compact-toggle{width:100%;min-height:68px;border:1px", ".detail-panel{border:1px"} {
 		if strings.Contains(fileChangeHTML, nestedFrame) {
-			t.Fatalf("file change resource still contains nested frame marker %q", nestedFrame)
+			t.Fatalf("file change resource still contains nested app frame marker %q", nestedFrame)
 		}
 	}
 	taskRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.TaskProgressUIResourceURI})
 	if err != nil {
 		t.Fatalf("ReadResource(task progress) error = %v", err)
 	}
-	for _, marker := range []string{".compact-progress", ".progress-fill", ".progress-node.completed", ".progress-node.in-progress", ".progress-node.blocked", `node.title=(step.title||step.id||"Step")+" · "+status`, `fill.style.width="calc((100% - 14px) * "+ratio+")"`, "taskProgress(steps)", ".steps::before", ".step-marker", `status==="completed"?"✓"`} {
+	for _, marker := range []string{".compact-progress", ".compact-progress-row", ".compact-summary", ".progress-fill", ".progress-node.completed", ".progress-node.in-progress", ".progress-node.blocked", `node.title=(step.title||step.id||"Step")+" · "+status`, `fill.style.width="calc((100% - 14px) * "+ratio+")"`, "taskProgress(steps)", `compactRows.push(el("span","compact-summary",task.summary))`, `progressRow.append(progress)`, `compactRows.push(progressRow)`, ".steps::before", ".step-marker", `status==="completed"?"✓"`} {
 		if len(taskRead.Contents) != 1 || !strings.Contains(taskRead.Contents[0].Text, marker) {
-			t.Fatalf("task resource missing vertical progress marker %q", marker)
+			t.Fatalf("task resource missing compact or detailed progress marker %q", marker)
 		}
 	}
 	if resources[app.ACPStatusUIResourceURI] != nil {

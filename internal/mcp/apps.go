@@ -116,10 +116,14 @@ const mcpAppHTMLTemplate = `<!doctype html>
 <title>{{TITLE}}</title>
 <style>
 :root{color-scheme:light;font:13px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-*{box-sizing:border-box}body{margin:0;padding:0;background:transparent;color:#111}main{background:transparent;color:#111}.compact-toggle{width:100%;min-height:64px;border:0;border-radius:0;padding:10px 14px;background:transparent;color:#111;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;gap:6px 12px;align-items:center;text-align:left;font:inherit;cursor:pointer}.compact-toggle:hover{background:#fafafa}.compact-toggle.single-line{min-height:42px;grid-template-rows:auto;padding-top:8px;padding-bottom:8px}.compact-primary{display:flex;min-width:0;gap:7px;align-items:center}.compact-action{flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.compact-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compact-secondary{grid-column:1/-1;min-width:0;display:flex;gap:12px;align-items:center}.compact-middle{flex:1 1 52%;min-width:120px}.compact-meta{min-width:0;font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.compact-secondary>.compact-meta{flex:1 1 auto;text-align:right}.compact-end{display:flex;align-items:center;gap:8px;white-space:nowrap}.brand{font-weight:800;letter-spacing:.01em}.chevron{width:8px;height:8px;border-right:1.5px solid #555;border-bottom:1.5px solid #555;transform:rotate(45deg);transition:transform .15s ease;margin:-3px 2px 0 0}.expanded .chevron{transform:rotate(225deg);margin:3px 2px 0 0}.detail-panel{border-top:1px solid #ececec;padding:12px 14px 14px;background:transparent}.detail-panel[hidden]{display:none}.headline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 8px}.action{font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#111}.path{min-width:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111;overflow-wrap:anywhere}.arrow{color:#666}.meta{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 8px;font-size:11px;color:#666}.summary{margin:6px 0 0;white-space:pre-wrap;color:#222}.empty{padding:4px 0;color:#666}
+*{box-sizing:border-box}body{margin:0;padding:0;background:transparent;color:#111}main{background:transparent;color:#111}
+.compact-toggle{width:100%;min-height:68px;border:0;border-radius:0;padding:11px 14px;background:transparent;color:#111;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;align-items:center;text-align:left;font:inherit;cursor:pointer}.compact-toggle:hover{background:#fafafa}.compact-toggle.single-line{min-height:44px;padding-top:9px;padding-bottom:9px}.compact-primary{display:flex;min-width:0;gap:7px;align-items:center}.compact-action{flex:0 0 auto;font-size:10.5px;font-weight:800;letter-spacing:.045em;text-transform:uppercase}.compact-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.compact-end{display:flex;align-items:center;gap:8px;white-space:nowrap}.brand{font-weight:800;letter-spacing:.01em}.chevron{width:8px;height:8px;border-right:1.5px solid #555;border-bottom:1.5px solid #555;transform:rotate(45deg);transition:transform .15s ease;margin:-3px 2px 0 0}.expanded .chevron{transform:rotate(225deg);margin:3px 2px 0 0}.compact-row{grid-column:1/-1;min-width:0}.compact-summary{color:#555;font-size:12px;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.compact-path{font:11.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.compact-meta-row{display:flex;gap:10px;align-items:center;color:#666;font-size:11px;white-space:nowrap;overflow:hidden}.compact-file-meta{justify-content:flex-start}.compact-progress-row{display:grid;grid-template-columns:minmax(150px,1fr) auto;gap:14px;align-items:center}.compact-progress-meta{color:#666;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}.compact-context{display:flex;gap:7px;align-items:center;overflow:hidden}.context-pill{flex:0 0 auto;padding:2px 7px;border-radius:999px;background:#f2f2f2;color:#555;font-size:10.5px;white-space:nowrap}.context-pill strong{color:#111;font-weight:750;margin-right:3px}
+.detail-panel{border-top:1px solid #ececec;padding:13px 14px 15px;background:transparent}.detail-panel[hidden]{display:none}.headline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 8px}.action{font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#111}.path{min-width:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111;overflow-wrap:anywhere}.arrow{color:#666}.meta{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 8px;font-size:11px;color:#666}.summary{margin:6px 0 0;white-space:pre-wrap;color:#222}.empty{padding:4px 0;color:#666}
 .compact-progress{position:relative;height:16px;display:flex;align-items:center;justify-content:space-between;padding:0 4px}.compact-progress::before{content:"";position:absolute;left:7px;right:7px;top:50%;height:1px;background:#d7d7d7;transform:translateY(-50%)}.progress-fill{position:absolute;z-index:0;left:7px;top:50%;height:1.5px;background:#111;transform:translateY(-50%)}.progress-node{position:relative;z-index:1;width:9px;height:9px;border:1.5px solid #aaa;border-radius:50%;background:#fff}.progress-node.completed{border-color:#111;background:#111}.progress-node.in-progress{border-color:#111;box-shadow:0 0 0 2px #fff,0 0 0 3px #111}.progress-node.blocked{border-color:#555;background:#fff}.steps{position:relative;display:grid;gap:0;margin-top:9px}.steps::before{content:"";position:absolute;left:9px;top:10px;bottom:10px;width:1px;background:#ddd}.step{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0}.step-marker{position:relative;z-index:1;width:19px;height:19px;border:1px solid #bbb;border-radius:50%;display:grid;place-items:center;background:#fff;color:#666;font:700 11px/1 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.step.completed .step-marker{border-color:#111;background:#111;color:#fff}.step.in-progress .step-marker{border-color:#111;color:#111}.step.blocked .step-marker{border-color:#777;color:#444}.step-title,.row-title{min-width:0;color:#111}.step-status,.row-status{font-size:11px;color:#666}.rows{display:grid;gap:0;margin-top:8px;border-top:1px solid #eee}.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:7px 0;border-bottom:1px solid #eee}.row-sub{grid-column:1/-1;font-size:11px;color:#666;margin-top:-4px}
-pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padding:8px 0 0;background:#fff;color:#111;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}.diff-line{display:block;min-height:1.45em;padding:0 4px;color:#111}.diff-context{color:#555}.diff-add{color:#315b45;background:#f5fbf7}.diff-del{color:#7a3e39;background:#fff7f6}.messages{display:grid;gap:10px;margin-top:10px}.message{border-left:2px solid #ddd;padding-left:9px}.message.user{border-left-color:#111}.message.assistant{border-left-color:#888}.message-role{margin-bottom:2px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#666}.message-text{white-space:pre-wrap;overflow-wrap:anywhere;color:#111}.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 10px;margin-top:8px}.kv-key{font-size:11px;color:#666}.kv-value{min-width:0;color:#111;overflow-wrap:anywhere}.context-stats{display:flex;flex-wrap:wrap;gap:18px;padding:2px 0 12px;border-bottom:1px solid #eee}.context-stat{min-width:72px}.context-stat-value{font-size:18px;font-weight:750;line-height:1.1}.context-stat-label{margin-top:3px;font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.05em}.context-section{padding-top:12px}.context-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}.context-section-title{font-weight:750}.context-section-count{font-size:11px;color:#777}.context-list{display:grid;gap:0;border-top:1px solid #eee}.context-item{display:grid;grid-template-columns:minmax(110px,180px) minmax(0,1fr);gap:12px;padding:7px 0;border-bottom:1px solid #eee}.context-name{font-weight:650;overflow-wrap:anywhere}.context-desc{min-width:0;color:#555;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.context-more{padding:7px 0;color:#777;font-size:11px}
-@media(max-width:560px){.compact-toggle{grid-template-columns:minmax(0,1fr) auto;padding:9px 12px}.compact-secondary{gap:8px}.compact-middle{min-width:96px}.compact-secondary>.compact-meta{text-align:left}.context-item{grid-template-columns:1fr;gap:2px}.context-stats{gap:12px}}
+pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padding:8px 0 0;background:#fff;color:#111;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}.diff-line{display:block;min-height:1.45em;padding:0 4px;color:#111}.diff-context{color:#555}.diff-add{color:#315b45;background:#f5fbf7}.diff-del{color:#7a3e39;background:#fff7f6}.messages{display:grid;gap:10px;margin-top:10px}.message{border-left:2px solid #ddd;padding-left:9px}.message.user{border-left-color:#111}.message.assistant{border-left-color:#888}.message-role{margin-bottom:2px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#666}.message-text{white-space:pre-wrap;overflow-wrap:anywhere;color:#111}.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 10px;margin-top:8px}.kv-key{font-size:11px;color:#666}.kv-value{min-width:0;color:#111;overflow-wrap:anywhere}
+.context-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:14px}.context-overview-card{padding:10px 11px;border-radius:10px;background:#f6f6f6}.context-overview-value{font-size:17px;font-weight:760;line-height:1.1}.context-overview-label{margin-top:3px;font-size:10px;color:#777;text-transform:uppercase;letter-spacing:.05em}.context-groups{display:grid;gap:14px}.context-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:7px}.context-section-title{font-size:12px;font-weight:750}.context-section-count{font-size:10.5px;color:#888}.context-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.context-item{min-width:0;padding:8px 9px;border-radius:9px;background:#f8f8f8}.context-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-desc{margin-top:2px;min-width:0;color:#666;font-size:11px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.context-more{padding:6px 2px;color:#777;font-size:11px}
+@media(max-width:560px){.compact-toggle{padding:10px 12px;gap:6px 10px}.brand,.compact-action{display:none}.compact-title{font-weight:700}.compact-summary{-webkit-line-clamp:2}.compact-progress-row{grid-template-columns:minmax(0,1fr) auto;gap:9px}.compact-progress-meta{max-width:150px}.context-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.context-list{grid-template-columns:1fr}.detail-panel{padding:12px}.step-status,.row-status{display:none}}
+@media(max-width:400px){.compact-toggle{min-height:64px;padding:9px 11px}.compact-progress-meta,.compact-file-meta{display:none}.compact-progress-row{display:block}.compact-context .workflow{display:none}.compact-context{gap:5px}.context-pill{padding:2px 6px}.compact-path{font-size:11px}}
 </style>
 </head>
 <body>
@@ -166,7 +170,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     requestAnimationFrame(reportSize);
   }
 
-  function compactShell(primary,middle,meta,details){
+  function compactShell(primary,rows,details){
     const wrapper=el("div","app-shell");
     const toggle=el("button","compact-toggle");
     toggle.type="button";toggle.setAttribute("aria-expanded","false");
@@ -176,11 +180,9 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     toggle.append(primaryWrap);
     const end=el("span","compact-end");
     end.append(el("span","brand","AgentDock"));end.append(el("span","chevron"));toggle.append(end);
-    if(middle||meta){
-      const secondary=el("span","compact-secondary");
-      if(middle){middle.classList.add("compact-middle");secondary.append(middle)}
-      if(meta)secondary.append(el("span","compact-meta",meta));
-      toggle.append(secondary);
+    const compactRows=(rows||[]).filter(Boolean);
+    if(compactRows.length){
+      for(const row of compactRows){row.classList.add("compact-row");toggle.append(row)}
     }else{
       toggle.classList.add("single-line");
     }
@@ -274,10 +276,16 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     });
   }
 
-  function appendContextStat(parent,value,label){
-    const stat=el("div","context-stat");
-    stat.append(el("div","context-stat-value",value),el("div","context-stat-label",label));
-    parent.append(stat);
+  function contextPill(value,label,className){
+    const pill=el("span","context-pill "+(className||""));
+    pill.append(el("strong","",value),document.createTextNode(label));
+    return pill;
+  }
+
+  function appendContextOverview(parent,value,label){
+    const card=el("div","context-overview-card");
+    card.append(el("div","context-overview-value",value),el("div","context-overview-label",label));
+    parent.append(card);
   }
 
   function appendContextSection(parent,title,items,limit){
@@ -290,7 +298,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     for(const item of items.slice(0,limit)){
       const row=el("div","context-item");
       row.append(el("div","context-name",item.name||"Item"));
-      row.append(el("div","context-desc",item.description||"Available"));
+      if(item.description)row.append(el("div","context-desc",item.description));
       list.append(row);
     }
     if(items.length>limit)list.append(el("div","context-more","还有 "+(items.length-limit)+" 项"));
@@ -305,18 +313,23 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     const acp=contextNamedItems(text,"ACP 运行时");
     const workflows=contextNamedItems(text,"工作流模板索引");
     const recall=text.includes("## 记忆精简摘要");
-    const stats=el("div","context-stats");
-    appendContextStat(stats,skills.length,"Skills");
-    appendContextStat(stats,mcps.length,"MCP");
-    appendContextStat(stats,workflows.length,"Workflow");
-    appendContextStat(stats,recall?"ON":"OFF","Recall");
-    fragment.append(stats);
-    appendContextSection(fragment,"Skills",skills,12);
-    appendContextSection(fragment,"MCP",mcps,8);
-    appendContextSection(fragment,"ACP",acp,4);
-    appendContextSection(fragment,"Workflow",workflows,10);
-    const summary=[skills.length+" Skills",mcps.length+" MCP",workflows.length+" Workflow",recall?"Recall":"No Recall"];
-    compactShell({action:"context",title:"AgentDock Context"},null,summary.join(" · "),fragment);
+
+    const overview=el("div","context-overview");
+    appendContextOverview(overview,skills.length,"Skills");
+    appendContextOverview(overview,mcps.length,"MCP");
+    appendContextOverview(overview,workflows.length,"Workflow");
+    appendContextOverview(overview,recall?"ON":"OFF","Recall");
+    fragment.append(overview);
+    const groups=el("div","context-groups");
+    appendContextSection(groups,"Skills",skills,10);
+    appendContextSection(groups,"MCP",mcps,8);
+    appendContextSection(groups,"ACP",acp,4);
+    appendContextSection(groups,"Workflow",workflows,8);
+    fragment.append(groups);
+
+    const compact=el("span","compact-context");
+    compact.append(contextPill(skills.length,"Skills"),contextPill(mcps.length,"MCP"),contextPill(workflows.length,"Workflow","workflow"),contextPill(recall?"ON":"OFF","Recall"));
+    compactShell({action:"context",title:"Capabilities"},[compact],fragment);
   }
 
   function renderTask(data){
@@ -338,7 +351,8 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
       const first=data.tasks.find(task=>isObject(task));
       const current=first&&isObject(first.current_step)?first.current_step:null;
       const listMeta=current?(current.title||current.id||""):first?(first.status||""):"";
-      compactShell({action:data.action||"list",title:String(count)+" tasks"},null,listMeta,fragment);return;
+      const listRow=listMeta?el("span","compact-summary",listMeta):null;
+      compactShell({action:data.action||"list",title:String(count)+" tasks"},[listRow],fragment);return;
     }
 
     const task=taskRecord(data);
@@ -351,8 +365,19 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     if(typeof task.summary==="string"&&task.summary)fragment.append(el("p","summary",task.summary));
     if(steps.length){const list=el("div","steps");for(const step of steps){if(!isObject(step))continue;const status=String(step.status||"pending");const statusClass=status==="in_progress"?"in-progress":status;const row=el("div","step "+statusClass);const marker=el("div","step-marker",status==="completed"?"✓":status==="in_progress"?"●":status==="blocked"?"!":"");row.append(marker);row.append(el("div","step-title",step.title||step.id||"Step"));row.append(el("div","step-status",status));list.append(row)}fragment.append(list)}
     const activeStep=steps.find(step=>isObject(step)&&(step.status==="in_progress"||step.status==="blocked"))||(isObject(task.current_step)?task.current_step:null);
-    const compactMeta=[activeStep?(activeStep.title||activeStep.id||""):"",total>0?completed+" / "+total:task.status||task.phase||""].filter(Boolean).join(" · ");
-    compactShell({action:data.action||"task",title},taskProgress(steps),compactMeta,fragment);
+    const compactRows=[];
+    if(typeof task.summary==="string"&&task.summary)compactRows.push(el("span","compact-summary",task.summary));
+    const progress=taskProgress(steps);
+    if(progress){
+      const progressRow=el("span","compact-progress-row");
+      progressRow.append(progress);
+      const progressMeta=[activeStep?(activeStep.title||activeStep.id||""):"",total>0?completed+" / "+total:task.status||task.phase||""].filter(Boolean).join(" · ");
+      if(progressMeta)progressRow.append(el("span","compact-progress-meta",progressMeta));
+      compactRows.push(progressRow);
+    }else if(activeStep||total>0){
+      compactRows.push(el("span","compact-meta-row",[activeStep?(activeStep.title||activeStep.id||""):"",total>0?completed+" / "+total:""].filter(Boolean).join(" · ")));
+    }
+    compactShell({action:data.action||"task",title},compactRows,fragment);
   }
 
   function renderFileChange(data){
@@ -364,7 +389,16 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     metaLine(fragment,[data.dry_run===true?"dry run":"",data.changed===false?"no change":"",insertions,deletions,data.truncated===true?"preview truncated":""]);
     if(typeof data.diff_preview==="string"&&data.diff_preview)appendDiffPreview(fragment,data.diff_preview);
     else if(data.changed===false)fragment.append(el("div","empty","No change."));
-    compactShell({action:data.action||"change",title:primary||"File change"},null,[insertions,deletions].filter(Boolean).join("  "),fragment);
+    const normalizedPrimary=String(primary||"").replaceAll("\\","/");
+    const fileName=normalizedPrimary.split("/").filter(Boolean).pop()||"File change";
+    const compactRows=[];
+    if(primary){
+      const pathText=data.action==="move"&&data.new_path?primary+" → "+data.new_path:primary;
+      compactRows.push(el("span","compact-path",pathText));
+    }
+    const fileMeta=[data.dry_run===true?"dry run":"",data.changed===false?"no change":"",insertions,deletions,data.truncated===true?"preview truncated":""].filter(Boolean).join(" · ");
+    if(fileMeta)compactRows.push(el("span","compact-meta-row compact-file-meta",fileMeta));
+    compactShell({action:data.action||"change",title:fileName},compactRows,fragment);
   }
 
   function acpSessionID(state){
@@ -390,7 +424,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
       if(rows.childNodes.length)fragment.append(rows);else fragment.append(el("div","empty","No ACP sessions."));
       const first=state.sessions.find(session=>isObject(session));
       const listMeta=first?[first.status||"",first.agent||"",first.cwd||""].filter(Boolean).join(" · "):"";
-      compactShell({action:state.action||"list",title:String(state.count??state.sessions.length)+" sessions"},null,listMeta,fragment);return;
+      compactShell({action:state.action||"list",title:String(state.count??state.sessions.length)+" sessions"},[listMeta?el("span","compact-summary",listMeta):null],fragment);return;
     }
     const session=isObject(state.session)?state.session:{};
     const identity=acpSessionID(state)||(isObject(state.agent)?state.agent.name||state.agent.title:"")||"ACP";
@@ -407,7 +441,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
         messages.append(item);
       }
       if(messages.childNodes.length)fragment.append(messages);else fragment.append(el("div","empty","No user or assistant messages in this AgentDock process."));
-      compactShell({action:state.action||"status",title:identity},null,session.status||state.status||"",fragment);return;
+      compactShell({action:state.action||"status",title:identity},[session.status||state.status?el("span","compact-meta-row",session.status||state.status):null],fragment);return;
     }
     if(state.message)fragment.append(el("p","summary",state.message));
     if(!isObject(state.session)&&!Array.isArray(state.sessions)){
@@ -416,7 +450,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
       for(const key of important){if(!scalar(state[key])||state[key]===undefined||state[key]===null||state[key]==="")continue;grid.append(el("div","kv-key",key));grid.append(el("div","kv-value",state[key]));count++}
       if(count)fragment.append(grid);
     }
-    compactShell({action:state.action||"status",title:identity},null,session.status||state.status||"",fragment);
+    compactShell({action:state.action||"status",title:identity},[session.status||state.status?el("span","compact-meta-row",session.status||state.status):null],fragment);
   }
 
   function renderable(data){
