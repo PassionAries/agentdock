@@ -16,8 +16,6 @@ type ToolSpec struct {
 	Name                   string
 	Title                  string
 	Description            string
-	OpenAIInvokingText     string
-	OpenAIInvokedText      string
 	OpenAIOutputTemplate   string
 	UIResourceURI          string
 	FileArgRewritePaths    []string
@@ -41,8 +39,6 @@ type ToolDefinition struct {
 	Name                   string
 	Title                  string
 	Description            string
-	OpenAIInvokingText     string
-	OpenAIInvokedText      string
 	OpenAIOutputTemplate   string
 	UIResourceURI          string
 	FileArgRewritePaths    []string
@@ -66,8 +62,6 @@ func (s ToolSpec) definition() ToolDefinition {
 		Name:                   s.Name,
 		Title:                  s.Title,
 		Description:            s.Description,
-		OpenAIInvokingText:     s.OpenAIInvokingText,
-		OpenAIInvokedText:      s.OpenAIInvokedText,
 		OpenAIOutputTemplate:   s.OpenAIOutputTemplate,
 		UIResourceURI:          s.UIResourceURI,
 		FileArgRewritePaths:    append([]string(nil), s.FileArgRewritePaths...),
@@ -152,11 +146,11 @@ func allToolSpecs() []ToolSpec {
 		{Name: "list_dir", Title: "List directory", Description: toolfile.ToolDescription("List directory entries. Relative paths resolve from ~/AgentDock; absolute and ~/ paths use Host rules."), Annotations: readOnlyToolAnnotations(false), Handler: ctxToolHandler((*Runtime).listDir)},
 		{Name: "list_files", Title: "List files", Description: toolfile.ToolDescription("List files using glob and ignore filters. Relative paths resolve from ~/AgentDock by default."), Annotations: readOnlyToolAnnotations(false), Handler: ctxToolHandler((*Runtime).listFiles)},
 		{Name: "search_text", Title: "Search text", Description: toolfile.ToolDescription("Search UTF-8 files for text or regex matches. Relative paths search ~/AgentDock by default; absolute paths are allowed."), Annotations: readOnlyToolAnnotations(false), Handler: ctxToolHandler((*Runtime).searchText)},
-		{Name: "file_edit", Title: "Edit file", Description: toolfile.EditDescription("Edit files through one action-based entrypoint: replace, patch, add, delete, or move. Relative paths resolve from ~/AgentDock; absolute and ~/ paths use Host rules."), OpenAIInvokingText: "Editing file…", OpenAIInvokedText: "File updated.", Annotations: mutatingToolAnnotations(true, false), Handler: ctxToolHandler((*Runtime).fileEdit)},
-		{Name: "exec_command", Title: "Run command", Description: toolcommand.Description(), OpenAIInvokingText: "Running command…", OpenAIInvokedText: "Command finished.", Annotations: mutatingToolAnnotations(true, true), Handler: ctxToolHandler((*Runtime).execCommand)},
+		{Name: "file_edit", Title: "Edit file", Description: toolfile.EditDescription("Edit files through one action-based entrypoint: replace, patch, add, delete, or move. Relative paths resolve from ~/AgentDock; absolute and ~/ paths use Host rules."), Annotations: mutatingToolAnnotations(true, false), Handler: ctxToolHandler((*Runtime).fileEdit)},
+		{Name: "exec_command", Title: "Run command", Description: toolcommand.Description(), Annotations: mutatingToolAnnotations(true, true), Handler: ctxToolHandler((*Runtime).execCommand)},
 		{Name: "session_observe", Title: "Observe command sessions", Description: "List or inspect command sessions through a read-only session tool.", Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).sessionObserve)},
 		{Name: "session_act", Title: "Act on command sessions", Description: "Write to or stop command sessions through a mutating session tool.", Annotations: mutatingToolAnnotations(true, true), Handler: toolHandler((*Runtime).sessionAct)},
-		{Name: "task_manage", Title: "Manage recoverable tasks", Description: "Persist substantial AgentDock tasks and update live step progress with checkpoint.", OpenAIInvokingText: "Updating task…", OpenAIInvokedText: "Task updated.", Annotations: mutatingToolAnnotations(false, false), Handler: ctxToolHandler((*Runtime).taskManage)},
+		{Name: "task_manage", Title: "Manage recoverable tasks", Description: "Persist substantial AgentDock tasks and update live step progress with checkpoint.", Annotations: mutatingToolAnnotations(false, false), Handler: ctxToolHandler((*Runtime).taskManage)},
 		{Name: "evolve", Title: "Evolve AgentDock knowledge", Description: "Propose reusable knowledge, pre-bind Task learning checks, supersede, or retract. Bind must happen before execution and declares on_success/on_failure semantics; AgentDock resolves later Task outcomes and owns lifecycle policy while Recall only persists the result.", Annotations: mutatingToolAnnotations(true, false), Availability: requiresNexus, Handler: ctxToolHandler((*Runtime).evolve)},
 		{Name: "acp_session", Title: "Manage ACP sessions", Description: "Inspect or authenticate the configured ACP agent and create, load, resume, fork, configure, list, inspect, close, or delete persistent ACP sessions through one action-based entrypoint. Session workspaces may use any host-accessible directory and optional methods are capability-gated.", Annotations: mutatingToolAnnotations(true, true), Availability: requiresACP, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.acp.Session(ctx, args)
@@ -178,7 +172,7 @@ func allToolSpecs() []ToolSpec {
 		{Name: "mcp_tool_inspect", Title: "Inspect a dynamic MCP tool", Description: "Read the complete schema for one dynamic MCP tool identified as <server>:<tool>.", Annotations: readOnlyToolAnnotations(true), Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.dynamicMCP.Inspect(ctx, args)
 		}},
-		{Name: "mcp_tool_call", Title: "Call a dynamic MCP tool", Description: "Call one previously discovered dynamic MCP tool identified as <server>:<tool>. Arguments are validated against the discovered tool schema before forwarding.", OpenAIInvokingText: "Calling connected tool…", OpenAIInvokedText: "Connected tool finished.", Annotations: mutatingToolAnnotations(true, true), Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
+		{Name: "mcp_tool_call", Title: "Call a dynamic MCP tool", Description: "Call one previously discovered dynamic MCP tool identified as <server>:<tool>. Arguments are validated against the discovered tool schema before forwarding.", Annotations: mutatingToolAnnotations(true, true), Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.dynamicMCP.Call(ctx, args)
 		}},
 		{Name: "view_image", Title: "View image", Description: "Load an image by AgentDock artifact_id, Host path, or HTTP(S) URL and return it as standard MCP image content.", Annotations: readOnlyToolAnnotations(true), Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
@@ -191,9 +185,9 @@ func allToolSpecs() []ToolSpec {
 		{Name: "recall_maintain", Title: "Maintain NexusDock Recall", Description: "Run NexusDock Recall maintenance actions such as list, lint, embedding_status, reindex, or reindex_cards.", Annotations: mutatingToolAnnotations(true, false), Availability: requiresNexus, Handler: ctxToolHandler((*Runtime).recallMaintain)},
 		{Name: "private_note_manage", Title: "Manage private notes", Description: "Explicit low-frequency NexusDock private note vault entrypoint. Do not use by default: use only when the user explicitly requests private note access or the content clearly contains sensitive secrets, credentials, or personal information. Search is metadata-only; plaintext is returned only by explicit read, and Git backups contain age ciphertext only. Actions: search, read, write, delete, status, or maintain.", Annotations: mutatingToolAnnotations(true, false), Handler: ctxToolHandler((*Runtime).privateNoteManage), Availability: requiresNexus},
 		{Name: "browser_session", Title: "Browser session", Description: "Start an AgentDock-owned Chromium-family browser or attach to an existing CDP browser with a dedicated AgentDock target, then close or clean up the session. External browsers remain running when the session closes.", Annotations: mutatingToolAnnotations(true, true), Availability: requiresBrowser, Handler: ctxToolHandler((*Runtime).browserSession)},
-		{Name: "browser_act", Title: "Browser actions", Description: "Run strictly validated CSS/CDP browser actions against an AgentDock-managed browser target and return the final typed page snapshot plus screenshot Artifact.", OpenAIInvokingText: "Using browser…", OpenAIInvokedText: "Browser action finished.", Annotations: mutatingToolAnnotations(true, true), Availability: requiresBrowser, Handler: ctxToolHandler((*Runtime).browserAct)},
+		{Name: "browser_act", Title: "Browser actions", Description: "Run strictly validated CSS/CDP browser actions against an AgentDock-managed browser target and return the final typed page snapshot plus screenshot Artifact.", Annotations: mutatingToolAnnotations(true, true), Availability: requiresBrowser, Handler: ctxToolHandler((*Runtime).browserAct)},
 		{Name: "browser_snapshot", Title: "Browser snapshot", Description: "Capture the active or requested CDP target with page text, viewport, page size, focus, visible interactive elements, diagnostics, and a PNG screenshot Artifact.", Annotations: readOnlyToolAnnotations(true), Availability: requiresBrowser, Handler: ctxToolHandler((*Runtime).browserSnapshot)},
-		{Name: "file_publish", Title: "Publish signed file", Description: "Publish a local file or directory as an immutable Artifact snapshot under ~/.agentdock/public-artifacts. Returns artifact_id and, when a reachable base URL is available, a temporary signed download URL. Directories are packaged as tar.gz.", OpenAIInvokingText: "Publishing file…", OpenAIInvokedText: "File published.", Annotations: mutatingToolAnnotations(false, true), FileArgRewritePaths: []string{"file"}, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
+		{Name: "file_publish", Title: "Publish signed file", Description: "Publish a local file or directory as an immutable Artifact snapshot under ~/.agentdock/public-artifacts. Returns artifact_id and, when a reachable base URL is available, a temporary signed download URL. Directories are packaged as tar.gz.", Annotations: mutatingToolAnnotations(false, true), FileArgRewritePaths: []string{"file"}, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.media.FilePublish(ctx, args)
 		}},
 		{Name: "render_task_progress", Title: "Render task progress", Description: "Render an already-fetched task or task_summary as an optional MCP App view. Call task_manage first; this tool does not read or mutate task state.", OpenAIOutputTemplate: TaskProgressUIResourceURI, UIResourceURI: TaskProgressUIResourceURI, Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).renderTaskProgress)},

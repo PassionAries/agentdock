@@ -171,12 +171,6 @@ func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.Call
 
 func toolMetadata(def ToolDefinition) map[string]any {
 	meta := map[string]any{}
-	if def.OpenAIInvokingText != "" {
-		meta["openai/toolInvocation/invoking"] = def.OpenAIInvokingText
-	}
-	if def.OpenAIInvokedText != "" {
-		meta["openai/toolInvocation/invoked"] = def.OpenAIInvokedText
-	}
 	if def.UIResourceURI != "" {
 		meta["ui/resourceUri"] = def.UIResourceURI
 	}

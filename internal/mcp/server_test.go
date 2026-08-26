@@ -70,27 +70,6 @@ func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
 	}
 }
 
-func TestToolInvocationMetadataIsOnlyAddedWhenConfigured(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"exec_command", "task_manage", "read_file"}, config.Config{})
-	byName := map[string]map[string]any{}
-	for _, descriptor := range descriptors {
-		name, _ := descriptor["name"].(string)
-		byName[name] = descriptor
-	}
-
-	execMeta, _ := byName["exec_command"]["_meta"].(map[string]any)
-	if execMeta["openai/toolInvocation/invoking"] != "Running command…" || execMeta["openai/toolInvocation/invoked"] != "Command finished." {
-		t.Fatalf("exec_command invocation metadata = %#v", execMeta)
-	}
-	taskMeta, _ := byName["task_manage"]["_meta"].(map[string]any)
-	if taskMeta["openai/toolInvocation/invoking"] != "Updating task…" || taskMeta["openai/toolInvocation/invoked"] != "Task updated." {
-		t.Fatalf("task_manage invocation metadata = %#v", taskMeta)
-	}
-	if _, ok := byName["read_file"]["_meta"]; ok {
-		t.Fatalf("read_file should not get decorative invocation metadata: %#v", byName["read_file"]["_meta"])
-	}
-}
-
 func TestOpenAIFileMetadataMatchesDeclaredSchemas(t *testing.T) {
 	for _, def := range app.ToolDefinitions() {
 		meta := toolMetadata(def)
