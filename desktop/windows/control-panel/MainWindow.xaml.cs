@@ -61,9 +61,7 @@ public partial class MainWindow : Window
             FooterStatusText.Text = ex.Message;
             HeaderStatusText.Text = "状态读取失败";
             StatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 45, 32));
-            NexusHeaderStatusText.Text = "Nexus · 状态读取失败";
-            NexusHeaderStatusText.Foreground = new SolidColorBrush(Color.FromRgb(217, 45, 32));
-            NexusStatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 45, 32));
+            NexusStatusText.Text = "状态读取失败";
         }
         finally
         {
@@ -81,30 +79,11 @@ public partial class MainWindow : Window
                 ? Color.FromRgb(18, 183, 106)
                 : snapshot.CoreRunning ? Color.FromRgb(247, 144, 9) : Color.FromRgb(152, 162, 179));
 
-            if (!string.IsNullOrWhiteSpace(snapshot.Nexus.Error))
-            {
-                NexusHeaderStatusText.Text = "Nexus · 配置异常";
-                NexusHeaderStatusText.Foreground = new SolidColorBrush(Color.FromRgb(217, 45, 32));
-                NexusStatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 45, 32));
-            }
-            else if (!snapshot.Nexus.Paired)
-            {
-                NexusHeaderStatusText.Text = "Nexus · 未配置";
-                NexusHeaderStatusText.Foreground = new SolidColorBrush(Color.FromRgb(102, 112, 133));
-                NexusStatusDot.Fill = new SolidColorBrush(Color.FromRgb(152, 162, 179));
-            }
-            else if (snapshot.NexusConnected)
-            {
-                NexusHeaderStatusText.Text = "Nexus · 已连接";
-                NexusHeaderStatusText.Foreground = new SolidColorBrush(Color.FromRgb(18, 183, 106));
-                NexusStatusDot.Fill = new SolidColorBrush(Color.FromRgb(18, 183, 106));
-            }
-            else
-            {
-                NexusHeaderStatusText.Text = "Nexus · 未连接";
-                NexusHeaderStatusText.Foreground = new SolidColorBrush(Color.FromRgb(247, 144, 9));
-                NexusStatusDot.Fill = new SolidColorBrush(Color.FromRgb(247, 144, 9));
-            }
+            NexusStatusText.Text = !string.IsNullOrWhiteSpace(snapshot.Nexus.Error)
+                ? "配置异常"
+                : !snapshot.Nexus.Paired
+                    ? "未配置"
+                    : snapshot.NexusConnected ? "已连接" : "未连接";
 
             ServiceStatusText.Text = snapshot.CoreRunning ? "正在运行" : "已停止";
             HealthStatusText.Text = snapshot.Healthy ? "正常" : "不可用";

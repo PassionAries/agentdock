@@ -356,19 +356,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateNexusState(_ state: NexusConnectionState) {
+        nexusStateLabel.textColor = .secondaryLabelColor
         switch state {
         case .connected:
-            nexusStateLabel.stringValue = "Nexus ● 已连接"
-            nexusStateLabel.textColor = .systemGreen
+            nexusStateLabel.stringValue = "Nexus 已连接"
         case .disconnected:
-            nexusStateLabel.stringValue = "Nexus ● 未连接"
-            nexusStateLabel.textColor = .systemOrange
+            nexusStateLabel.stringValue = "Nexus 未连接"
         case .unconfigured:
-            nexusStateLabel.stringValue = "Nexus · 未配置"
-            nexusStateLabel.textColor = .secondaryLabelColor
+            nexusStateLabel.stringValue = "Nexus 未配置"
         case .configurationError:
-            nexusStateLabel.stringValue = "Nexus ● 配置异常"
-            nexusStateLabel.textColor = .systemRed
+            nexusStateLabel.stringValue = "Nexus 配置异常"
         }
     }
 

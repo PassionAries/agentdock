@@ -22,15 +22,9 @@
           <TextBlock Text="AgentDock" FontSize="24" FontWeight="SemiBold" />
           <TextBlock Text="Windows 控制面板" Foreground="#667085" Margin="0,3,0,0" />
         </StackPanel>
-        <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right">
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#98A2B3" Margin="0,0,8,0" />
-            <TextBlock x:Name="HeaderStatusText" Text="正在读取状态…" VerticalAlignment="Center" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,4,0,0">
-            <Ellipse x:Name="NexusStatusDot" Width="8" Height="8" Fill="#98A2B3" Margin="0,0,8,0" />
-            <TextBlock x:Name="NexusHeaderStatusText" Text="Nexus · 未配置" Foreground="#667085" VerticalAlignment="Center" />
-          </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#98A2B3" Margin="0,0,8,0" />
+          <TextBlock x:Name="HeaderStatusText" Text="正在读取状态…" VerticalAlignment="Center" />
         </StackPanel>
       </Grid>
     </Border>
@@ -50,14 +44,17 @@
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
                   <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock Text="服务" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBlock x:Name="ServiceStatusText" Grid.Column="1" Text="未知" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <TextBlock Text="健康检查" Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,10" />
                 <TextBlock x:Name="HealthStatusText" Grid.Row="1" Grid.Column="1" Text="未知" Margin="0,0,0,10" />
-                <TextBlock Text="版本" Grid.Row="2" VerticalAlignment="Center" />
-                <TextBlock x:Name="VersionText" Grid.Row="2" Grid.Column="1" Text="未知" />
-                <StackPanel Grid.Column="2" Grid.RowSpan="3" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Nexus" Grid.Row="2" VerticalAlignment="Center" Margin="0,0,0,10" />
+                <TextBlock x:Name="NexusStatusText" Grid.Row="2" Grid.Column="1" Text="未配置" Margin="0,0,0,10" />
+                <TextBlock Text="版本" Grid.Row="3" VerticalAlignment="Center" />
+                <TextBlock x:Name="VersionText" Grid.Row="3" Grid.Column="1" Text="未知" />
+                <StackPanel Grid.Column="2" Grid.RowSpan="4" Orientation="Horizontal" VerticalAlignment="Center">
                   <Button Content="启动" Click="StartButton_Click" />
                   <Button Content="停止" Click="StopButton_Click" />
                   <Button Content="重启" Click="RestartButton_Click" />
