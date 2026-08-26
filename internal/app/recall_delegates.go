@@ -11,12 +11,6 @@ func (r *Runtime) recallSearch(ctx context.Context, args map[string]any) (Result
 func (r *Runtime) recallRead(ctx context.Context, args map[string]any) (Result, error) {
 	return r.recall.Read(ctx, args)
 }
-func (r *Runtime) companyKnowledgeSearch(ctx context.Context, args map[string]any) (Result, error) {
-	return r.recall.CompanyKnowledgeSearch(ctx, args)
-}
-func (r *Runtime) companyKnowledgeFetch(ctx context.Context, args map[string]any) (Result, error) {
-	return r.recall.CompanyKnowledgeFetch(ctx, args)
-}
 func (r *Runtime) recallWrite(ctx context.Context, args map[string]any) (Result, error) {
 	return r.recall.Write(ctx, args)
 }

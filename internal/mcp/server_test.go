@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +15,7 @@ import (
 )
 
 func TestToolDescriptorsExposeSafetyAnnotations(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package", "task_manage", "file_publish", "search", "fetch"}, config.Config{})
+	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package", "task_manage", "file_publish"}, config.Config{})
 	byName := map[string]map[string]any{}
 	for _, descriptor := range descriptors {
 		name, _ := descriptor["name"].(string)
@@ -27,8 +26,6 @@ func TestToolDescriptorsExposeSafetyAnnotations(t *testing.T) {
 	assertToolAnnotation(t, byName["skill_package"], false, true, true)
 	assertToolAnnotation(t, byName["task_manage"], false, false, false)
 	assertToolAnnotation(t, byName["file_publish"], false, false, true)
-	assertToolAnnotation(t, byName["search"], true, false, false)
-	assertToolAnnotation(t, byName["fetch"], true, false, false)
 
 	for _, def := range app.ToolDefinitions() {
 		if def.Annotations == nil {
@@ -74,7 +71,7 @@ func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
 }
 
 func TestToolInvocationMetadataIsOnlyAddedWhenConfigured(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"exec_command", "search", "read_file"}, config.Config{})
+	descriptors := toolDescriptorsForNames([]string{"exec_command", "task_manage", "read_file"}, config.Config{})
 	byName := map[string]map[string]any{}
 	for _, descriptor := range descriptors {
 		name, _ := descriptor["name"].(string)
@@ -85,9 +82,9 @@ func TestToolInvocationMetadataIsOnlyAddedWhenConfigured(t *testing.T) {
 	if execMeta["openai/toolInvocation/invoking"] != "Running command…" || execMeta["openai/toolInvocation/invoked"] != "Command finished." {
 		t.Fatalf("exec_command invocation metadata = %#v", execMeta)
 	}
-	searchMeta, _ := byName["search"]["_meta"].(map[string]any)
-	if searchMeta["openai/toolInvocation/invoking"] != "Searching Recall…" || searchMeta["openai/toolInvocation/invoked"] != "Search complete." {
-		t.Fatalf("search invocation metadata = %#v", searchMeta)
+	taskMeta, _ := byName["task_manage"]["_meta"].(map[string]any)
+	if taskMeta["openai/toolInvocation/invoking"] != "Updating task…" || taskMeta["openai/toolInvocation/invoked"] != "Task updated." {
+		t.Fatalf("task_manage invocation metadata = %#v", taskMeta)
 	}
 	if _, ok := byName["read_file"]["_meta"]; ok {
 		t.Fatalf("read_file should not get decorative invocation metadata: %#v", byName["read_file"]["_meta"])
@@ -256,161 +253,6 @@ func TestOfficialSDKServerListsAndCallsAgentDockTools(t *testing.T) {
 	if err := <-serverDone; err != nil {
 		t.Fatalf("Server.Run() error = %v", err)
 	}
-}
-
-func TestOfficialSDKListsCompanyKnowledgeContracts(t *testing.T) {
-	const recallPath = "projects/agentdock/deployment.md"
-	const recallSource = "# Deployment\n\nAgentDock deployment notes.\n"
-	recallBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/recall/search":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":      true,
-				"results": []any{map[string]any{"path": recallPath, "title": "Deployment"}},
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/recall/"+recallPath:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":     true,
-				"recall": map[string]any{"path": recallPath, "title": "Deployment", "content": recallSource},
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer recallBackend.Close()
-
-	root := t.TempDir()
-	cfg := config.Config{
-		AgentDockDefaultDir: root,
-		AgentDockHome:       filepath.Join(root, ".agentdock"),
-		NexusEndpoint:       recallBackend.URL,
-		NexusDeviceToken:    "test-token",
-	}
-	if err := cfg.Normalize(); err != nil {
-		t.Fatalf("Normalize() error = %v", err)
-	}
-	runtime, err := app.NewRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRuntime() error = %v", err)
-	}
-	defer runtime.Close()
-
-	serverTransport, clientTransport := mcpsdk.NewInMemoryTransports()
-	server := NewServer(runtime, cfg)
-	serverDone := make(chan error, 1)
-	go func() { serverDone <- server.sdk.Run(t.Context(), serverTransport) }()
-
-	client := mcpsdk.NewClient(
-		&mcpsdk.Implementation{Name: "agentdock-company-knowledge-test", Version: "1.0.0"},
-		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
-	)
-	session, err := client.Connect(t.Context(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("Connect() error = %v", err)
-	}
-
-	tools := map[string]*mcpsdk.Tool{}
-	for tool, err := range session.Tools(t.Context(), nil) {
-		if err != nil {
-			t.Fatalf("Tools() error = %v", err)
-		}
-		if tool.Name == "search" || tool.Name == "fetch" {
-			tools[tool.Name] = tool
-		}
-	}
-	for _, name := range []string{"search", "fetch"} {
-		tool := tools[name]
-		if tool == nil {
-			t.Fatalf("tools/list did not expose %q", name)
-		}
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-			t.Fatalf("%s annotations = %#v, want read-only", name, tool.Annotations)
-		}
-		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
-			t.Fatalf("%s destructiveHint = %#v, want false", name, tool.Annotations.DestructiveHint)
-		}
-		if tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
-			t.Fatalf("%s openWorldHint = %#v, want false", name, tool.Annotations.OpenWorldHint)
-		}
-	}
-
-	search := tools["search"]
-	if search.Meta["openai/toolInvocation/invoking"] != "Searching Recall…" || search.Meta["openai/toolInvocation/invoked"] != "Search complete." {
-		t.Fatalf("search _meta = %#v", search.Meta)
-	}
-	searchInput, _ := search.InputSchema.(map[string]any)
-	if searchInput["additionalProperties"] != false || !schemaRequiresOnly(searchInput, "query") {
-		t.Fatalf("search inputSchema = %#v", searchInput)
-	}
-	searchOutput, _ := search.OutputSchema.(map[string]any)
-	results, _ := searchOutput["properties"].(map[string]any)["results"].(map[string]any)
-	item, _ := results["items"].(map[string]any)
-	if !schemaRequiresOnly(item, "id", "title", "url") {
-		t.Fatalf("search result schema = %#v", item)
-	}
-
-	fetch := tools["fetch"]
-	if fetch.Meta["openai/toolInvocation/invoking"] != "Fetching Recall entry…" || fetch.Meta["openai/toolInvocation/invoked"] != "Entry fetched." {
-		t.Fatalf("fetch _meta = %#v", fetch.Meta)
-	}
-	fetchInput, _ := fetch.InputSchema.(map[string]any)
-	if fetchInput["additionalProperties"] != false || !schemaRequiresOnly(fetchInput, "id") {
-		t.Fatalf("fetch inputSchema = %#v", fetchInput)
-	}
-	fetchOutput, _ := fetch.OutputSchema.(map[string]any)
-	if !schemaRequiresOnly(fetchOutput, "id", "title", "text", "url", "metadata") {
-		t.Fatalf("fetch outputSchema = %#v", fetchOutput)
-	}
-
-	searchResult, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "search", Arguments: map[string]any{"query": "deployment"}})
-	if err != nil || searchResult.IsError {
-		t.Fatalf("search CallTool() result=%#v err=%v", searchResult, err)
-	}
-	searchStructured, ok := searchResult.StructuredContent.(map[string]any)
-	if !ok {
-		t.Fatalf("search structuredContent = %#v", searchResult.StructuredContent)
-	}
-	searchItems, ok := searchStructured["results"].([]any)
-	if !ok || len(searchItems) != 1 || searchItems[0].(map[string]any)["id"] != recallPath {
-		t.Fatalf("search results = %#v", searchStructured["results"])
-	}
-
-	fetchResult, err := session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "fetch", Arguments: map[string]any{"id": recallPath}})
-	if err != nil || fetchResult.IsError {
-		t.Fatalf("fetch CallTool() result=%#v err=%v", fetchResult, err)
-	}
-	fetchStructured, ok := fetchResult.StructuredContent.(map[string]any)
-	if !ok || fetchStructured["id"] != recallPath || fetchStructured["text"] != recallSource {
-		t.Fatalf("fetch structuredContent = %#v", fetchResult.StructuredContent)
-	}
-
-	if err := session.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-	if err := <-serverDone; err != nil {
-		t.Fatalf("Server.Run() error = %v", err)
-	}
-}
-
-func schemaRequiresOnly(schema map[string]any, want ...string) bool {
-	required, ok := schema["required"].([]any)
-	if !ok {
-		if stringsRequired, stringsOK := schema["required"].([]string); stringsOK {
-			required = make([]any, len(stringsRequired))
-			for i, value := range stringsRequired {
-				required[i] = value
-			}
-		}
-	}
-	if len(required) != len(want) {
-		return false
-	}
-	for i, value := range required {
-		if value != want[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func TestStreamableHTTPHandlerAllowsAuthenticatedPublicHost(t *testing.T) {

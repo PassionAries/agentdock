@@ -287,12 +287,6 @@ func InputSchema(name string) map[string]any {
 		props["path"] = stringProp("NexusDock Recall-relative Markdown or card path.")
 		props["include_raw"] = boolProp("Include raw Markdown as raw_content. Defaults to false to avoid duplicating body/content tokens.")
 		required = []string{"path"}
-	case "search":
-		props["query"] = stringProp("Natural-language query for NexusDock Recall company knowledge.")
-		required = []string{"query"}
-	case "fetch":
-		props["id"] = stringProp("Document id returned by the company knowledge search tool.")
-		required = []string{"id"}
 	case "recall_write":
 		props["target"] = map[string]any{"type": "string", "description": "Recall target selected by the model.", "enum": []string{"card", "markdown"}}
 		props["action"] = map[string]any{"type": "string", "description": "Recall action selected by the model.", "enum": []string{"plan", "create", "replace", "append", "patch", "update_fact", "diff", "delete"}}
@@ -421,7 +415,7 @@ func InputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
-	case "exec_command", "acp_session", "acp_prompt", "acp_interaction", "recall_bootstrap", "recall_search", "recall_read", "search", "fetch", "recall_write", "recall_maintain", "private_note_manage", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call", "browser_session", "browser_act", "browser_snapshot", "render_task_progress", "render_file_diff", "render_acp_status":
+	case "exec_command", "acp_session", "acp_prompt", "acp_interaction", "recall_bootstrap", "recall_search", "recall_read", "recall_write", "recall_maintain", "private_note_manage", "mcp_manage", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call", "browser_session", "browser_act", "browser_snapshot", "render_task_progress", "render_file_diff", "render_acp_status":
 		// 这些工具的参数契约需要严格收敛，避免删除或拼错的字段被静默忽略。
 		schema["additionalProperties"] = false
 	}
