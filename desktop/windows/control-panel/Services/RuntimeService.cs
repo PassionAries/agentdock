@@ -40,7 +40,9 @@ public sealed class RuntimeService : IDisposable
     public string LogsDirectory => Path.Combine(RuntimeRoot, "logs");
     public string ConfigDirectory => RuntimeRoot;
 
-    public async Task<RuntimeSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
+    public async Task<RuntimeSnapshot> GetSnapshotAsync(
+        CancellationToken cancellationToken = default,
+        bool includeNexusConnection = false)
     {
         var manifest = await ReadRuntimeManifestAsync(cancellationToken) ?? new RuntimeManifest();
         var manifestPort = manifest.ListenPort is >= 1 and <= 65535 ? manifest.ListenPort : 8765;
@@ -87,6 +89,9 @@ public sealed class RuntimeService : IDisposable
             version = await ReadCoreVersionAsync(binaryPath, cancellationToken);
         }
         var coreRunning = health.Healthy || IsProcessRunningAtPath("agentdock", binaryPath);
+        var nexus = ReadNexusDeviceStatus();
+        var nexusConnected = includeNexusConnection && coreRunning && nexus.Paired && string.IsNullOrWhiteSpace(nexus.Error)
+            && await ReadNexusConnectionAsync(binaryPath, cancellationToken);
         var cloudflaredRunning = IsProcessRunningAtPath("cloudflared", manifest.CloudflaredBinary);
         var tunnelMode = ReadText(Path.Combine(RuntimeRoot, "cloudflared-mode.txt"));
         if (string.IsNullOrWhiteSpace(tunnelMode))
@@ -109,7 +114,8 @@ public sealed class RuntimeService : IDisposable
             IsCoreStartupEnabled(manifest),
             IsRunValuePresent(manifest.TrayStartupValueName, "AgentDockTray"),
             File.Exists(Path.Combine(RuntimeRoot, "cloudflared-token.dpapi")),
-            ReadNexusDeviceStatus(),
+            nexus,
+            nexusConnected,
             DateTimeOffset.Now);
     }
 
@@ -782,6 +788,27 @@ public sealed class RuntimeService : IDisposable
             StandardOutputEncoding = utf8,
             StandardErrorEncoding = utf8
         };
+    }
+
+    private async Task<bool> ReadNexusConnectionAsync(string binaryPath, CancellationToken cancellationToken)
+    {
+        var startInfo = CreateRedirectedProcessStartInfo(binaryPath);
+        foreach (var argument in new[] { "service", "status", "--runtime-root", RuntimeRoot })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        try
+        {
+            var output = await RunProcessAsync(startInfo, cancellationToken);
+            var status = JsonSerializer.Deserialize<NativeServiceStatus>(output, JsonOptions);
+            return status?.NexusConnected == true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException)
+        {
+            // 实时状态读取失败时按未连接处理；配对身份与配置异常仍由 NexusDeviceStatus 单独表达。
+            return false;
+        }
     }
 
     private static NexusDeviceStatus ReadNexusDeviceStatus()

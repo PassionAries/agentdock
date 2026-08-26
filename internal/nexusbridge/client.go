@@ -60,13 +60,14 @@ type remoteError struct {
 type Client struct {
 	identity Identity
 	server   *mcp.Server
+	state    *ConnectionState
 	writeMu  sync.Mutex
 	cancelMu sync.Mutex
 	cancels  map[string]context.CancelFunc
 }
 
-func NewClient(identity Identity, server *mcp.Server) *Client {
-	return &Client{identity: identity, server: server, cancels: make(map[string]context.CancelFunc)}
+func NewClient(identity Identity, server *mcp.Server, state *ConnectionState) *Client {
+	return &Client{identity: identity, server: server, state: state, cancels: make(map[string]context.CancelFunc)}
 }
 
 func (c *Client) Run(ctx context.Context) {
@@ -91,6 +92,7 @@ func (c *Client) Run(ctx context.Context) {
 }
 
 func (c *Client) connect(ctx context.Context) error {
+	c.state.SetConnected(false)
 	endpoint, err := url.Parse(c.identity.Endpoint)
 	if err != nil {
 		return err
@@ -127,6 +129,8 @@ func (c *Client) connect(ctx context.Context) error {
 	if ready.Type != "node.ready" || ready.Protocol != protocolVersion {
 		return errors.New("NexusDock 返回了不兼容的节点协议")
 	}
+	c.state.SetConnected(true)
+	defer c.state.SetConnected(false)
 	slog.Info("NexusDock node connected", "node_id", c.identity.NodeID, "endpoint", c.identity.Endpoint)
 	heartbeat := time.Duration(ready.HeartbeatMS) * time.Millisecond
 	if heartbeat <= 0 {

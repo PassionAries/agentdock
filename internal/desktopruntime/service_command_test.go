@@ -3,6 +3,7 @@ package desktopruntime
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -44,5 +45,19 @@ func TestRunServiceCommandValidatesAutostartArgumentsBeforePlatformAccess(t *tes
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestServiceStatusJSONIncludesNexusConnection(t *testing.T) {
+	data, err := json.Marshal(ServiceStatus{NexusConnected: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["nexus_connected"] != true {
+		t.Fatalf("nexus_connected = %#v, want true", decoded["nexus_connected"])
 	}
 }

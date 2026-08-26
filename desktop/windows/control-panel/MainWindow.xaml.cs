@@ -48,7 +48,7 @@ public partial class MainWindow : Window
         try
         {
             FooterStatusText.Text = "正在刷新…";
-            var snapshot = await _runtime.GetSnapshotAsync();
+            var snapshot = await _runtime.GetSnapshotAsync(includeNexusConnection: true);
             _snapshot = snapshot;
             _bearerToken = _runtime.ReadBearerToken();
             _oauthPassword = _runtime.ReadOAuthPassword();
@@ -61,6 +61,7 @@ public partial class MainWindow : Window
             FooterStatusText.Text = ex.Message;
             HeaderStatusText.Text = "状态读取失败";
             StatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 45, 32));
+            NexusStatusText.Text = "状态读取失败";
         }
         finally
         {
@@ -77,6 +78,13 @@ public partial class MainWindow : Window
             StatusDot.Fill = new SolidColorBrush(snapshot.Healthy
                 ? Color.FromRgb(18, 183, 106)
                 : snapshot.CoreRunning ? Color.FromRgb(247, 144, 9) : Color.FromRgb(152, 162, 179));
+
+            NexusStatusText.Text = !string.IsNullOrWhiteSpace(snapshot.Nexus.Error)
+                ? "配置异常"
+                : !snapshot.Nexus.Paired
+                    ? "未配置"
+                    : snapshot.NexusConnected ? "已连接" : "未连接";
+
             ServiceStatusText.Text = snapshot.CoreRunning ? "正在运行" : "已停止";
             HealthStatusText.Text = snapshot.Healthy ? "正常" : "不可用";
             VersionText.Text = string.IsNullOrWhiteSpace(snapshot.Version) ? "未知" : snapshot.Version;

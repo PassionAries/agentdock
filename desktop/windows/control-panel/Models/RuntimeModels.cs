@@ -92,6 +92,12 @@ public sealed class CoreVersionInfo
     public string Version { get; set; } = "";
 }
 
+internal sealed class NativeServiceStatus
+{
+    [JsonPropertyName("nexus_connected")]
+    public bool NexusConnected { get; set; }
+}
+
 public sealed record RuntimeSnapshot(
     RuntimeManifest Manifest,
     ControlPanelSettings Settings,
@@ -108,6 +114,7 @@ public sealed record RuntimeSnapshot(
     bool TrayStartupEnabled,
     bool TunnelTokenStored,
     NexusDeviceStatus Nexus,
+    bool NexusConnected,
     DateTimeOffset CheckedAt);
 
 public sealed record NexusDeviceStatus(

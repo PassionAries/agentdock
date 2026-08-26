@@ -18,6 +18,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let titleLabel = NSTextField(labelWithString: "AgentDock")
     private let subtitleLabel = NSTextField(labelWithString: "本机 MCP 服务与公网连接管理")
     private let stateLabel = NSTextField(labelWithString: "未安装")
+    private let nexusStateLabel = NSTextField(labelWithString: "未配置")
 
     private let serviceSection = NSStackView()
     private let localAddress = NSTextField(labelWithString: "未安装")
@@ -141,6 +142,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             oauthPasswordValue = ""
             select(mode: .local)
         }
+        updateNexusState(status.nexusConnection)
         refreshCredentialFields()
         refreshChangeState()
         updateWindowHeight()
@@ -155,6 +157,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         guard status.installed else { return }
         updateServiceSection(status)
+        updateNexusState(status.nexusConnection)
         refreshCredentialFields()
     }
 
@@ -175,6 +178,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         subtitleLabel.textColor = .secondaryLabelColor
         stateLabel.alignment = .right
         stateLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nexusStateLabel.alignment = .left
+        nexusStateLabel.font = .systemFont(ofSize: 12, weight: .regular)
 
         let headerText = NSStackView(views: [titleLabel, subtitleLabel])
         headerText.orientation = .vertical
@@ -217,6 +222,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         serviceSection.addArrangedSubview(valueRow(title: "本地 MCP", field: localAddress, actions: [copyButton(#selector(copyLocalAddress))]))
         serviceSection.addArrangedSubview(valueRow(title: "公网 MCP", field: publicAddress, actions: [publicTestButton, publicCopyButton]))
         serviceSection.addArrangedSubview(valueDetailRow(publicCheckStatus))
+        serviceSection.addArrangedSubview(valueRow(title: "Nexus", field: nexusStateLabel, actions: []))
         serviceSection.addArrangedSubview(valueRow(title: "Bearer Token", field: authToken, actions: [authReveal, copyButton(#selector(copyAuthToken))]))
         serviceSection.addArrangedSubview(valueRow(title: "OAuth 密码", field: oauthPassword, actions: [oauthReveal, copyButton(#selector(copyOAuthPassword))]))
 
@@ -342,6 +348,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             startStopButton.isEnabled = status.installed && !migrationRequired
             restartButton.isEnabled = status.installed && !status.requiresApproval && !migrationRequired
             updateButton.isEnabled = status.installed && !migrationRequired
+        }
+    }
+
+    private func updateNexusState(_ state: NexusConnectionState) {
+        switch state {
+        case .connected:
+            nexusStateLabel.stringValue = "已连接"
+        case .disconnected:
+            nexusStateLabel.stringValue = "未连接"
+        case .unconfigured:
+            nexusStateLabel.stringValue = "未配置"
+        case .configurationError:
+            nexusStateLabel.stringValue = "配置异常"
         }
     }
 

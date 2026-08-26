@@ -45,3 +45,57 @@ func TestWindowsUpdateProgressWindowSizesToContent(t *testing.T) {
 		t.Fatal("Windows update progress button row must size to its content")
 	}
 }
+
+func TestWindowsControlPanelShowsLiveNexusStatusInsideRuntimeStatus(t *testing.T) {
+	root := filepath.Join("..", "..", "desktop", "windows", "control-panel")
+	files := map[string][]string{
+		"MainWindow.xaml": {
+			`Text="健康检查" Grid.Row="1"`,
+			`Text="Nexus" Grid.Row="2"`,
+			`x:Name="NexusStatusText" Grid.Row="2" Grid.Column="1" Text="未配置"`,
+			`Text="版本" Grid.Row="3"`,
+		},
+		"MainWindow.xaml.cs": {
+			`NexusStatusText.Text`,
+			`"已连接"`,
+			`"未连接"`,
+			`"未配置"`,
+			`"配置异常"`,
+			`snapshot.NexusConnected`,
+			`GetSnapshotAsync(includeNexusConnection: true)`,
+		},
+		filepath.Join("Models", "RuntimeModels.cs"): {
+			`bool NexusConnected`,
+			`JsonPropertyName("nexus_connected")`,
+		},
+		filepath.Join("Services", "RuntimeService.cs"): {
+			`bool includeNexusConnection = false`,
+			`ReadNexusConnectionAsync`,
+			`"service", "status", "--runtime-root", RuntimeRoot`,
+		},
+	}
+
+	for relativePath, wants := range files {
+		data, err := os.ReadFile(filepath.Join(root, relativePath))
+		if err != nil {
+			t.Fatalf("read %s: %v", relativePath, err)
+		}
+		content := string(data)
+		for _, want := range wants {
+			if !strings.Contains(content, want) {
+				t.Fatalf("Windows Nexus status contract missing %q in %s", want, relativePath)
+			}
+		}
+	}
+
+	xaml, err := os.ReadFile(filepath.Join(root, "MainWindow.xaml"))
+	if err != nil {
+		t.Fatalf("read MainWindow.xaml: %v", err)
+	}
+	content := string(xaml)
+	for _, forbidden := range []string{`NexusStatusDot`, `NexusHeaderStatusText`, `Nexus ·`} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("Windows Nexus status must stay plain inside runtime status; found %q", forbidden)
+		}
+	}
+}
