@@ -19,6 +19,42 @@ type mcpAppTestHarness struct {
 	serverDone chan error
 }
 
+func assertToolUIResource(t *testing.T, tool *mcpsdk.Tool, uri string) {
+	t.Helper()
+	if tool == nil {
+		t.Fatal("UI tool is nil")
+	}
+	ui, ok := tool.Meta["ui"].(map[string]any)
+	if !ok || ui["resourceUri"] != uri {
+		t.Fatalf("%s standard ui metadata = %#v", tool.Name, tool.Meta["ui"])
+	}
+	if len(tool.Meta) != 1 {
+		t.Fatalf("%s should expose only standard ui metadata: %#v", tool.Name, tool.Meta)
+	}
+}
+
+func assertResourceUIMeta(t *testing.T, meta mcpsdk.Meta, domain string) {
+	t.Helper()
+	ui, ok := meta["ui"].(map[string]any)
+	if !ok || ui["prefersBorder"] != true {
+		t.Fatalf("standard resource ui metadata = %#v", meta["ui"])
+	}
+	csp, ok := ui["csp"].(map[string]any)
+	if !ok || csp["connectDomains"] == nil || csp["resourceDomains"] == nil {
+		t.Fatalf("standard resource csp = %#v", ui["csp"])
+	}
+	if domain == "" {
+		if _, exists := ui["domain"]; exists {
+			t.Fatalf("unexpected resource ui.domain = %#v", ui["domain"])
+		}
+	} else if ui["domain"] != domain {
+		t.Fatalf("resource domain metadata = %#v", meta)
+	}
+	if len(meta) != 1 {
+		t.Fatalf("resource should expose only standard ui metadata: %#v", meta)
+	}
+}
+
 func newMCPAppTestHarness(t *testing.T, cfg config.Config) *mcpAppTestHarness {
 	t.Helper()
 	if err := cfg.Normalize(); err != nil {
@@ -59,11 +95,13 @@ func newMCPAppTestHarness(t *testing.T, cfg config.Config) *mcpAppTestHarness {
 	return harness
 }
 
-func TestMCPAppsExposeReadOnlyRenderToolsAndResources(t *testing.T) {
+func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	root := t.TempDir()
+	const widgetDomain = "https://dockmini.example.test"
 	harness := newMCPAppTestHarness(t, config.Config{
 		AgentDockDefaultDir: root,
 		AgentDockHome:       filepath.Join(root, ".agentdock"),
+		OAuthServerURL:      widgetDomain + "/",
 	})
 
 	initialize := harness.session.InitializeResult()
@@ -78,23 +116,21 @@ func TestMCPAppsExposeReadOnlyRenderToolsAndResources(t *testing.T) {
 		}
 		tools[tool.Name] = tool
 	}
-	for name, uri := range map[string]string{
-		"render_task_progress": app.TaskProgressUIResourceURI,
-		"render_file_diff":     app.FileDiffUIResourceURI,
-	} {
-		tool := tools[name]
-		if tool == nil {
-			t.Fatalf("tools/list did not expose %q", name)
-		}
-		if tool.Meta["ui/resourceUri"] != uri || tool.Meta["openai/outputTemplate"] != uri {
-			t.Fatalf("%s _meta = %#v", name, tool.Meta)
-		}
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint || tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
-			t.Fatalf("%s annotations = %#v", name, tool.Annotations)
-		}
+	if len(tools) != 18 {
+		t.Fatalf("tools/list count = %d, want 18", len(tools))
 	}
-	if tools["render_acp_status"] != nil {
-		t.Fatal("render_acp_status should not be exposed when ACP is disabled")
+	fileEditTool := tools["file_edit"]
+	if fileEditTool == nil {
+		t.Fatal("tools/list did not expose file_edit")
+	}
+	assertToolUIResource(t, fileEditTool, app.FileChangeUIResourceURI)
+	taskManageTool := tools["task_manage"]
+	if taskManageTool == nil {
+		t.Fatal("tools/list did not expose task_manage")
+	}
+	assertToolUIResource(t, taskManageTool, app.TaskProgressUIResourceURI)
+	if taskManageTool.Annotations == nil || taskManageTool.Annotations.ReadOnlyHint {
+		t.Fatalf("task_manage annotations = %#v", taskManageTool.Annotations)
 	}
 
 	resources := map[string]*mcpsdk.Resource{}
@@ -104,7 +140,10 @@ func TestMCPAppsExposeReadOnlyRenderToolsAndResources(t *testing.T) {
 		}
 		resources[resource.URI] = resource
 	}
-	for _, uri := range []string{app.TaskProgressUIResourceURI, app.FileDiffUIResourceURI} {
+	if len(resources) != 2 {
+		t.Fatalf("resources/list count = %d, want 2", len(resources))
+	}
+	for _, uri := range []string{app.TaskProgressUIResourceURI, app.FileChangeUIResourceURI} {
 		resource := resources[uri]
 		if resource == nil || resource.MIMEType != mcpAppMIMEType {
 			t.Fatalf("resource %s = %#v", uri, resource)
@@ -113,42 +152,101 @@ func TestMCPAppsExposeReadOnlyRenderToolsAndResources(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadResource(%s) error = %v", uri, err)
 		}
-		if len(read.Contents) != 1 || read.Contents[0].MIMEType != mcpAppMIMEType || !strings.Contains(read.Contents[0].Text, "window.openai") || !strings.Contains(read.Contents[0].Text, "connect-src 'none'") {
+		if len(read.Contents) != 1 || read.Contents[0].MIMEType != mcpAppMIMEType || !strings.Contains(read.Contents[0].Text, `window.addEventListener("message"`) || !strings.Contains(read.Contents[0].Text, "connect-src 'none'") {
 			t.Fatalf("ReadResource(%s) = %#v", uri, read.Contents)
 		}
-		if read.Contents[0].Meta["openai/widgetPrefersBorder"] != true || read.Contents[0].Meta["openai/widgetCSP"] == nil {
-			t.Fatalf("resource meta %s = %#v", uri, read.Contents[0].Meta)
+		assertResourceUIMeta(t, resource.Meta, widgetDomain)
+		assertResourceUIMeta(t, read.Contents[0].Meta, widgetDomain)
+	}
+	fileChangeRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.FileChangeUIResourceURI})
+	if err != nil {
+		t.Fatalf("ReadResource(file change) error = %v", err)
+	}
+	if len(fileChangeRead.Contents) != 1 || !strings.Contains(fileChangeRead.Contents[0].Text, `expectedView="file_change"`) || !strings.Contains(fileChangeRead.Contents[0].Text, "renderFileChange") || strings.Contains(fileChangeRead.Contents[0].Text, "innerHTML") {
+		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
+	}
+	fileChangeHTML := fileChangeRead.Contents[0].Text
+	for _, marker := range []string{"background:#fff;color:#111", `<div class="brand">AgentDock</div>`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`} {
+		if !strings.Contains(fileChangeHTML, marker) {
+			t.Fatalf("file change resource missing simplified UI marker %q", marker)
+		}
+	}
+	taskRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.TaskProgressUIResourceURI})
+	if err != nil {
+		t.Fatalf("ReadResource(task progress) error = %v", err)
+	}
+	for _, marker := range []string{".steps::before", ".step-marker", `status==="completed"?"✓"`} {
+		if len(taskRead.Contents) != 1 || !strings.Contains(taskRead.Contents[0].Text, marker) {
+			t.Fatalf("task resource missing vertical progress marker %q", marker)
 		}
 	}
 	if resources[app.ACPStatusUIResourceURI] != nil {
 		t.Fatal("ACP UI resource should not be listed when ACP is disabled")
 	}
 
-	taskResult, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name: "render_task_progress",
-		Arguments: map[string]any{"task": map[string]any{
-			"id": "tsk_demo", "title": "Demo", "status": "active", "completed_step_count": 1, "step_count": 2,
-		}},
-	})
-	if err != nil || taskResult.IsError {
-		t.Fatalf("render_task_progress result=%#v err=%v", taskResult, err)
+	filePath := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(filePath, []byte("alpha\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	taskStructured, ok := taskResult.StructuredContent.(map[string]any)
-	if !ok || taskStructured["view"] != "task_progress" {
-		t.Fatalf("render_task_progress structuredContent = %#v", taskResult.StructuredContent)
+	fileEditResult, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "file_edit",
+		Arguments: map[string]any{
+			"action": "replace", "path": "note.txt", "old": "alpha", "new": "beta", "dry_run": true,
+		},
+	})
+	if err != nil || fileEditResult.IsError {
+		t.Fatalf("file_edit result=%#v err=%v", fileEditResult, err)
+	}
+	fileEditStructured, ok := fileEditResult.StructuredContent.(map[string]any)
+	if !ok || fileEditStructured["action"] != "replace" || fileEditStructured["dry_run"] != true || fileEditStructured["view"] != nil {
+		t.Fatalf("file_edit structuredContent = %#v", fileEditResult.StructuredContent)
+	}
+	diffPreview, _ := fileEditStructured["diff_preview"].(string)
+	if !strings.Contains(diffPreview, "beta") {
+		t.Fatalf("file_edit diff_preview = %q", diffPreview)
+	}
+	fileBytes, err := os.ReadFile(filePath)
+	if err != nil || string(fileBytes) != "alpha\n" {
+		t.Fatalf("dry-run changed file: content=%q err=%v", fileBytes, err)
+	}
+	errorResult, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "file_edit",
+		Arguments: map[string]any{
+			"action": "replace", "path": "note.txt", "old": "missing", "new": "beta", "expected_matches": 1,
+		},
+	})
+	if err != nil || !errorResult.IsError {
+		t.Fatalf("file_edit validation error result=%#v err=%v", errorResult, err)
+	}
+	errorStructured, ok := errorResult.StructuredContent.(map[string]any)
+	if !ok || errorStructured["code"] != "MATCH_COUNT_MISMATCH" {
+		t.Fatalf("file_edit validation structuredContent = %#v", errorResult.StructuredContent)
 	}
 
-	diffResult, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name:      "render_file_diff",
-		Arguments: map[string]any{"diff": "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n", "path": "a"},
+	createdTask, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{
+		Name: "task_manage",
+		Arguments: map[string]any{
+			"action": "create", "title": "Widget task", "goal": "verify direct task UI",
+			"completion_conditions": []string{"done"},
+			"steps":                 []map[string]any{{"id": "verify", "title": "Verify"}},
+		},
 	})
-	if err != nil || diffResult.IsError {
-		t.Fatalf("render_file_diff result=%#v err=%v", diffResult, err)
+	if err != nil || createdTask.IsError {
+		t.Fatalf("task_manage create result=%#v err=%v", createdTask, err)
 	}
-	diffStructured, ok := diffResult.StructuredContent.(map[string]any)
-	if !ok || diffStructured["view"] != "file_diff" || diffStructured["path"] != "a" {
-		t.Fatalf("render_file_diff structuredContent = %#v", diffResult.StructuredContent)
+	createdTaskStructured, ok := createdTask.StructuredContent.(map[string]any)
+	if !ok || createdTaskStructured["action"] != "create" || createdTaskStructured["view"] != nil || createdTaskStructured["task_summary"] == nil {
+		t.Fatalf("task_manage create structuredContent = %#v", createdTask.StructuredContent)
 	}
+	listedTasks, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "task_manage", Arguments: map[string]any{"action": "list"}})
+	if err != nil || listedTasks.IsError {
+		t.Fatalf("task_manage list result=%#v err=%v", listedTasks, err)
+	}
+	listedStructured, ok := listedTasks.StructuredContent.(map[string]any)
+	if !ok || listedStructured["action"] != "list" || listedStructured["tasks"] == nil {
+		t.Fatalf("task_manage list structuredContent = %#v", listedTasks.StructuredContent)
+	}
+
 }
 
 func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
@@ -165,18 +263,23 @@ func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
 		ACPCommand:          executable,
 	})
 
-	var renderTool *mcpsdk.Tool
+	tools := map[string]*mcpsdk.Tool{}
 	for tool, err := range harness.session.Tools(t.Context(), nil) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if tool.Name == "render_acp_status" {
-			renderTool = tool
-			break
-		}
+		tools[tool.Name] = tool
 	}
-	if renderTool == nil || renderTool.Meta["ui/resourceUri"] != app.ACPStatusUIResourceURI || renderTool.Meta["openai/outputTemplate"] != app.ACPStatusUIResourceURI {
-		t.Fatalf("render_acp_status = %#v", renderTool)
+	if len(tools) != 21 {
+		t.Fatalf("tools/list count = %d, want 21", len(tools))
+	}
+	assertToolUIResource(t, tools["acp_session"], app.ACPStatusUIResourceURI)
+	for _, name := range []string{"acp_prompt", "acp_interaction"} {
+		if tool := tools[name]; tool == nil {
+			t.Fatalf("%s was not exposed", name)
+		} else if tool.Meta["ui"] != nil {
+			t.Fatalf("%s should not bind a static ACP widget: %#v", name, tool.Meta)
+		}
 	}
 
 	read, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.ACPStatusUIResourceURI})
@@ -186,16 +289,42 @@ func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
 	if len(read.Contents) != 1 || !strings.Contains(read.Contents[0].Text, "acp_status") {
 		t.Fatalf("ACP resource contents = %#v", read.Contents)
 	}
-
-	result, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{
-		Name:      "render_acp_status",
-		Arguments: map[string]any{"state": map[string]any{"status": "running", "session_id": "acps_demo"}},
-	})
-	if err != nil || result.IsError {
-		t.Fatalf("render_acp_status result=%#v err=%v", result, err)
+	for _, marker := range []string{"message-role", `message.role!=="user"&&message.role!=="assistant"`, "No user or assistant messages in this AgentDock process."} {
+		if !strings.Contains(read.Contents[0].Text, marker) {
+			t.Fatalf("ACP resource missing conversation marker %q", marker)
+		}
 	}
-	structured, ok := result.StructuredContent.(map[string]any)
-	if !ok || structured["view"] != "acp_status" {
-		t.Fatalf("render_acp_status structuredContent = %#v", result.StructuredContent)
+	assertResourceUIMeta(t, read.Contents[0].Meta, "")
+
+	sessionList, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "acp_session", Arguments: map[string]any{"action": "list"}})
+	if err != nil || sessionList.IsError {
+		t.Fatalf("acp_session list result=%#v err=%v", sessionList, err)
+	}
+	sessionStructured, ok := sessionList.StructuredContent.(map[string]any)
+	if !ok || sessionStructured["action"] != "list" || sessionStructured["sessions"] == nil || sessionStructured["view"] != nil {
+		t.Fatalf("acp_session list structuredContent = %#v", sessionList.StructuredContent)
+	}
+
+}
+
+func TestAppWidgetDomainRequiresHTTPSOrigin(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "https origin", raw: "https://dockmini.example.test/", want: "https://dockmini.example.test"},
+		{name: "https port", raw: "https://dockmini.example.test:8443", want: "https://dockmini.example.test:8443"},
+		{name: "empty", raw: "", want: ""},
+		{name: "http", raw: "http://127.0.0.1:8765", want: ""},
+		{name: "path", raw: "https://dockmini.example.test/mcp", want: ""},
+		{name: "query", raw: "https://dockmini.example.test?x=1", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := appWidgetDomain(test.raw); got != test.want {
+				t.Fatalf("appWidgetDomain(%q) = %q, want %q", test.raw, got, test.want)
+			}
+		})
 	}
 }

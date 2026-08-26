@@ -70,6 +70,15 @@ func TestManagerPromptEventsPermissionAndPersistence(t *testing.T) {
 		_ = manager.Close()
 		t.Fatalf("policy did not filter always option: %#v", permission.Options)
 	}
+	runningMessages, err := manager.SessionMessages(created.Session.ID)
+	if err != nil {
+		_ = manager.Close()
+		t.Fatal(err)
+	}
+	if len(runningMessages) != 1 || runningMessages[0].Role != "user" || runningMessages[0].Content != "exercise permission" {
+		_ = manager.Close()
+		t.Fatalf("running conversation messages = %#v", runningMessages)
+	}
 	if _, err := manager.RespondInteraction(permission.ID, "allow-always", false); err == nil {
 		_ = manager.Close()
 		t.Fatal("always option was accepted")
@@ -101,6 +110,15 @@ func TestManagerPromptEventsPermissionAndPersistence(t *testing.T) {
 		t.Fatalf("prompt did not complete; events=%#v", allEvents)
 	}
 	assertEventTypes(t, allEvents, "agent_message_chunk", "permission_request", "completed")
+	messages, err := manager.SessionMessages(created.Session.ID)
+	if err != nil {
+		_ = manager.Close()
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].Role != "user" || messages[0].Content != "exercise permission" || messages[1].Role != "assistant" || messages[1].Content != "working" {
+		_ = manager.Close()
+		t.Fatalf("conversation messages = %#v", messages)
+	}
 
 	if err := manager.Close(); err != nil {
 		t.Fatal(err)
@@ -124,6 +142,13 @@ func TestManagerPromptEventsPermissionAndPersistence(t *testing.T) {
 	}
 	if loaded.Session.Status != SessionReady {
 		t.Fatalf("loaded status = %s", loaded.Session.Status)
+	}
+	reloadedMessages, err := reloaded.SessionMessages(created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloadedMessages) != 0 {
+		t.Fatalf("conversation unexpectedly persisted = %#v", reloadedMessages)
 	}
 }
 

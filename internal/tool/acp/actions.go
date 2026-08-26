@@ -85,7 +85,11 @@ func (s *Service) Session(ctx context.Context, args map[string]any) (Result, err
 		if err != nil {
 			return nil, acpToolError(err)
 		}
-		return Result{"action": action, "session": session}, nil
+		messages, err := s.manager.SessionMessages(session.ID)
+		if err != nil {
+			return nil, acpToolError(err)
+		}
+		return Result{"action": action, "session": session, "messages": messages}, nil
 	case "close":
 		session, err := s.manager.CloseSession(ctx, stringArg(args, "session_id", ""))
 		if err != nil {

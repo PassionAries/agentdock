@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 )
 
 const (
-	maxRetainedRuns    = 256
-	targetRetainedRuns = 192
+	maxRetainedRuns             = 256
+	targetRetainedRuns          = 192
+	maxConversationTurns        = 8
+	maxConversationMessageBytes = 8 << 10
 )
 
 type PromptStartResult struct {
@@ -36,6 +39,11 @@ type PromptEventsResult struct {
 	StopReason   string     `json:"stop_reason,omitempty"`
 	ErrorCode    string     `json:"error_code,omitempty"`
 	Message      string     `json:"message,omitempty"`
+}
+
+type ConversationMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 func (m *Manager) StartPrompt(ctx context.Context, sessionID, text string) (PromptStartResult, error) {
@@ -78,6 +86,9 @@ func (m *Manager) StartPrompt(ctx context.Context, sessionID, text string) (Prom
 		return PromptStartResult{}, err
 	}
 	run := newRun(runID, sessionID)
+	// Widget 对话只保留当前进程内的最小 user/assistant 文本，不把 prompt 全文
+	// 写入 session 持久化文件；AgentDock 重启后由远端 ACP session 继续持有其历史。
+	run.userText = truncateUTF8(text, maxConversationMessageBytes)
 	runCtx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
 	m.pruneRunsLocked(time.Now().UTC())
@@ -103,6 +114,60 @@ func (m *Manager) StartPrompt(ctx context.Context, sessionID, text string) (Prom
 	}
 	go m.runPrompt(runCtx, run, record, text)
 	return PromptStartResult{RunID: run.ID, SessionID: sessionID, Status: RunRunning, StartedAt: run.StartedAt}, nil
+}
+
+func (m *Manager) SessionMessages(sessionID string) ([]ConversationMessage, error) {
+	if _, err := m.session(sessionID); err != nil {
+		return nil, err
+	}
+
+	// 先在 manager 锁下只复制 run 指针，再分别读取 run。finishRun 的锁顺序是
+	// run -> manager，这里不能反向同时持有两把锁。
+	m.mu.RLock()
+	runs := make([]*Run, 0)
+	for _, run := range m.runs {
+		if run != nil && run.SessionID == sessionID {
+			runs = append(runs, run)
+		}
+	}
+	m.mu.RUnlock()
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].StartedAt.Equal(runs[j].StartedAt) {
+			return runs[i].ID < runs[j].ID
+		}
+		return runs[i].StartedAt.Before(runs[j].StartedAt)
+	})
+	if len(runs) > maxConversationTurns {
+		runs = runs[len(runs)-maxConversationTurns:]
+	}
+
+	messages := make([]ConversationMessage, 0, len(runs)*2)
+	for _, run := range runs {
+		run.eventsMu.Lock()
+		userText := strings.TrimSpace(run.userText)
+		status := run.Status
+		var assistant strings.Builder
+		for _, event := range run.events {
+			if status != RunCompleted || event.Type != "agent_message_chunk" {
+				continue
+			}
+			remaining := maxConversationMessageBytes - assistant.Len()
+			if remaining <= 0 {
+				break
+			}
+			assistant.WriteString(truncateUTF8(assistantChunkText(event.Update), remaining))
+		}
+		assistantText := strings.TrimSpace(assistant.String())
+		run.eventsMu.Unlock()
+
+		if userText != "" {
+			messages = append(messages, ConversationMessage{Role: "user", Content: userText})
+		}
+		if assistantText != "" {
+			messages = append(messages, ConversationMessage{Role: "assistant", Content: assistantText})
+		}
+	}
+	return messages, nil
 }
 
 func (m *Manager) PromptEvents(ctx context.Context, runID string, after uint64, limit int, wait time.Duration) (PromptEventsResult, error) {

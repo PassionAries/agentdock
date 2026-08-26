@@ -19,21 +19,16 @@ import (
 )
 
 type Server struct {
-	runtime      *app.Runtime
-	cfg          config.Config
-	sdk          *mcpsdk.Server
-	skillCatalog skillCatalogCache
-	httpHandler  http.Handler
+	runtime     *app.Runtime
+	cfg         config.Config
+	sdk         *mcpsdk.Server
+	httpHandler http.Handler
 }
 
 func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 	server := &Server{runtime: runtime, cfg: cfg}
-	capabilities := &mcpsdk.ServerCapabilities{}
-	if runtime != nil && len(cfg.MCPExportedSkills) > 0 {
-		capabilities.AddExtension(skillsExtensionName, nil)
-	}
 	serverOptions := &mcpsdk.ServerOptions{
-		Capabilities: capabilities,
+		Capabilities: &mcpsdk.ServerCapabilities{},
 		Instructions: serverInstructions(cfg.NexusEndpoint != "", cfg.Instructions),
 	}
 	server.sdk = mcpsdk.NewServer(
@@ -44,9 +39,6 @@ func NewServer(runtime *app.Runtime, cfg config.Config) *Server {
 		server.registerAppResources()
 		for _, name := range runtime.ToolNames() {
 			server.registerTool(name, cfg)
-		}
-		if len(cfg.MCPExportedSkills) > 0 {
-			server.registerSkillExtension()
 		}
 	}
 	server.httpHandler = mcpsdk.NewStreamableHTTPHandler(
@@ -172,10 +164,7 @@ func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.Call
 func toolMetadata(def ToolDefinition) map[string]any {
 	meta := map[string]any{}
 	if def.UIResourceURI != "" {
-		meta["ui/resourceUri"] = def.UIResourceURI
-	}
-	if def.OpenAIOutputTemplate != "" {
-		meta["openai/outputTemplate"] = def.OpenAIOutputTemplate
+		meta["ui"] = map[string]any{"resourceUri": def.UIResourceURI}
 	}
 	if len(def.FileArgRewritePaths) > 0 {
 		paths := append([]string(nil), def.FileArgRewritePaths...)

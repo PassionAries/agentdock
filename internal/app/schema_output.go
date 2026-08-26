@@ -77,10 +77,15 @@ func OutputSchema(name string) map[string]any {
 		props["action"] = stringProp("File edit action.")
 		props["summary"] = stringProp("Result summary.")
 		props["path"] = stringProp("Host path. Relative paths resolve from ~/AgentDock.")
+		props["new_path"] = stringProp("Move destination path.")
+		props["workdir"] = stringProp("Patch working directory.")
+		props["affected_files"] = map[string]any{"type": "array", "description": "Files affected by a patch.", "items": map[string]any{"type": "string"}}
 		props["dry_run"] = boolProp("Whether this was a dry run.")
 		props["matches"] = intProp("Match count for replace.")
 		props["changed"] = boolProp("Whether content changed.")
+		props["recursive"] = boolProp("Whether delete was allowed to remove a directory recursively.")
 		props["diff_preview"] = stringProp("Diff preview.")
+		props["truncated"] = boolProp("Whether the diff preview was truncated.")
 		props["files_changed"] = intProp("Changed file count.")
 		props["insertions"] = intProp("Inserted line count.")
 		props["deletions"] = intProp("Deleted line count.")
@@ -254,24 +259,6 @@ func OutputSchema(name string) map[string]any {
 		props["archive"] = boolProp("Whether the source directory was packaged as tar.gz.")
 		props["width"] = intProp("Image width when the payload is an image.")
 		props["height"] = intProp("Image height when the payload is an image.")
-	case "render_task_progress":
-		props["view"] = stringProp("MCP App view identifier, task_progress.")
-		props["task"] = objectProp("Task snapshot passed to the renderer.")
-		props["title"] = stringProp("Optional display title.")
-		required = []string{"view", "task"}
-	case "render_file_diff":
-		props["view"] = stringProp("MCP App view identifier, file_diff.")
-		props["diff"] = stringProp("Unified diff text passed to the renderer.")
-		props["path"] = stringProp("Optional file or repository path label.")
-		props["summary"] = stringProp("Optional short diff summary.")
-		props["insertions"] = intProp("Optional inserted line count.")
-		props["deletions"] = intProp("Optional deleted line count.")
-		required = []string{"view", "diff"}
-	case "render_acp_status":
-		props["view"] = stringProp("MCP App view identifier, acp_status.")
-		props["state"] = objectProp("ACP state snapshot passed to the renderer.")
-		props["title"] = stringProp("Optional display title.")
-		required = []string{"view", "state"}
 	case "recall_bootstrap":
 		props["recall_endpoint"] = stringProp("Configured NexusDock Recall endpoint.")
 		props["project"] = stringProp("Backend-selected NexusDock Recall context returned by the backing service; not an input selector for the model.")

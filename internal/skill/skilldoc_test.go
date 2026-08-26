@@ -69,34 +69,3 @@ version: 1.0.0
 		t.Fatalf("expected empty description error, got %v", err)
 	}
 }
-
-func TestParseFullSkillFrontmatterPreservesAllEntries(t *testing.T) {
-	frontmatter, err := parseFullSkillFrontmatter([]byte(`---
-name: demo-skill
-description: Demo workflow.
-version: 1.2.3
-license: MIT
-tags:
-  - demo
-  - gpt
-metadata:
-  owner: dock
----
-
-# Demo
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if frontmatter["license"] != "MIT" {
-		t.Fatalf("license = %#v", frontmatter["license"])
-	}
-	tags, ok := frontmatter["tags"].([]any)
-	if !ok || len(tags) != 2 || tags[0] != "demo" || tags[1] != "gpt" {
-		t.Fatalf("tags = %#v", frontmatter["tags"])
-	}
-	metadata, ok := frontmatter["metadata"].(map[string]any)
-	if !ok || metadata["owner"] != "dock" {
-		t.Fatalf("metadata = %#v", frontmatter["metadata"])
-	}
-}

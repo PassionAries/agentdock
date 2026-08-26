@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -25,18 +23,6 @@ func LoadSkillDocument(packageDir string) (SkillDocument, error) {
 		return SkillDocument{}, packageError(ErrDocumentInvalid, "document.parse", err)
 	}
 	return doc, nil
-}
-
-func LoadSkillFrontmatter(packageDir string) (map[string]any, error) {
-	data, err := os.ReadFile(filepath.Join(packageDir, "SKILL.md"))
-	if err != nil {
-		return nil, packageError(ErrDocumentInvalid, "document.read", err)
-	}
-	frontmatter, err := parseFullSkillFrontmatter(data)
-	if err != nil {
-		return nil, packageError(ErrDocumentInvalid, "document.frontmatter", err)
-	}
-	return frontmatter, nil
 }
 
 func ParseSkillDocument(data []byte) (SkillDocument, error) {
@@ -79,33 +65,6 @@ func ParseSkillDocument(data []byte) (SkillDocument, error) {
 		return SkillDocument{}, errors.New(strings.Join(issues, "; "))
 	}
 	return doc, nil
-}
-
-func parseFullSkillFrontmatter(data []byte) (map[string]any, error) {
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	if len(lines) < 3 || strings.TrimSpace(lines[0]) != "---" {
-		return nil, errors.New("SKILL.md must start with YAML frontmatter")
-	}
-	endLine := -1
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			endLine = i
-			break
-		}
-	}
-	if endLine < 0 {
-		return nil, errors.New("SKILL.md frontmatter must be closed by ---")
-	}
-
-	frontmatter := map[string]any{}
-	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:endLine], "\n")), &frontmatter); err != nil {
-		return nil, err
-	}
-	if len(frontmatter) == 0 {
-		return nil, errors.New("SKILL.md frontmatter must not be empty")
-	}
-	return frontmatter, nil
 }
 
 func parseSkillDocumentFrontmatter(frontmatter string) map[string]string {

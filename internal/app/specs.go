@@ -16,7 +16,6 @@ type ToolSpec struct {
 	Name                   string
 	Title                  string
 	Description            string
-	OpenAIOutputTemplate   string
 	UIResourceURI          string
 	FileArgRewritePaths    []string
 	FileResultRewritePaths []string
@@ -39,7 +38,6 @@ type ToolDefinition struct {
 	Name                   string
 	Title                  string
 	Description            string
-	OpenAIOutputTemplate   string
 	UIResourceURI          string
 	FileArgRewritePaths    []string
 	FileResultRewritePaths []string
@@ -62,7 +60,6 @@ func (s ToolSpec) definition() ToolDefinition {
 		Name:                   s.Name,
 		Title:                  s.Title,
 		Description:            s.Description,
-		OpenAIOutputTemplate:   s.OpenAIOutputTemplate,
 		UIResourceURI:          s.UIResourceURI,
 		FileArgRewritePaths:    append([]string(nil), s.FileArgRewritePaths...),
 		FileResultRewritePaths: append([]string(nil), s.FileResultRewritePaths...),
@@ -146,13 +143,13 @@ func allToolSpecs() []ToolSpec {
 		{Name: "list_dir", Title: "List directory", Description: toolfile.ToolDescription("List directory entries. Relative paths resolve from ~/AgentDock; absolute and ~/ paths use Host rules."), Annotations: readOnlyToolAnnotations(false), Handler: ctxToolHandler((*Runtime).listDir)},
 		{Name: "list_files", Title: "List files", Description: toolfile.ToolDescription("List files using glob and ignore filters. Relative paths resolve from ~/AgentDock by default."), Annotations: readOnlyToolAnnotations(false), Handler: ctxToolHandler((*Runtime).listFiles)},
 		{Name: "search_text", Title: "Search text", Description: toolfile.ToolDescription("Search UTF-8 files for text or regex matches. Relative paths search ~/AgentDock by default; absolute paths are allowed."), Annotations: readOnlyToolAnnotations(false), Handler: ctxToolHandler((*Runtime).searchText)},
-		{Name: "file_edit", Title: "Edit file", Description: toolfile.EditDescription("Edit files through one action-based entrypoint: replace, patch, add, delete, or move. Relative paths resolve from ~/AgentDock; absolute and ~/ paths use Host rules."), Annotations: mutatingToolAnnotations(true, false), Handler: ctxToolHandler((*Runtime).fileEdit)},
+		{Name: "file_edit", Title: "Edit file", Description: toolfile.EditDescription("Edit files through one action-based entrypoint: replace, patch, add, delete, or move. Relative paths resolve from ~/AgentDock; absolute and ~/ paths use Host rules."), UIResourceURI: FileChangeUIResourceURI, Annotations: mutatingToolAnnotations(true, false), Handler: ctxToolHandler((*Runtime).fileEdit)},
 		{Name: "exec_command", Title: "Run command", Description: toolcommand.Description(), Annotations: mutatingToolAnnotations(true, true), Handler: ctxToolHandler((*Runtime).execCommand)},
 		{Name: "session_observe", Title: "Observe command sessions", Description: "List or inspect command sessions through a read-only session tool.", Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).sessionObserve)},
 		{Name: "session_act", Title: "Act on command sessions", Description: "Write to or stop command sessions through a mutating session tool.", Annotations: mutatingToolAnnotations(true, true), Handler: toolHandler((*Runtime).sessionAct)},
-		{Name: "task_manage", Title: "Manage recoverable tasks", Description: "Persist substantial AgentDock tasks and update live step progress with checkpoint.", Annotations: mutatingToolAnnotations(false, false), Handler: ctxToolHandler((*Runtime).taskManage)},
+		{Name: "task_manage", Title: "Manage recoverable tasks", Description: "Persist substantial AgentDock tasks and update live step progress with checkpoint.", UIResourceURI: TaskProgressUIResourceURI, Annotations: mutatingToolAnnotations(false, false), Handler: ctxToolHandler((*Runtime).taskManage)},
 		{Name: "evolve", Title: "Evolve AgentDock knowledge", Description: "Propose reusable knowledge, pre-bind Task learning checks, supersede, or retract. Bind must happen before execution and declares on_success/on_failure semantics; AgentDock resolves later Task outcomes and owns lifecycle policy while Recall only persists the result.", Annotations: mutatingToolAnnotations(true, false), Availability: requiresNexus, Handler: ctxToolHandler((*Runtime).evolve)},
-		{Name: "acp_session", Title: "Manage ACP sessions", Description: "Inspect or authenticate the configured ACP agent and create, load, resume, fork, configure, list, inspect, close, or delete persistent ACP sessions through one action-based entrypoint. Session workspaces may use any host-accessible directory and optional methods are capability-gated.", Annotations: mutatingToolAnnotations(true, true), Availability: requiresACP, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
+		{Name: "acp_session", Title: "Manage ACP sessions", Description: "Inspect or authenticate the configured ACP agent and create, load, resume, fork, configure, list, inspect, close, or delete persistent ACP sessions through one action-based entrypoint. Session workspaces may use any host-accessible directory and optional methods are capability-gated.", UIResourceURI: ACPStatusUIResourceURI, Annotations: mutatingToolAnnotations(true, true), Availability: requiresACP, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.acp.Session(ctx, args)
 		}},
 		{Name: "acp_prompt", Title: "Run ACP prompts", Description: "Start asynchronous ACP prompt turns, poll ordered session events, steer a running turn, or cancel a turn. start returns immediately with a run_id; use action=events for bounded long-poll observation.", Annotations: mutatingToolAnnotations(true, true), Availability: requiresACP, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
@@ -190,9 +187,6 @@ func allToolSpecs() []ToolSpec {
 		{Name: "file_publish", Title: "Publish signed file", Description: "Publish a local file or directory as an immutable Artifact snapshot under ~/.agentdock/public-artifacts. Returns artifact_id and, when a reachable base URL is available, a temporary signed download URL. Directories are packaged as tar.gz.", Annotations: mutatingToolAnnotations(false, true), FileArgRewritePaths: []string{"file"}, Handler: func(ctx context.Context, r *Runtime, args map[string]any) (Result, error) {
 			return r.media.FilePublish(ctx, args)
 		}},
-		{Name: "render_task_progress", Title: "Render task progress", Description: "Render an already-fetched task or task_summary as an optional MCP App view. Call task_manage first; this tool does not read or mutate task state.", OpenAIOutputTemplate: TaskProgressUIResourceURI, UIResourceURI: TaskProgressUIResourceURI, Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).renderTaskProgress)},
-		{Name: "render_file_diff", Title: "Render file diff", Description: "Render an already-fetched unified diff as an optional MCP App view. Obtain the diff from file_edit dry-run, git_read, recall_write diff, or another data tool first; this tool never reads or writes files.", OpenAIOutputTemplate: FileDiffUIResourceURI, UIResourceURI: FileDiffUIResourceURI, Annotations: readOnlyToolAnnotations(false), Handler: toolHandler((*Runtime).renderFileDiff)},
-		{Name: "render_acp_status", Title: "Render ACP status", Description: "Render already-fetched ACP session, prompt, or permission-interaction state as an optional MCP App view. Call acp_session, acp_prompt, or acp_interaction first; this tool never acts on ACP state.", OpenAIOutputTemplate: ACPStatusUIResourceURI, UIResourceURI: ACPStatusUIResourceURI, Annotations: readOnlyToolAnnotations(false), Availability: requiresACP, Handler: toolHandler((*Runtime).renderACPStatus)},
 	})
 }
 

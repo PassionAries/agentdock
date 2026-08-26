@@ -144,6 +144,7 @@ type eventPage struct {
 type Run struct {
 	ID                    string
 	SessionID             string
+	userText              string
 	Status                RunStatus
 	StartedAt             time.Time
 	EndedAt               *time.Time
