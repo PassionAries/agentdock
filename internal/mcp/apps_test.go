@@ -119,6 +119,11 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	if len(tools) != 18 {
 		t.Fatalf("tools/list count = %d, want 18", len(tools))
 	}
+	contextTool := tools["agentdock_context"]
+	if contextTool == nil {
+		t.Fatal("tools/list did not expose agentdock_context")
+	}
+	assertToolUIResource(t, contextTool, app.AgentContextUIResourceURI)
 	fileEditTool := tools["file_edit"]
 	if fileEditTool == nil {
 		t.Fatal("tools/list did not expose file_edit")
@@ -140,10 +145,10 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		}
 		resources[resource.URI] = resource
 	}
-	if len(resources) != 2 {
-		t.Fatalf("resources/list count = %d, want 2", len(resources))
+	if len(resources) != 3 {
+		t.Fatalf("resources/list count = %d, want 3", len(resources))
 	}
-	for _, uri := range []string{app.TaskProgressUIResourceURI, app.FileChangeUIResourceURI} {
+	for _, uri := range []string{app.AgentContextUIResourceURI, app.TaskProgressUIResourceURI, app.FileChangeUIResourceURI} {
 		resource := resources[uri]
 		if resource == nil || resource.MIMEType != mcpAppMIMEType {
 			t.Fatalf("resource %s = %#v", uri, resource)
@@ -161,6 +166,11 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 			`rpcRequest("ui/initialize"`,
 			`protocolVersion:"2026-01-26"`,
 			`rpcNotify("ui/notifications/initialized"`,
+			`rpcNotify("ui/notifications/size-changed",{height})`,
+			`html.style.height="max-content"`,
+			`html.getBoundingClientRect().height`,
+			`new ResizeObserver(reportSize)`,
+			`startAutoResize()`,
 			`message.method==="ui/notifications/tool-result"`,
 			`message.params&&message.params.structuredContent`,
 		} {
@@ -176,6 +186,19 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		assertResourceUIMeta(t, resource.Meta, widgetDomain)
 		assertResourceUIMeta(t, read.Contents[0].Meta, widgetDomain)
 	}
+	contextRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.AgentContextUIResourceURI})
+	if err != nil {
+		t.Fatalf("ReadResource(agent context) error = %v", err)
+	}
+	if len(contextRead.Contents) != 1 {
+		t.Fatalf("agent context resource = %#v", contextRead.Contents)
+	}
+	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionItemCount", `skills+" Skills"`, `mcps+" MCP"`, `workflows+" Workflow"`, `summary.push("Recall")`} {
+		if !strings.Contains(contextRead.Contents[0].Text, marker) {
+			t.Fatalf("agent context resource missing compact summary marker %q", marker)
+		}
+	}
+
 	fileChangeRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.FileChangeUIResourceURI})
 	if err != nil {
 		t.Fatalf("ReadResource(file change) error = %v", err)
@@ -184,7 +207,7 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
 	}
 	fileChangeHTML := fileChangeRead.Contents[0].Text
-	for _, marker := range []string{"background:#fff;color:#111", `<div class="brand">AgentDock</div>`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`} {
+	for _, marker := range []string{"background:#fff;color:#111", `end.append(el("span","brand","AgentDock"))`, ".compact-toggle", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.addEventListener("click"`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`} {
 		if !strings.Contains(fileChangeHTML, marker) {
 			t.Fatalf("file change resource missing simplified UI marker %q", marker)
 		}
@@ -193,13 +216,22 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadResource(task progress) error = %v", err)
 	}
-	for _, marker := range []string{".steps::before", ".step-marker", `status==="completed"?"✓"`} {
+	for _, marker := range []string{".compact-progress", ".progress-fill", ".progress-node.completed", ".progress-node.in-progress", ".progress-node.blocked", `node.title=(step.title||step.id||"Step")+" · "+status`, `fill.style.width="calc((100% - 14px) * "+ratio+")"`, "taskProgress(steps)", ".steps::before", ".step-marker", `status==="completed"?"✓"`} {
 		if len(taskRead.Contents) != 1 || !strings.Contains(taskRead.Contents[0].Text, marker) {
 			t.Fatalf("task resource missing vertical progress marker %q", marker)
 		}
 	}
 	if resources[app.ACPStatusUIResourceURI] != nil {
 		t.Fatal("ACP UI resource should not be listed when ACP is disabled")
+	}
+
+	contextResult, err := harness.session.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "agentdock_context", Arguments: map[string]any{}})
+	if err != nil || contextResult.IsError {
+		t.Fatalf("agentdock_context result=%#v err=%v", contextResult, err)
+	}
+	contextStructured, ok := contextResult.StructuredContent.(map[string]any)
+	if !ok || contextStructured["context"] == nil || len(contextStructured) != 1 {
+		t.Fatalf("agentdock_context structuredContent = %#v", contextResult.StructuredContent)
 	}
 
 	filePath := filepath.Join(root, "note.txt")
@@ -307,7 +339,7 @@ func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
 	if len(read.Contents) != 1 || !strings.Contains(read.Contents[0].Text, "acp_status") {
 		t.Fatalf("ACP resource contents = %#v", read.Contents)
 	}
-	for _, marker := range []string{"message-role", `message.role!=="user"&&message.role!=="assistant"`, "No user or assistant messages in this AgentDock process."} {
+	for _, marker := range []string{"message-role", `message.role!=="user"&&message.role!=="assistant"`, "No user or assistant messages in this AgentDock process.", `compactShell({action:state.action||"status",title:identity}`} {
 		if !strings.Contains(read.Contents[0].Text, marker) {
 			t.Fatalf("ACP resource missing conversation marker %q", marker)
 		}
