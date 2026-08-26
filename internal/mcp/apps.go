@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -19,8 +20,7 @@ type appResourceDefinition struct {
 	HTML        string
 }
 
-func (s *Server) registerAppResources() {
-	widgetDomain := appWidgetDomain(s.cfg.OAuthServerURL)
+func (s *Server) appResourceDefinitions() []appResourceDefinition {
 	definitions := []appResourceDefinition{
 		{
 			URI:         app.TaskProgressUIResourceURI,
@@ -46,8 +46,13 @@ func (s *Server) registerAppResources() {
 			HTML:        mcpAppHTML("acp_status", "ACP status"),
 		})
 	}
+	return definitions
+}
 
-	for _, definition := range definitions {
+func (s *Server) registerAppResources() {
+	widgetDomain := appWidgetDomain(s.cfg.OAuthServerURL)
+
+	for _, definition := range s.appResourceDefinitions() {
 		definition := definition
 		meta := appResourceMeta(widgetDomain)
 		s.sdk.AddResource(&mcpsdk.Resource{
@@ -61,14 +66,39 @@ func (s *Server) registerAppResources() {
 			if request == nil || request.Params == nil || request.Params.URI != definition.URI {
 				return nil, mcpsdk.ResourceNotFoundError(definition.URI)
 			}
-			return &mcpsdk.ReadResourceResult{Contents: []*mcpsdk.ResourceContents{{
-				URI:      definition.URI,
-				MIMEType: mcpAppMIMEType,
-				Text:     definition.HTML,
-				Meta:     appResourceMeta(widgetDomain),
-			}}}, nil
+			return appResourceReadResult(definition, widgetDomain), nil
 		})
 	}
+}
+
+// ReadAppResource exposes only AgentDock-owned MCP App resources to the Nexus bridge.
+// Tool execution and arbitrary local resources are intentionally not routed through this path.
+func (s *Server) ReadAppResource(uri string) (map[string]any, error) {
+	if s == nil || s.runtime == nil {
+		return nil, fmt.Errorf("AgentDock runtime is not initialized")
+	}
+	uri = strings.TrimSpace(uri)
+	for _, definition := range s.appResourceDefinitions() {
+		if definition.URI != uri {
+			continue
+		}
+		meta := appResourceMeta(appWidgetDomain(s.cfg.OAuthServerURL))
+		return map[string]any{
+			"contents": []any{map[string]any{
+				"uri": definition.URI, "mimeType": mcpAppMIMEType, "text": definition.HTML, "_meta": meta,
+			}},
+		}, nil
+	}
+	return nil, fmt.Errorf("MCP App resource not found: %s", uri)
+}
+
+func appResourceReadResult(definition appResourceDefinition, widgetDomain string) *mcpsdk.ReadResourceResult {
+	return &mcpsdk.ReadResourceResult{Contents: []*mcpsdk.ResourceContents{{
+		URI:      definition.URI,
+		MIMEType: mcpAppMIMEType,
+		Text:     definition.HTML,
+		Meta:     appResourceMeta(widgetDomain),
+	}}}
 }
 
 func appResourceMeta(widgetDomain string) mcpsdk.Meta {

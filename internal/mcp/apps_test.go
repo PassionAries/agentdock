@@ -15,6 +15,7 @@ import (
 
 type mcpAppTestHarness struct {
 	runtime    *app.Runtime
+	server     *Server
 	session    *mcpsdk.ClientSession
 	serverDone chan error
 }
@@ -80,7 +81,7 @@ func newMCPAppTestHarness(t *testing.T, cfg config.Config) *mcpAppTestHarness {
 		t.Fatalf("Connect() error = %v", err)
 	}
 
-	harness := &mcpAppTestHarness{runtime: runtime, session: session, serverDone: serverDone}
+	harness := &mcpAppTestHarness{runtime: runtime, server: server, session: session, serverDone: serverDone}
 	t.Cleanup(func() {
 		if err := session.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
@@ -265,6 +266,41 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("task_manage list structuredContent = %#v", listedTasks.StructuredContent)
 	}
 
+}
+
+func TestReadAppResourceForNexusBridge(t *testing.T) {
+	root := t.TempDir()
+	harness := newMCPAppTestHarness(t, config.Config{
+		AgentDockDefaultDir: root,
+		AgentDockHome:       filepath.Join(root, ".agentdock"),
+		OAuthServerURL:      "https://dockmini.example.test/",
+	})
+
+	result, err := harness.server.ReadAppResource(app.FileChangeUIResourceURI)
+	if err != nil {
+		t.Fatalf("ReadAppResource() error = %v", err)
+	}
+	contents, ok := result["contents"].([]any)
+	if !ok || len(contents) != 1 {
+		t.Fatalf("ReadAppResource() contents = %#v", result["contents"])
+	}
+	content, ok := contents[0].(map[string]any)
+	if !ok || content["uri"] != app.FileChangeUIResourceURI || content["mimeType"] != mcpAppMIMEType {
+		t.Fatalf("ReadAppResource() content = %#v", contents[0])
+	}
+	text, _ := content["text"].(string)
+	if !strings.Contains(text, `expectedView="file_change"`) {
+		t.Fatal("ReadAppResource() missing file change UI marker")
+	}
+	meta, ok := content["_meta"].(mcpsdk.Meta)
+	if !ok {
+		t.Fatalf("ReadAppResource() meta = %#v", content["_meta"])
+	}
+	assertResourceUIMeta(t, meta, "https://dockmini.example.test")
+
+	if _, err := harness.server.ReadAppResource("ui://agentdock/not-found"); err == nil {
+		t.Fatal("ReadAppResource() accepted an unknown AgentDock resource")
+	}
 }
 
 func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {

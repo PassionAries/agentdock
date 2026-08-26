@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	protocolVersion = "1"
-	maxMessageBytes = 8 << 20
+	protocolVersion       = "1"
+	maxMessageBytes       = 8 << 20
+	resourceReadOperation = "resource.read"
 )
 
 type message struct {
@@ -118,7 +119,7 @@ func (c *Client) connect(ctx context.Context) error {
 	if err := c.write(socket, message{Type: "node.hello", Protocol: protocolVersion, Hello: &hello{
 		DeviceID: c.identity.DeviceID, Version: buildinfo.Version, ProtocolVersion: protocolVersion,
 		OS: runtime.GOOS, Arch: runtime.GOARCH, Capabilities: tools, ToolContractHash: c.server.ToolContractHash(),
-		Tools: c.server.ToolDescriptors(),
+		Tools: nexusToolDescriptors(c.server.ToolDescriptors()),
 	}}); err != nil {
 		return err
 	}
@@ -186,6 +187,15 @@ func (c *Client) invoke(parent context.Context, socket *websocket.Conn, incoming
 		} else {
 			result, err = c.server.Invoke(ctx, request.Tool, request.Arguments)
 		}
+	case resourceReadOperation:
+		var request struct {
+			URI string `json:"uri"`
+		}
+		if decodeErr := json.Unmarshal(incoming.Arguments, &request); decodeErr != nil {
+			err = fmt.Errorf("解析 MCP App resource 请求: %w", decodeErr)
+		} else {
+			result, err = c.server.ReadAppResource(request.URI)
+		}
 	default:
 		err = fmt.Errorf("不支持的 NexusDock 节点操作: %s", incoming.Operation)
 	}
@@ -194,6 +204,24 @@ func (c *Client) invoke(parent context.Context, socket *websocket.Conn, incoming
 		return
 	}
 	_ = c.write(socket, message{Type: "tool.result", RequestID: incoming.RequestID, Result: result})
+}
+
+func nexusToolDescriptors(descriptors []map[string]any) []map[string]any {
+	for _, descriptor := range descriptors {
+		meta, ok := descriptor["_meta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		ui, ok := meta["ui"].(map[string]any)
+		if !ok {
+			continue
+		}
+		resourceURI, _ := ui["resourceUri"].(string)
+		if strings.HasPrefix(strings.TrimSpace(resourceURI), "ui://agentdock/") {
+			descriptor["nexus_resource_relay"] = true
+		}
+	}
+	return descriptors
 }
 
 func (c *Client) heartbeat(ctx context.Context, socket *websocket.Conn, interval time.Duration) {
