@@ -100,18 +100,26 @@ func TestDynamicMCPToolsStaySeparateAndAppearLightweightInContext(t *testing.T) 
 	if err != nil {
 		t.Fatalf("agentdock_context: %v", err)
 	}
-	if len(contextResult) != 1 {
-		t.Fatalf("agentdock_context should return only context: %#v", contextResult)
+	var contextData capabilityContext
+	if err := remarshal(contextResult, &contextData); err != nil {
+		t.Fatal(err)
 	}
-	contextText, _ := contextResult["context"].(string)
+	if len(contextData.DynamicMCP) != 1 || contextData.DynamicMCP[0].Name != "demo" || contextData.DynamicMCP[0].Description != "Demo external capabilities" {
+		t.Fatalf("dynamic MCP context = %#v", contextData.DynamicMCP)
+	}
+	encodedContext, err := json.Marshal(contextResult)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, forbidden := range []string{upstream.URL, "streamable_http", "demo:echo", "inputSchema"} {
-		if strings.Contains(contextText, forbidden) {
-			t.Fatalf("agentdock_context leaked %q: %s", forbidden, contextText)
+		if strings.Contains(string(encodedContext), forbidden) {
+			t.Fatalf("agentdock_context leaked %q: %s", forbidden, encodedContext)
 		}
 	}
-	for _, required := range []string{"name: demo", "description: Demo external capabilities", "mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call"} {
-		if !strings.Contains(contextText, required) {
-			t.Fatalf("agentdock_context missing %q: %s", required, contextText)
+	rules := strings.Join(contextData.Rules, "\n")
+	for _, required := range []string{"mcp_tool_search", "mcp_tool_inspect", "mcp_tool_call"} {
+		if !strings.Contains(rules, required) {
+			t.Fatalf("agentdock_context rules missing %q: %s", required, rules)
 		}
 	}
 

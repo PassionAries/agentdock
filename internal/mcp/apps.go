@@ -151,9 +151,9 @@ const mcpAppHTMLTemplate = `<!doctype html>
 .detail-panel{border-top:1px solid #ececec;padding:13px 14px 15px;background:transparent}.detail-panel[hidden]{display:none}.headline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 8px}.action{font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#111}.path{min-width:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111;overflow-wrap:anywhere}.arrow{color:#666}.meta{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 8px;font-size:11px;color:#666}.summary{margin:6px 0 0;white-space:pre-wrap;color:#222}.empty{padding:4px 0;color:#666}.waiting-empty{text-align:center}
 .compact-progress{position:relative;height:16px;display:flex;align-items:center;justify-content:space-between;padding:0 4px}.compact-progress::before{content:"";position:absolute;left:7px;right:7px;top:50%;height:1px;background:#d7d7d7;transform:translateY(-50%)}.progress-fill{position:absolute;z-index:0;left:7px;top:50%;height:1.5px;background:#111;transform:translateY(-50%)}.progress-node{position:relative;z-index:1;width:9px;height:9px;border:1.5px solid #aaa;border-radius:50%;background:#fff}.progress-node.completed{border-color:#111;background:#111}.progress-node.in-progress{border-color:#111;box-shadow:0 0 0 2px #fff,0 0 0 3px #111}.progress-node.blocked{border-color:#555;background:#fff}.steps{position:relative;display:grid;gap:0;margin-top:9px}.steps::before{content:"";position:absolute;left:9px;top:10px;bottom:10px;width:1px;background:#ddd}.step{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0}.step-marker{position:relative;z-index:1;width:19px;height:19px;border:1px solid #bbb;border-radius:50%;display:grid;place-items:center;background:#fff;color:#666;font:700 11px/1 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.step.completed .step-marker{border-color:#111;background:#111;color:#fff}.step.in-progress .step-marker{border-color:#111;color:#111}.step.blocked .step-marker{border-color:#777;color:#444}.step-title,.row-title{min-width:0;color:#111}.step-status,.row-status{font-size:11px;color:#666}.rows{display:grid;gap:0;margin-top:8px;border-top:1px solid #eee}.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:7px 0;border-bottom:1px solid #eee}.row-sub{grid-column:1/-1;font-size:11px;color:#666;margin-top:-4px}
 pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padding:8px 0 0;background:#fff;color:#111;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}.diff-line{display:block;min-height:1.45em;padding:0 4px;color:#111}.diff-context{color:#555}.diff-add{color:#315b45;background:#f5fbf7}.diff-del{color:#7a3e39;background:#fff7f6}.messages{display:grid;gap:10px;margin-top:10px}.message{border-left:2px solid #ddd;padding-left:9px}.message.user{border-left-color:#111}.message.assistant{border-left-color:#888}.message-role{margin-bottom:2px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#666}.message-text{white-space:pre-wrap;overflow-wrap:anywhere;color:#111}.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 10px;margin-top:8px}.kv-key{font-size:11px;color:#666}.kv-value{min-width:0;color:#111;overflow-wrap:anywhere}
-.context-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 2px;padding:0 0 12px;border-bottom:1px solid #ececec}.context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid #ececec}.context-overview-card:first-child{padding-left:0}.context-overview-card:last-child{padding-right:0;border-right:0}.context-overview-value{font-size:18px;font-weight:760;line-height:1;color:#111}.context-overview-label{margin-top:4px;font-size:9.5px;color:#888;text-transform:uppercase;letter-spacing:.06em}.context-groups{display:grid;gap:0}.context-section{padding:12px 0 2px}.context-section+.context-section{border-top:1px solid #eee}.context-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:3px}.context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:#111}.context-section-count{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#999}.context-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}.context-item{min-width:0;padding:7px 0;border-bottom:1px solid #f0f0f0}.context-name{font-size:11.5px;font-weight:650;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-desc{margin-top:1px;min-width:0;color:#777;font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-more{grid-column:1/-1;padding:7px 0 4px;color:#888;font-size:10.5px}
-@media(max-width:560px){:root{font-size:12px}.compact-toggle{min-height:62px;padding:9px 11px;gap:5px 9px}.compact-toggle.single-line{min-height:40px;padding-top:8px;padding-bottom:8px}.brand,.compact-action{display:none}.compact-title{font-size:12px;font-weight:700}.compact-summary{font-size:11px;line-height:1.4;-webkit-line-clamp:2}.compact-path{font-size:10.5px}.compact-meta-row,.compact-file-state,.compact-progress-meta{font-size:10px}.compact-file-stat{font-size:9.5px}.context-pill{font-size:9.5px}.compact-progress-row{grid-template-columns:minmax(0,1fr) auto;gap:8px}.compact-progress-meta{max-width:138px}.detail-panel{padding:10px 11px 12px}.headline{gap:6px;margin-bottom:7px}.action{font-size:10.5px}.path{font-size:11px}.meta{gap:8px;margin-bottom:7px;font-size:10px}.summary{font-size:11px;line-height:1.4}.empty{font-size:11px}.step{grid-template-columns:18px minmax(0,1fr) auto;gap:7px;padding:5px 0}.step-marker{width:17px;height:17px;font-size:10px}.step-title,.row-title{font-size:11px}.row-sub{font-size:10px}.row{padding:6px 0}.step-status,.row-status{display:none}pre{font-size:10.5px}.message-role{font-size:9px}.message-text{font-size:11px;line-height:1.4}.kv-key{font-size:10px}.kv-value{font-size:11px}.context-overview-card{padding-left:8px;padding-right:8px}.context-overview-value{font-size:15px}.context-overview-label{font-size:8.5px}.context-section{padding-top:10px}.context-section-title{font-size:10.5px;color:#111}.context-section-count{font-size:9px}.context-list{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px}.context-item{padding:6px 0}.context-name{font-size:10.5px;color:#111}.context-desc{font-size:9.5px;color:#777}.context-more{font-size:9.5px}}
-@media(max-width:400px){:root{font-size:11.5px}.compact-toggle{min-height:58px;padding:8px 10px}.compact-toggle.single-line{min-height:38px}.compact-title{font-size:11.5px}.compact-summary{font-size:10.5px}.compact-progress-meta{display:none}.compact-progress-row{display:block}.compact-file-row{grid-template-columns:minmax(0,1fr) auto;gap:7px}.compact-file-state{display:none}.compact-context .workflow{display:none}.compact-context{gap:5px}.context-pill{padding:2px 5px;font-size:9px}.compact-path{font-size:10px}.detail-panel{padding:9px 10px 11px}.summary,.message-text,.step-title,.row-title,.kv-value{font-size:10.5px}.path{font-size:10.5px}pre{font-size:10px}.context-overview{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:9px}.context-overview-card:nth-child(2){padding-right:0;border-right:0}.context-overview-card:nth-child(3){padding-left:0}.context-list{grid-template-columns:1fr}.context-name,.context-section-title{font-size:10px}.context-desc{font-size:9px}}
+.context-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 2px;padding:0 0 12px;border-bottom:1px solid #ececec}.context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid #ececec}.context-overview-card:first-child{padding-left:0}.context-overview-card:last-child{padding-right:0;border-right:0}.context-overview-value{font-size:18px;font-weight:760;line-height:1;color:#111}.context-overview-label{margin-top:4px;font-size:9.5px;color:#888;text-transform:uppercase;letter-spacing:.06em}.fleet-overview{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:11px}.context-node-tabs{display:flex;justify-content:safe center;gap:7px;overflow-x:auto;padding:0 0 11px;border-bottom:1px solid #ececec;scrollbar-width:none}.context-node-tabs::-webkit-scrollbar{display:none}.context-node-tab{flex:0 0 auto;border:1px solid #e1e1e1;border-radius:8px;padding:7px 9px;background:#fff;color:#555;text-align:center;font:inherit;cursor:pointer}.context-node-tab:hover{border-color:#c8c8c8}.context-node-tab.active{border-color:#111;color:#111}.context-node-tab-name{display:block;font-size:11px;font-weight:700;white-space:nowrap}.context-node-tab-status{display:block;margin-top:1px;font-size:9.5px;color:#888;white-space:nowrap}.context-node-tab.active .context-node-tab-status{color:#555}.context-node-content{padding-top:11px}.context-node-unavailable{padding:9px 0 2px}.context-node-unavailable strong{display:block;font-size:11.5px;color:#111}.context-node-unavailable span{display:block;margin-top:2px;font-size:10.5px;color:#777}.context-groups{display:grid;gap:0}.context-section{padding:12px 0 2px}.context-section+.context-section{border-top:1px solid #eee}.context-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:3px}.context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:#111}.context-section-count{font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#999}.context-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px}.context-item{min-width:0;padding:7px 0;border-bottom:1px solid #f0f0f0}.context-name{font-size:11.5px;font-weight:650;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-desc{margin-top:1px;min-width:0;color:#777;font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-more{grid-column:1/-1;padding:7px 0 4px;color:#888;font-size:10.5px}
+@media(max-width:560px){:root{font-size:12px}.compact-toggle{min-height:62px;padding:9px 11px;gap:5px 9px}.compact-toggle.single-line{min-height:40px;padding-top:8px;padding-bottom:8px}.brand,.compact-action{display:none}.compact-title{font-size:12px;font-weight:700}.compact-summary{font-size:11px;line-height:1.4;-webkit-line-clamp:2}.compact-path{font-size:10.5px}.compact-meta-row,.compact-file-state,.compact-progress-meta{font-size:10px}.compact-file-stat{font-size:9.5px}.context-pill{font-size:9.5px}.compact-progress-row{grid-template-columns:minmax(0,1fr) auto;gap:8px}.compact-progress-meta{max-width:138px}.detail-panel{padding:10px 11px 12px}.headline{gap:6px;margin-bottom:7px}.action{font-size:10.5px}.path{font-size:11px}.meta{gap:8px;margin-bottom:7px;font-size:10px}.summary{font-size:11px;line-height:1.4}.empty{font-size:11px}.step{grid-template-columns:18px minmax(0,1fr) auto;gap:7px;padding:5px 0}.step-marker{width:17px;height:17px;font-size:10px}.step-title,.row-title{font-size:11px}.row-sub{font-size:10px}.row{padding:6px 0}.step-status,.row-status{display:none}pre{font-size:10.5px}.message-role{font-size:9px}.message-text{font-size:11px;line-height:1.4}.kv-key{font-size:10px}.kv-value{font-size:11px}.context-overview-card{padding-left:8px;padding-right:8px}.context-overview-value{font-size:15px}.context-overview-label{font-size:8.5px}.fleet-overview{margin-top:9px}.context-node-tab{padding:6px 8px}.context-node-tab-name{font-size:10.5px}.context-node-tab-status{font-size:9px}.context-node-content{padding-top:9px}.context-node-unavailable strong{font-size:10.5px}.context-node-unavailable span{font-size:9.5px}.context-section{padding-top:10px}.context-section-title{font-size:10.5px;color:#111}.context-section-count{font-size:9px}.context-list{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:12px}.context-item{padding:6px 0}.context-name{font-size:10.5px;color:#111}.context-desc{font-size:9.5px;color:#777}.context-more{font-size:9.5px}}
+@media(max-width:400px){:root{font-size:11.5px}.compact-toggle{min-height:58px;padding:8px 10px}.compact-toggle.single-line{min-height:38px}.compact-title{font-size:11.5px}.compact-summary{font-size:10.5px}.compact-progress-meta{display:none}.compact-progress-row{display:block}.compact-file-row{grid-template-columns:minmax(0,1fr) auto;gap:7px}.compact-file-state{display:none}.compact-context{gap:5px}.context-pill{padding:2px 5px;font-size:9px}.compact-path{font-size:10px}.detail-panel{padding:9px 10px 11px}.summary,.message-text,.step-title,.row-title,.kv-value{font-size:10.5px}.path{font-size:10.5px}pre{font-size:10px}.context-overview{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:9px}.context-overview-card:nth-child(2){padding-right:0;border-right:0}.context-overview-card:nth-child(3){padding-left:0}.context-node-tabs{gap:5px;padding-bottom:9px}.context-node-tab{border-radius:7px;padding:5px 7px}.context-node-tab-name{font-size:10px}.context-node-tab-status{font-size:8.5px}.context-list{grid-template-columns:1fr}.context-name,.context-section-title{font-size:10px}.context-desc{font-size:9px}}
 </style>
 </head>
 <body>
@@ -277,33 +277,9 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     return {};
   }
 
-  function contextSectionLines(text,title){
-    const lines=String(text||"").split("\n");
-    const items=[];let active=false;
-    for(const raw of lines){
-      const line=raw.trim();
-      if(line.startsWith("## ")){
-        if(active)break;
-        active=line==="## "+title;
-        continue;
-      }
-      if(!active||!line.startsWith("- "))continue;
-      if(line.includes("当前没有")||line.includes("暂不可用"))continue;
-      items.push(line.slice(2).trim());
-    }
-    return items;
-  }
-
-  function contextNamedItems(text,title){
-    return contextSectionLines(text,title).map(line=>{
-      const named=line.match(/^name:\s*([^;]+)(?:;\s*description:\s*([^;]*))?/);
-      if(named)return{name:named[1].trim(),description:(named[2]||"").trim()};
-      const agent=line.match(/^agent:\s*(.+)$/);
-      if(agent)return{name:agent[1].trim(),description:"ACP agent"};
-      const separator=line.indexOf("：");
-      if(separator>0)return{name:line.slice(0,separator).trim(),description:line.slice(separator+1).trim()};
-      return{name:line,description:""};
-    });
+  function contextItems(items){
+    if(!Array.isArray(items))return [];
+    return items.filter(isObject).map(item=>({name:String(item.name||"Item"),description:String(item.description||"")}));
   }
 
   function contextPill(value,label,className){
@@ -318,48 +294,122 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     parent.append(card);
   }
 
-  function appendContextSection(parent,title,items,limit){
-    if(!items.length)return;
+  function appendContextSection(parent,title,items,limit,status){
+    if(!items.length&&!status)return;
     const section=el("section","context-section");
     const head=el("div","context-section-head");
-    head.append(el("div","context-section-title",title),el("div","context-section-count",String(items.length)));
+    head.append(el("div","context-section-title",title),el("div","context-section-count",status||String(items.length)));
     section.append(head);
-    const list=el("div","context-list");
-    for(const item of items.slice(0,limit)){
-      const row=el("div","context-item");
-      row.append(el("div","context-name",item.name||"Item"));
-      if(item.description)row.append(el("div","context-desc",item.description));
-      list.append(row);
+    if(items.length){
+      const list=el("div","context-list");
+      for(const item of items.slice(0,limit)){
+        const row=el("div","context-item");
+        row.append(el("div","context-name",item.name||"Item"));
+        if(item.description)row.append(el("div","context-desc",item.description));
+        list.append(row);
+      }
+      if(items.length>limit)list.append(el("div","context-more","还有 "+(items.length-limit)+" 项"));
+      section.append(list);
     }
-    if(items.length>limit)list.append(el("div","context-more","还有 "+(items.length-limit)+" 项"));
-    section.append(list);parent.append(section);
+    parent.append(section);
   }
 
-  function renderAgentContext(data){
-    const text=String(data.context||"");
-    const fragment=document.createDocumentFragment();
-    const skills=contextNamedItems(text,"Skill 能力索引");
-    const mcps=contextNamedItems(text,"动态 MCP 索引");
-    const acp=contextNamedItems(text,"ACP 运行时");
-    const workflows=contextNamedItems(text,"工作流模板索引");
-    const recall=text.includes("## 记忆精简摘要");
+  function appendNodeAgentContext(parent,data){
+    const skills=contextItems(data.skills);
+    const mcps=contextItems(data.dynamic_mcp);
+    const acp=isObject(data.acp)&&data.acp.enabled?[{name:String(data.acp.agent||"ACP"),description:String(data.acp.description||"ACP agent")}]:[];
+    const workflows=contextItems(data.workflow_templates);
+    const recall=isObject(data.recall)&&data.recall.enabled;
 
     const overview=el("div","context-overview");
     appendContextOverview(overview,skills.length,"Skills");
     appendContextOverview(overview,mcps.length,"MCP");
     appendContextOverview(overview,workflows.length,"Workflow");
     appendContextOverview(overview,recall?"ON":"OFF","Recall");
-    fragment.append(overview);
+    parent.append(overview);
+
     const groups=el("div","context-groups");
     appendContextSection(groups,"Skills",skills,10);
     appendContextSection(groups,"MCP",mcps,8);
     appendContextSection(groups,"ACP",acp,4);
     appendContextSection(groups,"Workflow",workflows,8);
-    fragment.append(groups);
+    parent.append(groups);
+    return{skills,mcps,workflows,recall};
+  }
 
+  function renderNodeAgentContext(data){
+    const fragment=document.createDocumentFragment();
+    const summary=appendNodeAgentContext(fragment,data);
     const compact=el("span","compact-context");
-    compact.append(contextPill(skills.length,"Skills"),contextPill(mcps.length,"MCP"),contextPill(workflows.length,"Workflow","workflow"),contextPill(recall?"ON":"OFF","Recall"));
+    compact.append(contextPill(summary.skills.length,"Skills"),contextPill(summary.mcps.length,"MCP"),contextPill(summary.workflows.length,"Workflow","workflow"),contextPill(summary.recall?"ON":"OFF","Recall"));
     compactShell({action:"context",title:"Capabilities"},[compact],fragment);
+  }
+
+  function renderFleetAgentContext(data){
+    const nodes=Array.isArray(data.nodes)?data.nodes.filter(isObject):[];
+    const online=nodes.filter(node=>node.online===true).length;
+    const shared=isObject(data.shared)?data.shared:{};
+    const fragment=document.createDocumentFragment();
+    const tabs=el("div","context-node-tabs");
+    const content=el("div","context-node-content");
+    const buttons=[];
+    const selectNode=index=>{
+      const node=nodes[index];
+      if(!node)return;
+      buttons.forEach((button,buttonIndex)=>{
+        const active=buttonIndex===index;
+        button.classList.toggle("active",active);
+        button.setAttribute("aria-pressed",String(active));
+      });
+      content.replaceChildren();
+      if(!isObject(node.context)||node.error){
+        const unavailable=el("div","context-node-unavailable");
+        unavailable.append(el("strong","",String(node.name||node.node_id||"AgentDock")+" 当前不可用"));
+        unavailable.append(el("span","",String(node.error||(node.online===true?"Context 暂不可用":"AgentDock 节点当前离线"))));
+        content.append(unavailable);
+        requestAnimationFrame(reportSize);
+        return;
+      }
+      // Fleet 只负责选择设备；设备内容继续复用 AgentDock 单节点 Context 视图。
+      appendNodeAgentContext(content,{
+        skills:node.context.skills,
+        dynamic_mcp:node.context.dynamic_mcp,
+        acp:node.context.acp,
+        workflow_templates:shared.workflow_templates,
+        recall:shared.recall,
+        rules:shared.rules,
+        warnings:node.context.warnings
+      });
+      requestAnimationFrame(reportSize);
+    };
+
+    for(const [index,node] of nodes.entries()){
+      const button=el("button","context-node-tab");
+      button.type="button";
+      button.setAttribute("aria-pressed","false");
+      const status=node.error?"不可用":(node.online===true?"在线":"离线");
+      button.append(el("span","context-node-tab-name",node.name||node.node_id||"AgentDock"));
+      button.append(el("span","context-node-tab-status",status));
+      button.addEventListener("click",()=>selectNode(index));
+      buttons.push(button);tabs.append(button);
+    }
+    const fleetOverview=el("div","context-overview fleet-overview");
+    appendContextOverview(fleetOverview,nodes.length,"Devices");
+    appendContextOverview(fleetOverview,online,"Online");
+    fragment.append(tabs,fleetOverview,content);
+
+    const workflowCount=contextItems(shared.workflow_templates).length;
+    const recallEnabled=isObject(shared.recall)&&shared.recall.enabled;
+    const compact=el("span","compact-context");
+    compact.append(contextPill(nodes.length,"Devices"),contextPill(online,"Online"),contextPill(workflowCount,"Workflow"),contextPill(recallEnabled?"ON":"OFF","Recall"));
+    compactShell({action:"context",title:"Capabilities"},[compact],fragment);
+    const initialIndex=Math.max(0,nodes.findIndex(node=>node.online===true&&isObject(node.context)&&!node.error));
+    if(nodes.length)selectNode(initialIndex);
+  }
+
+  function renderAgentContext(data){
+    if(Array.isArray(data.nodes)){renderFleetAgentContext(data);return}
+    renderNodeAgentContext(data);
   }
 
   function renderTask(data){
@@ -501,7 +551,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
   function renderable(data){
     if(!isObject(data))return false;
     if(data.view)return data.view===expectedView;
-    if(expectedView==="agentdock_context")return typeof data.context==="string"&&data.context!=="";
+    if(expectedView==="agentdock_context")return Array.isArray(data.skills)||Array.isArray(data.nodes);
     if(expectedView==="file_change")return typeof data.action==="string"&&(data.path||data.workdir||data.changed!==undefined);
     if(expectedView==="task_progress")return typeof data.action==="string"&&(isObject(data.task)||isObject(data.task_summary)||Array.isArray(data.tasks)||data.task_id);
     if(expectedView==="acp_status")return typeof data.action==="string"&&(isObject(data.session)||Array.isArray(data.sessions)||data.session_id||isObject(data.agent)||data.authenticated!==undefined||data.deleted!==undefined);

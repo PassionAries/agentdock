@@ -11,7 +11,7 @@ import (
 	"github.com/uvwt/agentdock/internal/config"
 )
 
-func TestAgentDockContextToolReturnsRuntimeIndex(t *testing.T) {
+func TestAgentDockContextToolReturnsStructuredRuntimeIndex(t *testing.T) {
 	cfg := config.Config{
 		AgentDockDefaultDir: t.TempDir(),
 		AgentDockHome:       filepath.Join(t.TempDir(), ".agentdock"),
@@ -29,38 +29,35 @@ func TestAgentDockContextToolReturnsRuntimeIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agentdock_context call failed: %v", err)
 	}
-	if len(result) != 1 {
-		t.Fatalf("agentdock_context should return only context: %#v", result)
+	if _, legacy := result["context"]; legacy {
+		t.Fatalf("agentdock_context still exposes legacy Markdown context: %#v", result)
 	}
-	contextText, _ := result["context"].(string)
-	if contextText == "" {
-		t.Fatalf("agentdock_context returned empty context: %#v", result)
+	var got capabilityContext
+	if err := remarshal(result, &got); err != nil {
+		t.Fatal(err)
 	}
-	// Built-in tools come from MCP tools/list; context should not re-list them.
-	if strings.Contains(contextText, "## AgentDock 工具索引") {
-		t.Fatalf("context should not include built-in tool index: %s", contextText)
+	var demo *capabilitySkillItem
+	for index := range got.Skills {
+		if got.Skills[index].Name == "demo-skill" {
+			demo = &got.Skills[index]
+			break
+		}
 	}
-	for _, want := range []string{
-		"## Skill 能力索引",
-		"demo-skill",
-		"Use this Skill for context index tests.",
-		"skill://demo-skill/SKILL.md",
-		"AgentDock 自带工具直接调用",
-		"## 使用规则",
-	} {
-		if !strings.Contains(contextText, want) {
-			t.Fatalf("context missing %q: %s", want, contextText)
+	if demo == nil || demo.Description != "Use this Skill for context index tests." || demo.File != "skill://demo-skill/SKILL.md" {
+		t.Fatalf("structured Skill index missing demo-skill: %#v", got.Skills)
+	}
+	if got.DynamicMCP == nil || got.WorkflowTemplates == nil || got.Rules == nil {
+		t.Fatalf("required structured context fields must be arrays: %#v", got)
+	}
+	rules := strings.Join(got.Rules, "\n")
+	for _, want := range []string{"AgentDock 自带工具直接调用", "task_manage checkpoint"} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("context rules missing %q: %s", want, rules)
 		}
 	}
 	for _, removed := range []string{"skill_read", "skill_run"} {
-		if strings.Contains(contextText, removed) {
-			t.Fatalf("context still references removed model-facing tool %q: %s", removed, contextText)
-		}
-	}
-
-	for _, name := range []string{"ok", "skills", "dynamic_mcp", "generated_at", "summary", "counts", "base_tools", "task_templates", "memory", "rules"} {
-		if _, ok := result[name]; ok {
-			t.Fatalf("agentdock_context exposed unexpected field %q", name)
+		if strings.Contains(rules, removed) {
+			t.Fatalf("context rules still reference removed tool %q: %s", removed, rules)
 		}
 	}
 }
@@ -83,11 +80,12 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	disabledText := disabledResult["context"].(string)
-	for _, hidden := range []string{"## ACP 运行时", "acp_session", "acp_prompt", "acp_interaction", "Agent Client Protocol"} {
-		if strings.Contains(disabledText, hidden) {
-			t.Fatalf("context should hide ACP while disabled: found %q in %s", hidden, disabledText)
-		}
+	var disabledContext capabilityContext
+	if err := remarshal(disabledResult, &disabledContext); err != nil {
+		t.Fatal(err)
+	}
+	if disabledContext.ACP != nil {
+		t.Fatalf("context should omit ACP while disabled: %#v", disabledContext.ACP)
 	}
 
 	executable, err := os.Executable()
@@ -115,47 +113,22 @@ func TestAgentDockContextExposesShortACPOrientationWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enabledText := enabledResult["context"].(string)
-	for _, want := range []string{
-		"## ACP 运行时",
-		"Agent Client Protocol",
-		"仅当用户明确要求时使用",
-		"独特见解",
-		"编排任务",
-		"不是动态 MCP",
-		"mcp_tool_*",
-		"- agent: helper",
-	} {
-		if !strings.Contains(enabledText, want) {
-			t.Fatalf("ACP context missing %q: %s", want, enabledText)
+	var enabledContext capabilityContext
+	if err := remarshal(enabledResult, &enabledContext); err != nil {
+		t.Fatal(err)
+	}
+	if enabledContext.ACP == nil || !enabledContext.ACP.Enabled || enabledContext.ACP.Agent != "helper" {
+		t.Fatalf("ACP context = %#v", enabledContext.ACP)
+	}
+	for _, want := range []string{"Agent Client Protocol", "仅当用户明确要求时使用", "独特见解", "编排任务", "不是动态 MCP", "mcp_tool_*"} {
+		if !strings.Contains(enabledContext.ACP.Description, want) {
+			t.Fatalf("ACP description missing %q: %s", want, enabledContext.ACP.Description)
 		}
 	}
-	// 操作细节留给 acp_* 工具 description，rules 不再复述会话/事件/权限契约。
-	for _, operational := range []string{
-		"acp_session",
-		"acp_prompt",
-		"acp_interaction",
-		"option_id",
-		"always",
-	} {
-		if strings.Contains(enabledText, operational) {
-			t.Fatalf("ACP context should leave %q to tool descriptions: %s", operational, enabledText)
-		}
-	}
-	// section 已说明何时用 ACP；rules 不再重复选型话术。
-	// bootstrap 只做短取向，不展开协议百科或 adapter 目录。
-	for _, longForm := range []string{
-		"需要托管本地 Coding Agent 时走 ACP",
-		"按主机配置拉起 adapter",
-		"多轮编码或排障走当前 agent",
-		"只在需要子 Agent 独立完成一段编码任务时使用",
-		"不要用它编排主任务",
-		"Claude / Codex / Grok",
-		"JSON-RPC",
-		"wire protocol",
-	} {
-		if strings.Contains(enabledText, longForm) {
-			t.Fatalf("ACP context should stay short, found %q: %s", longForm, enabledText)
+	combined := enabledContext.ACP.Description + "\n" + strings.Join(enabledContext.Rules, "\n")
+	for _, operational := range []string{"acp_session", "acp_prompt", "acp_interaction", "option_id", "always", "JSON-RPC", "wire protocol"} {
+		if strings.Contains(combined, operational) {
+			t.Fatalf("ACP bootstrap should leave %q to tool descriptions: %s", operational, combined)
 		}
 	}
 }
@@ -183,32 +156,29 @@ func TestNexusUnavailableHidesWorkflowTemplateCapability(t *testing.T) {
 		t.Fatalf("task_manage should remain available without Nexus: %s", toolNames)
 	}
 
-	if _, err := rt.Call(context.Background(), "workflow_template_manage", map[string]any{"action": "list"}); err == nil {
-		t.Fatal("workflow_template_manage call should be unavailable without Nexus")
-	} else if toolErr, ok := err.(*ToolError); !ok || toolErr.Code != "UNKNOWN_TOOL" {
-		t.Fatalf("workflow_template_manage error = %#v, want UNKNOWN_TOOL", err)
-	}
-
 	result, err := rt.Call(context.Background(), "agentdock_context", map[string]any{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	contextText := result["context"].(string)
-	for _, hidden := range []string{
-		"工作流模板", "workflow_template_manage", "source_template_ids",
-		"记忆精简摘要", "recall_search", "recall_read", "NexusDock Recall 未配置",
-		"Evolution", "自进化",
-	} {
-		if strings.Contains(contextText, hidden) {
-			t.Fatalf("context should hide %q without Nexus: %s", hidden, contextText)
+	var got capabilityContext
+	if err := remarshal(result, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.WorkflowTemplates) != 0 || got.Recall != nil {
+		t.Fatalf("Nexus-only context should be absent without Nexus: %#v", got)
+	}
+	rules := strings.Join(got.Rules, "\n")
+	for _, hidden := range []string{"workflow_template_manage", "source_template_ids", "recall_search", "recall_read"} {
+		if strings.Contains(rules, hidden) {
+			t.Fatalf("context rules should hide %q without Nexus: %s", hidden, rules)
 		}
 	}
-	if !strings.Contains(contextText, "task_manage") {
-		t.Fatalf("context should keep task_manage without Nexus: %s", contextText)
+	if !strings.Contains(rules, "task_manage") {
+		t.Fatalf("context should keep task_manage without Nexus: %s", rules)
 	}
 }
 
-func TestNexusAvailableExposesWorkflowTemplateCapability(t *testing.T) {
+func TestNexusAvailableExposesWorkflowAndRecallContext(t *testing.T) {
 	rt, _ := newCodeToolsRuntime(t)
 
 	toolNames := strings.Join(rt.ToolNames(), "\n")
@@ -220,10 +190,17 @@ func TestNexusAvailableExposesWorkflowTemplateCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contextText := result["context"].(string)
-	for _, want := range []string{"## 工作流模板索引", "workflow_template_manage match", "source_template_ids"} {
-		if !strings.Contains(contextText, want) {
-			t.Fatalf("context missing %q with Nexus: %s", want, contextText)
+	var got capabilityContext
+	if err := remarshal(result, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Recall == nil || !got.Recall.Enabled {
+		t.Fatalf("Nexus context should declare Recall enabled: %#v", got.Recall)
+	}
+	rules := strings.Join(got.Rules, "\n")
+	for _, want := range []string{"workflow_template_manage match", "source_template_ids", "recall_search", "recall_read"} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("context rules missing %q with Nexus: %s", want, rules)
 		}
 	}
 }
@@ -329,9 +306,9 @@ spec:
 		t.Fatal(err)
 	}
 
-	items, _, errText := rt.skillCapabilityIndex()
-	if errText != "" {
-		t.Fatalf("skillCapabilityIndex error = %s", errText)
+	items, err := rt.skillCapabilityIndex()
+	if err != nil {
+		t.Fatalf("skillCapabilityIndex error = %v", err)
 	}
 	if len(items) != 1 || items[0].Name != "document-skill" {
 		t.Fatalf("legacy executable Skill should be omitted from model index: %#v", items)

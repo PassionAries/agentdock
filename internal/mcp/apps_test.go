@@ -195,12 +195,12 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("agent context resource = %#v", contextRead.Contents)
 	}
 	contextHTML := contextRead.Contents[0].Text
-	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionLines", "contextNamedItems", "appendContextOverview", "appendContextSection", "contextPill", `appendContextSection(groups,"Skills"`, `appendContextSection(groups,"MCP"`, `appendContextSection(groups,"ACP"`, `appendContextSection(groups,"Workflow"`, `contextPill(recall?"ON":"OFF","Recall")`, ".context-overview{display:grid;grid-template-columns:repeat(4", ".context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid #ececec", ".context-overview-value{font-size:18px;font-weight:760;line-height:1;color:#111", ".context-section+.context-section{border-top:1px solid #eee", ".context-list{display:grid;grid-template-columns:repeat(2", ".context-item{min-width:0;padding:7px 0;border-bottom:1px solid #f0f0f0", ".context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:#111", ".context-name{font-size:11.5px;font-weight:650;color:#111", ".context-desc{margin-top:1px;min-width:0;color:#777", ".compact-context"} {
+	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "renderNodeAgentContext", "renderFleetAgentContext", "appendNodeAgentContext", "contextItems", "appendContextOverview", "appendContextSection", "contextPill", `contextItems(data.skills)`, `contextItems(data.dynamic_mcp)`, `Array.isArray(data.nodes)`, `const fleetOverview=el("div","context-overview fleet-overview")`, `appendContextOverview(fleetOverview,nodes.length,"Devices")`, `appendContextOverview(fleetOverview,online,"Online")`, `const tabs=el("div","context-node-tabs")`, `fragment.append(tabs,fleetOverview,content)`, `.fleet-overview{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:11px}`, `.context-node-tabs{display:flex;justify-content:safe center`, `.context-node-tab{flex:0 0 auto;border:1px solid #e1e1e1`, `contextPill(workflowCount,"Workflow")`, `contextPill(recallEnabled?"ON":"OFF","Recall")`, `button.addEventListener("click",()=>selectNode(index))`, `appendNodeAgentContext(content,{`, `workflow_templates:shared.workflow_templates`, `node.error?"不可用"`, `.context-node-tab.active{border-color:#111;color:#111}`, `.context-node-content{padding-top:11px}`, ".context-overview{display:grid;grid-template-columns:repeat(4", ".context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid #ececec", ".context-overview-value{font-size:18px;font-weight:760;line-height:1;color:#111", ".context-section+.context-section{border-top:1px solid #eee", ".context-list{display:grid;grid-template-columns:repeat(2", ".context-item{min-width:0;padding:7px 0;border-bottom:1px solid #f0f0f0", ".context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:#111", ".context-name{font-size:11.5px;font-weight:650;color:#111", ".context-desc{margin-top:1px;min-width:0;color:#777", ".compact-context"} {
 		if !strings.Contains(contextHTML, marker) {
 			t.Fatalf("agent context resource missing structured summary marker %q", marker)
 		}
 	}
-	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionItemCount", ".context-overview-card{padding:10px 11px", ".context-item{min-width:0;padding:8px 9px;border-radius:9px;background:#f8f8f8"} {
+	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionLines", "contextNamedItems", `String(data.context||"")`, ".context-overview-card{padding:10px 11px", ".context-item{min-width:0;padding:8px 9px;border-radius:9px;background:#f8f8f8"} {
 		if strings.Contains(contextHTML, rawMarker) {
 			t.Fatalf("agent context resource still renders raw context marker %q", rawMarker)
 		}
@@ -257,8 +257,16 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("agentdock_context result=%#v err=%v", contextResult, err)
 	}
 	contextStructured, ok := contextResult.StructuredContent.(map[string]any)
-	if !ok || contextStructured["context"] == nil || len(contextStructured) != 1 {
+	if !ok {
 		t.Fatalf("agentdock_context structuredContent = %#v", contextResult.StructuredContent)
+	}
+	for _, field := range []string{"skills", "dynamic_mcp", "workflow_templates", "rules"} {
+		if contextStructured[field] == nil {
+			t.Fatalf("agentdock_context structuredContent missing %s: %#v", field, contextStructured)
+		}
+	}
+	if contextStructured["context"] != nil {
+		t.Fatalf("agentdock_context structuredContent still contains legacy Markdown context: %#v", contextStructured)
 	}
 
 	filePath := filepath.Join(root, "note.txt")

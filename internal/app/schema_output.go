@@ -46,8 +46,49 @@ func OutputSchema(name string) map[string]any {
 		props["auth_enabled"] = boolProp("Whether MCP authentication is required.")
 		props["endpoint_path"] = stringProp("HTTP path used by the MCP endpoint.")
 	case "agentdock_context":
-		required = []string{"context"}
-		props["context"] = stringProp("Rendered AgentDock bootstrap context text for clients that cannot inject system prompt context.")
+		required = []string{"skills", "dynamic_mcp", "workflow_templates", "rules"}
+		props["skills"] = map[string]any{
+			"type": "array", "description": "Installed document Skill capability index.",
+			"items": map[string]any{"type": "object", "properties": map[string]any{
+				"name": stringProp("Skill name."), "description": stringProp("Short capability description."),
+				"file": stringProp("skill:// URI for the active SKILL.md."), "bundled": boolProp("Whether the Skill is bundled by AgentDock."),
+			}, "required": []string{"name", "description", "file"}, "additionalProperties": false},
+		}
+		props["dynamic_mcp"] = map[string]any{
+			"type": "array", "description": "Enabled dynamic MCP server capability index.",
+			"items": map[string]any{"type": "object", "properties": map[string]any{
+				"name": stringProp("Dynamic MCP server name."), "description": stringProp("Short capability description."),
+			}, "required": []string{"name", "description"}, "additionalProperties": false},
+		}
+		props["acp"] = map[string]any{
+			"type": "object", "description": "Local ACP runtime orientation when ACP is enabled.",
+			"properties": map[string]any{
+				"enabled": boolProp("Whether ACP is enabled."), "agent": stringProp("Configured ACP agent name."),
+				"description": stringProp("Short ACP usage orientation."),
+			}, "required": []string{"enabled", "agent", "description"}, "additionalProperties": false,
+		}
+		props["workflow_templates"] = map[string]any{
+			"type": "array", "description": "Active NexusDock Workflow template index; empty when Nexus is unavailable.",
+			"items": map[string]any{"type": "object", "properties": map[string]any{
+				"name": stringProp("Workflow template id."), "description": stringProp("Workflow template title."),
+			}, "required": []string{"name"}, "additionalProperties": false},
+		}
+		props["recall"] = map[string]any{
+			"type": "object", "description": "High-priority NexusDock Recall index when Nexus is configured.",
+			"properties": map[string]any{
+				"enabled": boolProp("Whether NexusDock Recall context is configured."),
+				"items": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+					"name": stringProp("Recall path or runbook title."), "description": stringProp("Short excerpt or Recall path."),
+				}, "required": []string{"name"}, "additionalProperties": false}},
+			}, "required": []string{"enabled", "items"}, "additionalProperties": false,
+		}
+		props["rules"] = map[string]any{"type": "array", "description": "Operational rules for using this AgentDock runtime.", "items": map[string]any{"type": "string"}}
+		props["warnings"] = map[string]any{
+			"type": "array", "description": "Best-effort context sections that could not be loaded.",
+			"items": map[string]any{"type": "object", "properties": map[string]any{
+				"source": stringProp("Context section identifier."), "message": stringProp("Safe warning message."),
+			}, "required": []string{"source", "message"}, "additionalProperties": false},
+		}
 	case "read_file":
 		props["path"] = stringProp("Host path or skill:// resource URI. Relative Host paths resolve from ~/AgentDock.")
 		props["content"] = stringProp("Text content slice.")

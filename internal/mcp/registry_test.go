@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -93,39 +94,36 @@ func TestRuntimeExposesSingleToolSet(t *testing.T) {
 	}
 }
 
-func TestAgentDockContextSchemaIsModelFacingEntrypoint(t *testing.T) {
+func TestAgentDockContextSchemaIsStructuredEntrypoint(t *testing.T) {
 	def, ok := toolDefinition("agentdock_context")
 	if !ok {
 		t.Fatal("agentdock_context definition missing")
 	}
-	if !strings.Contains(def.Description, "clients that cannot inject system prompt context") {
-		t.Fatalf("agentdock_context description should explain model-facing use: %q", def.Description)
+	if !strings.Contains(def.Description, "structured AgentDock bootstrap context") {
+		t.Fatalf("agentdock_context description should explain structured bootstrap use: %q", def.Description)
 	}
 
 	inputProps := schemaProperties(t, "agentdock_context")
 	if len(inputProps) != 0 {
-		t.Fatalf("agentdock_context input schema should not expose legacy refresh: %#v", inputProps)
+		t.Fatalf("agentdock_context input schema should not expose node-local selectors: %#v", inputProps)
 	}
-	outputProps, ok := outputSchema("agentdock_context")["properties"].(map[string]any)
+	output := outputSchema("agentdock_context")
+	outputProps, ok := output["properties"].(map[string]any)
 	if !ok {
 		t.Fatal("agentdock_context output schema properties missing")
 	}
-	if _, ok := outputProps["context"]; !ok {
-		t.Fatal("agentdock_context output schema missing context")
-	}
-	if len(outputProps) != 1 {
-		t.Fatalf("agentdock_context output schema should expose only context: %#v", outputProps)
-	}
-	for _, name := range []string{"ok", "skills", "dynamic_mcp", "generated_at", "summary", "counts", "base_tools", "task_templates", "memory", "rules"} {
-		if _, ok := outputProps[name]; ok {
-			t.Fatalf("agentdock_context output schema should not expose non-context field %q", name)
+	for _, name := range []string{"skills", "dynamic_mcp", "acp", "workflow_templates", "recall", "rules", "warnings"} {
+		if _, ok := outputProps[name]; !ok {
+			t.Fatalf("agentdock_context output schema missing %q: %#v", name, outputProps)
 		}
 	}
-	required, ok := outputSchema("agentdock_context")["required"].([]string)
-	if !ok || len(required) != 1 || required[0] != "context" {
-		t.Fatalf("agentdock_context output schema required = %#v, want [context]", required)
+	if _, legacy := outputProps["context"]; legacy {
+		t.Fatalf("agentdock_context output schema still exposes legacy Markdown context: %#v", outputProps)
 	}
-
+	required, ok := output["required"].([]string)
+	if !ok || !reflect.DeepEqual(required, []string{"skills", "dynamic_mcp", "workflow_templates", "rules"}) {
+		t.Fatalf("agentdock_context output schema required = %#v", output["required"])
+	}
 }
 
 func TestNexusDockRecallToolNamesHideLegacyMemoryTools(t *testing.T) {
