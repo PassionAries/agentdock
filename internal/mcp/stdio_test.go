@@ -60,42 +60,66 @@ func TestServeStdioRejectsUninitializedServer(t *testing.T) {
 	}
 }
 
-func TestServeStdioAdvertisesBaseAndOperatorInstructions(t *testing.T) {
-	server := NewServer(nil, config.Config{Instructions: "Use absolute paths under /srv."})
-	clientInput, serverOutput := io.Pipe()
-	serverInput, clientOutput := io.Pipe()
-	serverDone := make(chan error, 1)
-	go func() {
-		serverDone <- server.ServeStdio(serverInput, serverOutput)
-	}()
+func TestServeStdioAdvertisesContextAwareInstructions(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        config.Config
+		wantPrefix string
+	}{
+		{
+			name:       "without Nexus",
+			cfg:        config.Config{Instructions: "Use absolute paths under /srv."},
+			wantPrefix: baseServerInstructions,
+		},
+		{
+			name: "with Nexus",
+			cfg: config.Config{
+				NexusEndpoint: "http://127.0.0.1:18777",
+				Instructions:  "Use absolute paths under /srv.",
+			},
+			wantPrefix: nexusServerInstructions,
+		},
+	}
 
-	client := mcpsdk.NewClient(
-		&mcpsdk.Implementation{Name: "agentdock-test", Version: "1.0.0"},
-		&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
-	)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	session, err := client.Connect(ctx, &mcpsdk.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
-	if err != nil {
-		t.Fatalf("Connect() error = %v", err)
-	}
-	result := session.InitializeResult()
-	if result == nil || !strings.HasPrefix(result.Instructions, baseServerInstructions) {
-		t.Fatalf("InitializeResult() = %#v, want AgentDock base instructions first", result)
-	}
-	if !strings.Contains(result.Instructions, "Additional operator instructions:\nUse absolute paths under /srv.") {
-		t.Fatalf("InitializeResult() = %#v, want operator instructions appended", result)
-	}
-	if err := session.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
-	}
-	select {
-	case err := <-serverDone:
-		if err != nil {
-			t.Fatalf("ServeStdio() error = %v", err)
-		}
-	case <-ctx.Done():
-		t.Fatal("ServeStdio() did not stop after client close")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := NewServer(nil, test.cfg)
+			clientInput, serverOutput := io.Pipe()
+			serverInput, clientOutput := io.Pipe()
+			serverDone := make(chan error, 1)
+			go func() {
+				serverDone <- server.ServeStdio(serverInput, serverOutput)
+			}()
+
+			client := mcpsdk.NewClient(
+				&mcpsdk.Implementation{Name: "agentdock-test", Version: "1.0.0"},
+				&mcpsdk.ClientOptions{Capabilities: &mcpsdk.ClientCapabilities{}},
+			)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			session, err := client.Connect(ctx, &mcpsdk.IOTransport{Reader: clientInput, Writer: clientOutput}, nil)
+			if err != nil {
+				t.Fatalf("Connect() error = %v", err)
+			}
+			result := session.InitializeResult()
+			if result == nil || !strings.HasPrefix(result.Instructions, test.wantPrefix) {
+				t.Fatalf("InitializeResult() = %#v, want %q first", result, test.wantPrefix)
+			}
+			if !strings.Contains(result.Instructions, "Additional operator instructions:\nUse absolute paths under /srv.") {
+				t.Fatalf("InitializeResult() = %#v, want operator instructions appended", result)
+			}
+			if err := session.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			select {
+			case err := <-serverDone:
+				if err != nil {
+					t.Fatalf("ServeStdio() error = %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("ServeStdio() did not stop after client close")
+			}
+		})
 	}
 }
 

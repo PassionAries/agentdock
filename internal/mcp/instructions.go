@@ -2,12 +2,19 @@ package mcp
 
 import "strings"
 
-const baseServerInstructions = "For substantial AgentDock, project, deployment, or debugging work, call agentdock_context first. Inspect real state before modifying it. For dynamic MCP, use mcp_tool_search, then mcp_tool_inspect, then mcp_tool_call. Use task_manage for multi-step work and recall_bootstrap when Nexus Recall is available. Never expose secrets."
+const (
+	baseServerInstructions  = "优先调用 `agentdock_context` 获取可用于操作用户设备的核心能力、Skill、动态 MCP 和重要上下文。处理多步骤任务时使用 `task_manage` 记录和维护任务进度。根据用户需求选择合适的能力检查、操作和验证设备状态。"
+	nexusServerInstructions = "优先调用 `agentdock_context` 获取可用于操作用户设备的核心能力、Skill、动态 MCP、Workflow 模板、重要上下文和长期记忆索引。需要查找或读取长期记忆时使用 `recall_*`；需要查找或使用 Workflow 模板时使用 `workflow_template_manage`；处理多步骤任务时使用 `task_manage` 记录和维护任务进度。根据用户需求选择合适的能力检查、操作和验证设备状态。"
+)
 
-func serverInstructions(custom string) string {
+func serverInstructions(nexusEnabled bool, custom string) string {
+	instructions := baseServerInstructions
+	if nexusEnabled {
+		instructions = nexusServerInstructions
+	}
 	custom = strings.TrimSpace(custom)
 	if custom == "" {
-		return baseServerInstructions
+		return instructions
 	}
-	return baseServerInstructions + "\n\nAdditional operator instructions:\n" + custom
+	return instructions + "\n\nAdditional operator instructions:\n" + custom
 }
