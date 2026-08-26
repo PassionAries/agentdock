@@ -193,9 +193,15 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	if len(contextRead.Contents) != 1 {
 		t.Fatalf("agent context resource = %#v", contextRead.Contents)
 	}
-	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionItemCount", `skills+" Skills"`, `mcps+" MCP"`, `workflows+" Workflow"`, `summary.push("Recall")`} {
-		if !strings.Contains(contextRead.Contents[0].Text, marker) {
-			t.Fatalf("agent context resource missing compact summary marker %q", marker)
+	contextHTML := contextRead.Contents[0].Text
+	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionLines", "contextNamedItems", "appendContextStat", "appendContextSection", `appendContextSection(fragment,"Skills"`, `appendContextSection(fragment,"MCP"`, `appendContextSection(fragment,"ACP"`, `appendContextSection(fragment,"Workflow"`, `recall?"Recall":"No Recall"`} {
+		if !strings.Contains(contextHTML, marker) {
+			t.Fatalf("agent context resource missing structured summary marker %q", marker)
+		}
+	}
+	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionItemCount"} {
+		if strings.Contains(contextHTML, rawMarker) {
+			t.Fatalf("agent context resource still renders raw context marker %q", rawMarker)
 		}
 	}
 
@@ -207,9 +213,14 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
 	}
 	fileChangeHTML := fileChangeRead.Contents[0].Text
-	for _, marker := range []string{"background:#fff;color:#111", `end.append(el("span","brand","AgentDock"))`, ".compact-toggle", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.addEventListener("click"`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`} {
+	for _, marker := range []string{"body{margin:0;padding:0;background:transparent", ".compact-toggle{width:100%;min-height:64px;border:0", ".compact-toggle.single-line{min-height:42px", ".compact-secondary", `end.append(el("span","brand","AgentDock"))`, ".detail-panel{border-top:1px solid #ececec", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.classList.add("single-line")`, `toggle.addEventListener("click"`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`} {
 		if !strings.Contains(fileChangeHTML, marker) {
 			t.Fatalf("file change resource missing simplified UI marker %q", marker)
+		}
+	}
+	for _, nestedFrame := range []string{"border:1px solid #dedede", "border-radius:999px"} {
+		if strings.Contains(fileChangeHTML, nestedFrame) {
+			t.Fatalf("file change resource still contains nested frame marker %q", nestedFrame)
 		}
 	}
 	taskRead, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: app.TaskProgressUIResourceURI})

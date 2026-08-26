@@ -116,10 +116,10 @@ const mcpAppHTMLTemplate = `<!doctype html>
 <title>{{TITLE}}</title>
 <style>
 :root{color-scheme:light;font:13px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-*{box-sizing:border-box}body{margin:0;padding:6px 8px;background:#fff;color:#111}main{background:#fff;color:#111}.compact-toggle{width:100%;min-height:40px;border:1px solid #dedede;border-radius:999px;padding:7px 12px;background:#fff;color:#111;display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,260px) auto;gap:12px;align-items:center;text-align:left;font:inherit;cursor:pointer}.compact-toggle:hover{background:#fafafa}.compact-toggle.expanded{border-radius:10px 10px 0 0}.compact-primary{display:flex;min-width:0;gap:7px;align-items:center}.compact-action{flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.compact-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compact-meta{min-width:0;font-size:11px;color:#666;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.compact-end{display:flex;align-items:center;gap:8px;white-space:nowrap}.brand{font-weight:800;letter-spacing:.01em}.chevron{width:8px;height:8px;border-right:1.5px solid #555;border-bottom:1.5px solid #555;transform:rotate(45deg);transition:transform .15s ease;margin:-3px 2px 0 0}.expanded .chevron{transform:rotate(225deg);margin:3px 2px 0 0}.detail-panel{border:1px solid #e5e5e5;border-top:0;border-radius:0 0 10px 10px;padding:12px 13px;background:#fff}.detail-panel[hidden]{display:none}.headline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 8px}.action{font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#111}.path{min-width:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111;overflow-wrap:anywhere}.arrow{color:#666}.meta{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 8px;font-size:11px;color:#666}.summary{margin:6px 0 0;white-space:pre-wrap;color:#222}.empty{padding:4px 0;color:#666}
+*{box-sizing:border-box}body{margin:0;padding:0;background:transparent;color:#111}main{background:transparent;color:#111}.compact-toggle{width:100%;min-height:64px;border:0;border-radius:0;padding:10px 14px;background:transparent;color:#111;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;gap:6px 12px;align-items:center;text-align:left;font:inherit;cursor:pointer}.compact-toggle:hover{background:#fafafa}.compact-toggle.single-line{min-height:42px;grid-template-rows:auto;padding-top:8px;padding-bottom:8px}.compact-primary{display:flex;min-width:0;gap:7px;align-items:center}.compact-action{flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.compact-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compact-secondary{grid-column:1/-1;min-width:0;display:flex;gap:12px;align-items:center}.compact-middle{flex:1 1 52%;min-width:120px}.compact-meta{min-width:0;font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.compact-secondary>.compact-meta{flex:1 1 auto;text-align:right}.compact-end{display:flex;align-items:center;gap:8px;white-space:nowrap}.brand{font-weight:800;letter-spacing:.01em}.chevron{width:8px;height:8px;border-right:1.5px solid #555;border-bottom:1.5px solid #555;transform:rotate(45deg);transition:transform .15s ease;margin:-3px 2px 0 0}.expanded .chevron{transform:rotate(225deg);margin:3px 2px 0 0}.detail-panel{border-top:1px solid #ececec;padding:12px 14px 14px;background:transparent}.detail-panel[hidden]{display:none}.headline{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:0 0 8px}.action{font-weight:800;letter-spacing:.035em;text-transform:uppercase;color:#111}.path{min-width:0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#111;overflow-wrap:anywhere}.arrow{color:#666}.meta{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 8px;font-size:11px;color:#666}.summary{margin:6px 0 0;white-space:pre-wrap;color:#222}.empty{padding:4px 0;color:#666}
 .compact-progress{position:relative;height:16px;display:flex;align-items:center;justify-content:space-between;padding:0 4px}.compact-progress::before{content:"";position:absolute;left:7px;right:7px;top:50%;height:1px;background:#d7d7d7;transform:translateY(-50%)}.progress-fill{position:absolute;z-index:0;left:7px;top:50%;height:1.5px;background:#111;transform:translateY(-50%)}.progress-node{position:relative;z-index:1;width:9px;height:9px;border:1.5px solid #aaa;border-radius:50%;background:#fff}.progress-node.completed{border-color:#111;background:#111}.progress-node.in-progress{border-color:#111;box-shadow:0 0 0 2px #fff,0 0 0 3px #111}.progress-node.blocked{border-color:#555;background:#fff}.steps{position:relative;display:grid;gap:0;margin-top:9px}.steps::before{content:"";position:absolute;left:9px;top:10px;bottom:10px;width:1px;background:#ddd}.step{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0}.step-marker{position:relative;z-index:1;width:19px;height:19px;border:1px solid #bbb;border-radius:50%;display:grid;place-items:center;background:#fff;color:#666;font:700 11px/1 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.step.completed .step-marker{border-color:#111;background:#111;color:#fff}.step.in-progress .step-marker{border-color:#111;color:#111}.step.blocked .step-marker{border-color:#777;color:#444}.step-title,.row-title{min-width:0;color:#111}.step-status,.row-status{font-size:11px;color:#666}.rows{display:grid;gap:0;margin-top:8px;border-top:1px solid #eee}.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:7px 0;border-bottom:1px solid #eee}.row-sub{grid-column:1/-1;font-size:11px;color:#666;margin-top:-4px}
-pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padding:8px 0 0;background:#fff;color:#111;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}.diff-line{display:block;min-height:1.45em;padding:0 4px;color:#111}.diff-context{color:#555}.diff-add{color:#315b45;background:#f5fbf7}.diff-del{color:#7a3e39;background:#fff7f6}.messages{display:grid;gap:10px;margin-top:10px}.message{border-left:2px solid #ddd;padding-left:9px}.message.user{border-left-color:#111}.message.assistant{border-left-color:#888}.message-role{margin-bottom:2px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#666}.message-text{white-space:pre-wrap;overflow-wrap:anywhere;color:#111}.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 10px;margin-top:8px}.kv-key{font-size:11px;color:#666}.kv-value{min-width:0;color:#111;overflow-wrap:anywhere}
-@media(max-width:560px){.compact-toggle{grid-template-columns:minmax(0,1fr) auto}.compact-progress{grid-column:1/-1;grid-row:2}.compact-meta{display:none}}
+pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padding:8px 0 0;background:#fff;color:#111;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}.diff-line{display:block;min-height:1.45em;padding:0 4px;color:#111}.diff-context{color:#555}.diff-add{color:#315b45;background:#f5fbf7}.diff-del{color:#7a3e39;background:#fff7f6}.messages{display:grid;gap:10px;margin-top:10px}.message{border-left:2px solid #ddd;padding-left:9px}.message.user{border-left-color:#111}.message.assistant{border-left-color:#888}.message-role{margin-bottom:2px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#666}.message-text{white-space:pre-wrap;overflow-wrap:anywhere;color:#111}.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 10px;margin-top:8px}.kv-key{font-size:11px;color:#666}.kv-value{min-width:0;color:#111;overflow-wrap:anywhere}.context-stats{display:flex;flex-wrap:wrap;gap:18px;padding:2px 0 12px;border-bottom:1px solid #eee}.context-stat{min-width:72px}.context-stat-value{font-size:18px;font-weight:750;line-height:1.1}.context-stat-label{margin-top:3px;font-size:10px;color:#666;text-transform:uppercase;letter-spacing:.05em}.context-section{padding-top:12px}.context-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}.context-section-title{font-weight:750}.context-section-count{font-size:11px;color:#777}.context-list{display:grid;gap:0;border-top:1px solid #eee}.context-item{display:grid;grid-template-columns:minmax(110px,180px) minmax(0,1fr);gap:12px;padding:7px 0;border-bottom:1px solid #eee}.context-name{font-weight:650;overflow-wrap:anywhere}.context-desc{min-width:0;color:#555;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.context-more{padding:7px 0;color:#777;font-size:11px}
+@media(max-width:560px){.compact-toggle{grid-template-columns:minmax(0,1fr) auto;padding:9px 12px}.compact-secondary{gap:8px}.compact-middle{min-width:96px}.compact-secondary>.compact-meta{text-align:left}.context-item{grid-template-columns:1fr;gap:2px}.context-stats{gap:12px}}
 </style>
 </head>
 <body>
@@ -174,12 +174,18 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     if(primary.action)primaryWrap.append(el("strong","compact-action",actionLabel(primary.action)));
     primaryWrap.append(el("span","compact-title",primary.title||"AgentDock"));
     toggle.append(primaryWrap);
-    if(middle)toggle.append(middle);else toggle.append(el("span","compact-meta",meta||""));
     const end=el("span","compact-end");
-    if(middle&&meta)end.append(el("span","compact-meta",meta));
     end.append(el("span","brand","AgentDock"));end.append(el("span","chevron"));toggle.append(end);
+    if(middle||meta){
+      const secondary=el("span","compact-secondary");
+      if(middle){middle.classList.add("compact-middle");secondary.append(middle)}
+      if(meta)secondary.append(el("span","compact-meta",meta));
+      toggle.append(secondary);
+    }else{
+      toggle.classList.add("single-line");
+    }
     const panel=el("div","detail-panel");panel.hidden=true;panel.append(details);
-    toggle.addEventListener("click",()=>{const expanded=toggle.getAttribute("aria-expanded")==="true";toggle.setAttribute("aria-expanded",String(!expanded));toggle.classList.toggle("expanded",!expanded);panel.hidden=expanded});
+    toggle.addEventListener("click",()=>{const expanded=toggle.getAttribute("aria-expanded")==="true";toggle.setAttribute("aria-expanded",String(!expanded));toggle.classList.toggle("expanded",!expanded);panel.hidden=expanded;requestAnimationFrame(reportSize)});
     wrapper.append(toggle,panel);root.replaceChildren(wrapper);
   }
 
@@ -239,9 +245,9 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     return {};
   }
 
-  function contextSectionItemCount(text,title){
+  function contextSectionLines(text,title){
     const lines=String(text||"").split("\n");
-    let active=false,count=0;
+    const items=[];let active=false;
     for(const raw of lines){
       const line=raw.trim();
       if(line.startsWith("## ")){
@@ -251,21 +257,65 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
       }
       if(!active||!line.startsWith("- "))continue;
       if(line.includes("当前没有")||line.includes("暂不可用"))continue;
-      count++;
+      items.push(line.slice(2).trim());
     }
-    return count;
+    return items;
+  }
+
+  function contextNamedItems(text,title){
+    return contextSectionLines(text,title).map(line=>{
+      const named=line.match(/^name:\s*([^;]+)(?:;\s*description:\s*([^;]*))?/);
+      if(named)return{name:named[1].trim(),description:(named[2]||"").trim()};
+      const agent=line.match(/^agent:\s*(.+)$/);
+      if(agent)return{name:agent[1].trim(),description:"ACP agent"};
+      const separator=line.indexOf("：");
+      if(separator>0)return{name:line.slice(0,separator).trim(),description:line.slice(separator+1).trim()};
+      return{name:line,description:""};
+    });
+  }
+
+  function appendContextStat(parent,value,label){
+    const stat=el("div","context-stat");
+    stat.append(el("div","context-stat-value",value),el("div","context-stat-label",label));
+    parent.append(stat);
+  }
+
+  function appendContextSection(parent,title,items,limit){
+    if(!items.length)return;
+    const section=el("section","context-section");
+    const head=el("div","context-section-head");
+    head.append(el("div","context-section-title",title),el("div","context-section-count",String(items.length)));
+    section.append(head);
+    const list=el("div","context-list");
+    for(const item of items.slice(0,limit)){
+      const row=el("div","context-item");
+      row.append(el("div","context-name",item.name||"Item"));
+      row.append(el("div","context-desc",item.description||"Available"));
+      list.append(row);
+    }
+    if(items.length>limit)list.append(el("div","context-more","还有 "+(items.length-limit)+" 项"));
+    section.append(list);parent.append(section);
   }
 
   function renderAgentContext(data){
     const text=String(data.context||"");
     const fragment=document.createDocumentFragment();
-    fragment.append(el("pre","context-text",text));
-    const skills=contextSectionItemCount(text,"Skill 能力索引");
-    const mcps=contextSectionItemCount(text,"动态 MCP 索引");
-    const workflows=contextSectionItemCount(text,"工作流模板索引");
-    const summary=[skills+" Skills",mcps+" MCP"];
-    if(text.includes("## 工作流模板索引"))summary.push(workflows+" Workflow");
-    if(text.includes("## 记忆精简摘要"))summary.push("Recall");
+    const skills=contextNamedItems(text,"Skill 能力索引");
+    const mcps=contextNamedItems(text,"动态 MCP 索引");
+    const acp=contextNamedItems(text,"ACP 运行时");
+    const workflows=contextNamedItems(text,"工作流模板索引");
+    const recall=text.includes("## 记忆精简摘要");
+    const stats=el("div","context-stats");
+    appendContextStat(stats,skills.length,"Skills");
+    appendContextStat(stats,mcps.length,"MCP");
+    appendContextStat(stats,workflows.length,"Workflow");
+    appendContextStat(stats,recall?"ON":"OFF","Recall");
+    fragment.append(stats);
+    appendContextSection(fragment,"Skills",skills,12);
+    appendContextSection(fragment,"MCP",mcps,8);
+    appendContextSection(fragment,"ACP",acp,4);
+    appendContextSection(fragment,"Workflow",workflows,10);
+    const summary=[skills.length+" Skills",mcps.length+" MCP",workflows.length+" Workflow",recall?"Recall":"No Recall"];
     compactShell({action:"context",title:"AgentDock Context"},null,summary.join(" · "),fragment);
   }
 
@@ -285,7 +335,10 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
         rows.append(row);
       }
       if(rows.childNodes.length)fragment.append(rows);else fragment.append(el("div","empty","No tasks."));
-      compactShell({action:data.action||"list",title:String(count)+" tasks"},null,"",fragment);return;
+      const first=data.tasks.find(task=>isObject(task));
+      const current=first&&isObject(first.current_step)?first.current_step:null;
+      const listMeta=current?(current.title||current.id||""):first?(first.status||""):"";
+      compactShell({action:data.action||"list",title:String(count)+" tasks"},null,listMeta,fragment);return;
     }
 
     const task=taskRecord(data);
@@ -297,7 +350,9 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     metaLine(fragment,[task.status||task.phase||data.review_status,total>0?completed+" / "+total+" steps":"",data.final_review&&data.final_review.status?"review "+data.final_review.status:""]);
     if(typeof task.summary==="string"&&task.summary)fragment.append(el("p","summary",task.summary));
     if(steps.length){const list=el("div","steps");for(const step of steps){if(!isObject(step))continue;const status=String(step.status||"pending");const statusClass=status==="in_progress"?"in-progress":status;const row=el("div","step "+statusClass);const marker=el("div","step-marker",status==="completed"?"✓":status==="in_progress"?"●":status==="blocked"?"!":"");row.append(marker);row.append(el("div","step-title",step.title||step.id||"Step"));row.append(el("div","step-status",status));list.append(row)}fragment.append(list)}
-    compactShell({action:data.action||"task",title},taskProgress(steps),total>0?completed+" / "+total:task.status||task.phase||"",fragment);
+    const activeStep=steps.find(step=>isObject(step)&&(step.status==="in_progress"||step.status==="blocked"))||(isObject(task.current_step)?task.current_step:null);
+    const compactMeta=[activeStep?(activeStep.title||activeStep.id||""):"",total>0?completed+" / "+total:task.status||task.phase||""].filter(Boolean).join(" · ");
+    compactShell({action:data.action||"task",title},taskProgress(steps),compactMeta,fragment);
   }
 
   function renderFileChange(data){
@@ -333,7 +388,9 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
         rows.append(row);
       }
       if(rows.childNodes.length)fragment.append(rows);else fragment.append(el("div","empty","No ACP sessions."));
-      compactShell({action:state.action||"list",title:String(state.count??state.sessions.length)+" sessions"},null,"",fragment);return;
+      const first=state.sessions.find(session=>isObject(session));
+      const listMeta=first?[first.status||"",first.agent||"",first.cwd||""].filter(Boolean).join(" · "):"";
+      compactShell({action:state.action||"list",title:String(state.count??state.sessions.length)+" sessions"},null,listMeta,fragment);return;
     }
     const session=isObject(state.session)?state.session:{};
     const identity=acpSessionID(state)||(isObject(state.agent)?state.agent.name||state.agent.title:"")||"ACP";
@@ -376,6 +433,7 @@ pre{margin:8px 0 0;max-height:420px;overflow:auto;border-top:1px solid #eee;padd
     if(!renderable(data))return;
     const serialized=JSON.stringify(data);if(serialized===lastSerialized)return;lastSerialized=serialized;
     if(expectedView==="agentdock_context")renderAgentContext(data);else if(expectedView==="task_progress")renderTask(data);else if(expectedView==="file_change")renderFileChange(data);else renderACP(data);
+    requestAnimationFrame(reportSize);
   }
 
   window.addEventListener("message",event=>{
