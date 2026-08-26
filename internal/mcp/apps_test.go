@@ -194,12 +194,12 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("agent context resource = %#v", contextRead.Contents)
 	}
 	contextHTML := contextRead.Contents[0].Text
-	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionLines", "contextNamedItems", "appendContextOverview", "appendContextSection", "contextPill", `appendContextSection(groups,"Skills"`, `appendContextSection(groups,"MCP"`, `appendContextSection(groups,"ACP"`, `appendContextSection(groups,"Workflow"`, `contextPill(recall?"ON":"OFF","Recall")`, ".context-overview", ".context-list{display:grid;grid-template-columns:repeat(2", ".compact-context"} {
+	for _, marker := range []string{`expectedView="agentdock_context"`, "renderAgentContext", "contextSectionLines", "contextNamedItems", "appendContextOverview", "appendContextSection", "contextPill", `appendContextSection(groups,"Skills"`, `appendContextSection(groups,"MCP"`, `appendContextSection(groups,"ACP"`, `appendContextSection(groups,"Workflow"`, `contextPill(recall?"ON":"OFF","Recall")`, ".context-overview{display:grid;grid-template-columns:repeat(4", ".context-overview-card{min-width:0;padding:1px 12px;border-right:1px solid #ececec", ".context-overview-value{font-size:18px;font-weight:760;line-height:1;color:#111", ".context-section+.context-section{border-top:1px solid #eee", ".context-list{display:grid;grid-template-columns:repeat(2", ".context-item{min-width:0;padding:7px 0;border-bottom:1px solid #f0f0f0", ".context-section-title{font-size:11.5px;font-weight:750;letter-spacing:.01em;color:#111", ".context-name{font-size:11.5px;font-weight:650;color:#111", ".context-desc{margin-top:1px;min-width:0;color:#777", ".compact-context"} {
 		if !strings.Contains(contextHTML, marker) {
 			t.Fatalf("agent context resource missing structured summary marker %q", marker)
 		}
 	}
-	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionItemCount"} {
+	for _, rawMarker := range []string{`el("pre","context-text",text)`, "contextSectionItemCount", ".context-overview-card{padding:10px 11px", ".context-item{min-width:0;padding:8px 9px;border-radius:9px;background:#f8f8f8"} {
 		if strings.Contains(contextHTML, rawMarker) {
 			t.Fatalf("agent context resource still renders raw context marker %q", rawMarker)
 		}
@@ -213,7 +213,12 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
 	}
 	fileChangeHTML := fileChangeRead.Contents[0].Text
-	for _, marker := range []string{"body{margin:0;padding:0;background:transparent", ".compact-toggle{width:100%;min-height:68px;border:0", ".compact-toggle.single-line{min-height:44px", ".compact-row", ".compact-path", ".compact-file-meta", `end.append(el("span","brand","AgentDock"))`, ".detail-panel{border-top:1px solid #ececec", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.classList.add("single-line")`, `toggle.addEventListener("click"`, `compactRows.push(el("span","compact-path",pathText))`, `compactShell({action:data.action||"change",title:fileName},compactRows,fragment)`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`, `@media(max-width:560px){`, `.brand,.compact-action{display:none}`, `@media(max-width:400px){`, `.compact-progress-meta,.compact-file-meta{display:none}`} {
+	for _, marker := range []string{"@media(max-width:560px){:root{font-size:12px}", ".compact-title{font-size:12px;font-weight:700}", ".compact-summary{font-size:11px", ".compact-path{font-size:10.5px}", ".summary{font-size:11px", ".message-text{font-size:11px", ".context-name{font-size:10.5px;color:#111}", ".context-desc{font-size:9.5px;color:#777}", "@media(max-width:400px){:root{font-size:11.5px}"} {
+		if !strings.Contains(fileChangeHTML, marker) {
+			t.Fatalf("file change resource missing mobile typography marker %q", marker)
+		}
+	}
+	for _, marker := range []string{"body{margin:0;padding:0;background:transparent", ".compact-toggle{width:100%;min-height:68px;border:0", ".compact-toggle.single-line{min-height:44px", ".compact-row", ".compact-path", ".compact-file-row", ".compact-file-stats", ".compact-file-stat.add{color:#52745e}", ".compact-file-stat.del{color:#8a5a55}", `end.append(el("span","brand","AgentDock"))`, ".detail-panel{border-top:1px solid #ececec", ".detail-panel[hidden]", `toggle.setAttribute("aria-expanded","false")`, `toggle.classList.add("single-line")`, `toggle.addEventListener("click"`, `compactRows.push(el("span","compact-path",pathText))`, `const detailMeta=el("div","meta")`, `detailMeta.append(el("span","compact-file-stat add",insertions))`, `detailMeta.append(el("span","compact-file-stat del",deletions))`, `stats.append(el("span","compact-file-stat add",insertions))`, `stats.append(el("span","compact-file-stat del",deletions))`, `compactRows.push(fileRow)`, `compactShell({action:data.action||"change",title:fileName},compactRows,fragment)`, ".diff-add{color:#315b45;background:#f5fbf7", ".diff-del{color:#7a3e39;background:#fff7f6", `line.startsWith("--- ")`, `line.startsWith("+++ ")`, `line.startsWith("@@")`, `@media(max-width:560px){`, `.brand,.compact-action{display:none}`, `@media(max-width:400px){`, `.compact-file-state{display:none}`} {
 		if !strings.Contains(fileChangeHTML, marker) {
 			t.Fatalf("file change resource missing simplified UI marker %q", marker)
 		}
@@ -350,7 +355,7 @@ func TestMCPAppsExposeACPViewOnlyWhenACPEnabled(t *testing.T) {
 	if len(read.Contents) != 1 || !strings.Contains(read.Contents[0].Text, "acp_status") {
 		t.Fatalf("ACP resource contents = %#v", read.Contents)
 	}
-	for _, marker := range []string{"message-role", `message.role!=="user"&&message.role!=="assistant"`, "No user or assistant messages in this AgentDock process.", `compactShell({action:state.action||"status",title:identity}`} {
+	for _, marker := range []string{"message-role", `message.role!=="user"&&message.role!=="assistant"`, "No user or assistant messages in this AgentDock process.", `session.agent||(isObject(state.agent)`, `const latest=[...state.messages].reverse().find`, `compactRows.push(el("span","compact-summary",latest.content))`, `const sessionMeta=[session.status||state.status,session.agent||"",session.cwd||""]`, `compactShell({action:state.action||"status",title:identity}`} {
 		if !strings.Contains(read.Contents[0].Text, marker) {
 			t.Fatalf("ACP resource missing conversation marker %q", marker)
 		}
