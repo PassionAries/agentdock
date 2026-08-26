@@ -48,6 +48,11 @@ func (s *Service) ResolveResource(raw string) (string, string, error) {
 		return "", "", toolErrorDetails("SKILL_PATH_ESCAPE", "skill resource path escapes the active Skill package", "validation", map[string]any{"path": raw})
 	}
 
-	display := "skill://" + parsed.Host + "/" + path.Clean(cleaned)
+	display := skillResourceURI(parsed.Host, cleaned)
 	return realCandidate, display, nil
+}
+
+func skillResourceURI(name, resourcePath string) string {
+	resourcePath = strings.TrimPrefix(path.Clean("/"+resourcePath), "/")
+	return (&url.URL{Scheme: "skill", Host: name, Path: "/" + resourcePath}).String()
 }

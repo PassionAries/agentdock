@@ -254,6 +254,24 @@ func OutputSchema(name string) map[string]any {
 		props["archive"] = boolProp("Whether the source directory was packaged as tar.gz.")
 		props["width"] = intProp("Image width when the payload is an image.")
 		props["height"] = intProp("Image height when the payload is an image.")
+	case "render_task_progress":
+		props["view"] = stringProp("MCP App view identifier, task_progress.")
+		props["task"] = objectProp("Task snapshot passed to the renderer.")
+		props["title"] = stringProp("Optional display title.")
+		required = []string{"view", "task"}
+	case "render_file_diff":
+		props["view"] = stringProp("MCP App view identifier, file_diff.")
+		props["diff"] = stringProp("Unified diff text passed to the renderer.")
+		props["path"] = stringProp("Optional file or repository path label.")
+		props["summary"] = stringProp("Optional short diff summary.")
+		props["insertions"] = intProp("Optional inserted line count.")
+		props["deletions"] = intProp("Optional deleted line count.")
+		required = []string{"view", "diff"}
+	case "render_acp_status":
+		props["view"] = stringProp("MCP App view identifier, acp_status.")
+		props["state"] = objectProp("ACP state snapshot passed to the renderer.")
+		props["title"] = stringProp("Optional display title.")
+		required = []string{"view", "state"}
 	case "recall_bootstrap":
 		props["recall_endpoint"] = stringProp("Configured NexusDock Recall endpoint.")
 		props["project"] = stringProp("Backend-selected NexusDock Recall context returned by the backing service; not an input selector for the model.")
@@ -264,7 +282,26 @@ func OutputSchema(name string) map[string]any {
 		props["recall_endpoint"] = stringProp("Configured NexusDock Recall endpoint.")
 		props["recall_kind"] = stringProp("Search kind used.")
 		props["query"] = stringProp("Search query.")
-		props["results"] = arrayProp("Search results.")
+		props["recall_store"] = stringProp("Recall store name.")
+		props["results"] = map[string]any{
+			"type":        "array",
+			"description": "Recall search results with source identity fields.",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"frontmatter":    objectProp("Recall frontmatter metadata."),
+					"matched_fields": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"matched_terms":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"path":           stringProp("Recall-relative document path."),
+					"snippet":        stringProp("Matched content snippet."),
+					"id":             stringProp("Stable Recall document id."),
+					"title":          stringProp("Human-readable document title."),
+					"url":            stringProp("Absolute source URL."),
+				},
+				"required":             []string{"id", "title", "url"},
+				"additionalProperties": true,
+			},
+		}
 		props["count"] = intProp("Search result count.")
 	case "recall_read":
 		props["recall_endpoint"] = stringProp("Configured NexusDock Recall endpoint.")

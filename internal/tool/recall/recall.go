@@ -3,6 +3,8 @@ package recall
 import (
 	"context"
 	"net/http"
+	"net/url"
+	pathpkg "path"
 	"strings"
 )
 
@@ -25,6 +27,7 @@ func (svc *Service) Search(ctx context.Context, args map[string]any) (Result, er
 			return nil, err
 		}
 		decorateRecallResult(result)
+		decorateRecallSearchResults(result, svc.config().NexusEndpoint)
 		relabelRecallWriteResult(result)
 		result["recall_kind"] = "card"
 		return result, nil
@@ -34,6 +37,7 @@ func (svc *Service) Search(ctx context.Context, args map[string]any) (Result, er
 			return nil, err
 		}
 		decorateRecallResult(result)
+		decorateRecallSearchResults(result, svc.config().NexusEndpoint)
 		result["recall_kind"] = kind
 		return result, nil
 	default:
@@ -186,6 +190,38 @@ func decorateRecallResult(result Result) {
 		return
 	}
 	result["recall_store"] = "NexusDock Recall"
+}
+
+// decorateRecallSearchResults 保留 Recall 原始搜索字段，只补充稳定文档标识和可打开来源 URL。
+func decorateRecallSearchResults(result Result, endpoint string) {
+	baseURL, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || !baseURL.IsAbs() || baseURL.Host == "" {
+		return
+	}
+	items, _ := result["results"].([]any)
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		path, _ := item["path"].(string)
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if title, _ := item["title"].(string); strings.TrimSpace(title) == "" {
+			name := pathpkg.Base(path)
+			item["title"] = strings.TrimSuffix(name, pathpkg.Ext(name))
+		}
+
+		sourceURL := *baseURL
+		query := sourceURL.Query()
+		query.Set("path", path)
+		sourceURL.RawQuery = query.Encode()
+		sourceURL.Fragment = "recall/library"
+		item["id"] = path
+		item["url"] = sourceURL.String()
+	}
 }
 
 func recallSearchArgs(args map[string]any, prefix string) map[string]any {

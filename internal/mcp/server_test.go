@@ -14,18 +14,43 @@ import (
 	"github.com/uvwt/agentdock/internal/config"
 )
 
-func TestToolDescriptorsDoNotExposePermissionAnnotations(t *testing.T) {
-	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package"}, config.Config{})
+func TestToolDescriptorsExposeSafetyAnnotations(t *testing.T) {
+	descriptors := toolDescriptorsForNames([]string{"read_file", "skill_package", "task_manage", "file_publish"}, config.Config{})
 	byName := map[string]map[string]any{}
 	for _, descriptor := range descriptors {
 		name, _ := descriptor["name"].(string)
 		byName[name] = descriptor
 	}
-	for _, tool := range []string{"read_file", "skill_package"} {
-		if _, ok := byName[tool]["annotations"]; ok {
-			t.Fatalf("%s should not expose permission annotations", tool)
+
+	assertToolAnnotation(t, byName["read_file"], true, false, false)
+	assertToolAnnotation(t, byName["skill_package"], false, true, true)
+	assertToolAnnotation(t, byName["task_manage"], false, false, false)
+	assertToolAnnotation(t, byName["file_publish"], false, false, true)
+
+	for _, def := range app.ToolDefinitions() {
+		if def.Annotations == nil {
+			t.Fatalf("%s has no safety annotations", def.Name)
 		}
 	}
+}
+
+func assertToolAnnotation(t *testing.T, descriptor map[string]any, readOnly, destructive, openWorld bool) {
+	t.Helper()
+	annotations, ok := descriptor["annotations"].(map[string]any)
+	if !ok {
+		t.Fatalf("descriptor has no annotations: %#v", descriptor)
+	}
+	if got, _ := annotations["readOnlyHint"].(bool); got != readOnly {
+		t.Fatalf("readOnlyHint = %v, want %v", got, readOnly)
+	}
+	assertBoolPointer := func(key string, want bool) {
+		value, ok := annotations[key].(*bool)
+		if !ok || value == nil || *value != want {
+			t.Fatalf("%s = %#v, want %v", key, annotations[key], want)
+		}
+	}
+	assertBoolPointer("destructiveHint", destructive)
+	assertBoolPointer("openWorldHint", openWorld)
 }
 
 func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
@@ -42,6 +67,62 @@ func TestFilePublishDescriptorExposesFileRewritePath(t *testing.T) {
 	meta, ok := byName["file_publish"]["_meta"].(map[string]any)
 	if !ok || meta["file_arg_rewrite_paths"] == nil || meta["openai/fileParams"] == nil {
 		t.Fatalf("file_publish _meta missing: %#v", meta)
+	}
+}
+
+func TestToolInvocationMetadataIsOnlyAddedWhenConfigured(t *testing.T) {
+	descriptors := toolDescriptorsForNames([]string{"exec_command", "task_manage", "read_file"}, config.Config{})
+	byName := map[string]map[string]any{}
+	for _, descriptor := range descriptors {
+		name, _ := descriptor["name"].(string)
+		byName[name] = descriptor
+	}
+
+	execMeta, _ := byName["exec_command"]["_meta"].(map[string]any)
+	if execMeta["openai/toolInvocation/invoking"] != "Running command…" || execMeta["openai/toolInvocation/invoked"] != "Command finished." {
+		t.Fatalf("exec_command invocation metadata = %#v", execMeta)
+	}
+	taskMeta, _ := byName["task_manage"]["_meta"].(map[string]any)
+	if taskMeta["openai/toolInvocation/invoking"] != "Updating task…" || taskMeta["openai/toolInvocation/invoked"] != "Task updated." {
+		t.Fatalf("task_manage invocation metadata = %#v", taskMeta)
+	}
+	if _, ok := byName["read_file"]["_meta"]; ok {
+		t.Fatalf("read_file should not get decorative invocation metadata: %#v", byName["read_file"]["_meta"])
+	}
+}
+
+func TestOpenAIFileMetadataMatchesDeclaredSchemas(t *testing.T) {
+	for _, def := range app.ToolDefinitions() {
+		meta := toolMetadata(def)
+		inputProps, _ := def.InputSchema["properties"].(map[string]any)
+		for _, path := range def.FileArgRewritePaths {
+			property, ok := inputProps[path].(map[string]any)
+			if !ok {
+				t.Fatalf("%s file input path %q missing from input schema", def.Name, path)
+			}
+			if property["type"] != "string" || property["format"] != "binary" {
+				t.Fatalf("%s file input %q must be string/binary: %#v", def.Name, path, property)
+			}
+		}
+		if len(def.FileArgRewritePaths) > 0 {
+			paths, ok := meta["openai/fileParams"].([]string)
+			if !ok || strings.Join(paths, ",") != strings.Join(def.FileArgRewritePaths, ",") {
+				t.Fatalf("%s openai/fileParams = %#v, want %#v", def.Name, meta["openai/fileParams"], def.FileArgRewritePaths)
+			}
+		}
+
+		outputProps, _ := def.OutputSchema["properties"].(map[string]any)
+		for _, path := range def.FileResultRewritePaths {
+			if _, ok := outputProps[path]; !ok {
+				t.Fatalf("%s file output path %q missing from output schema", def.Name, path)
+			}
+		}
+		if len(def.FileResultRewritePaths) > 0 {
+			paths, ok := meta["openai/fileResultPaths"].([]string)
+			if !ok || strings.Join(paths, ",") != strings.Join(def.FileResultRewritePaths, ",") {
+				t.Fatalf("%s openai/fileResultPaths = %#v, want %#v", def.Name, meta["openai/fileResultPaths"], def.FileResultRewritePaths)
+			}
+		}
 	}
 }
 
