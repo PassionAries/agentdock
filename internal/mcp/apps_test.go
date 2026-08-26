@@ -214,6 +214,16 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
 	}
 	fileChangeHTML := fileChangeRead.Contents[0].Text
+	for _, marker := range []string{`.waiting-empty{text-align:center}`, `<main><div id="content" class="empty waiting-empty">Waiting for tool output…</div></main>`} {
+		if !strings.Contains(fileChangeHTML, marker) {
+			t.Fatalf("file change resource missing scoped waiting-state marker %q", marker)
+		}
+	}
+	for _, forbidden := range []string{`.empty{text-align:center`, `main{text-align:center`} {
+		if strings.Contains(fileChangeHTML, forbidden) {
+			t.Fatalf("file change resource contains global waiting-state alignment marker %q", forbidden)
+		}
+	}
 	for _, marker := range []string{"@media(max-width:560px){:root{font-size:12px}", ".compact-title{font-size:12px;font-weight:700}", ".compact-summary{font-size:11px", ".compact-path{font-size:10.5px}", ".summary{font-size:11px", ".message-text{font-size:11px", ".context-name{font-size:10.5px;color:#111}", ".context-desc{font-size:9.5px;color:#777}", "@media(max-width:400px){:root{font-size:11.5px}"} {
 		if !strings.Contains(fileChangeHTML, marker) {
 			t.Fatalf("file change resource missing mobile typography marker %q", marker)
