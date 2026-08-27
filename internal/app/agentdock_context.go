@@ -9,7 +9,13 @@ import (
 	"github.com/uvwt/agentdock/internal/config"
 )
 
+const nexusLocalContextArgument = "_nexus_local_only"
+
 func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
+	return r.agentDockContext(ctx, false)
+}
+
+func (r *Runtime) agentDockContext(ctx context.Context, nexusLocalOnly bool) (Result, error) {
 	skills, skillErr := r.skillCapabilityIndex()
 	contextResult := capabilityContext{
 		Skills:            skills,
@@ -34,7 +40,7 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 		}
 	}
 
-	if requiresNexus(r.cfg) {
+	if requiresNexus(r.cfg) && !nexusLocalOnly {
 		templates, templateErr := r.templateCapabilityIndex(ctx)
 		if templateErr != nil {
 			contextResult.Warnings = append(contextResult.Warnings, capabilityWarning{Source: "workflow_templates", Message: "工作流模板索引暂不可用；多步骤任务仍应先 workflow_template_manage match。"})
@@ -53,7 +59,7 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 	}
 
 	contextResult.Rules = append(contextResult.Rules, "任务执行过程中，在形成有恢复价值的断点时调用 task_manage checkpoint；可用 completed_step_ids/current_step_id 原子批量更新，final_review=pass 不会自动补全未完成步骤。")
-	if requiresNexus(r.cfg) {
+	if requiresNexus(r.cfg) && !nexusLocalOnly {
 		contextResult.Rules = append(contextResult.Rules, "记忆摘要只提供高优先级规则；具体历史事实不确定时，再用 recall_search 或 recall_read 精确召回。")
 	}
 
@@ -64,8 +70,11 @@ func (r *Runtime) AgentDockContext(ctx context.Context) (Result, error) {
 	return result, nil
 }
 
-func (r *Runtime) agentDockContextTool(ctx context.Context, _ map[string]any) (Result, error) {
-	return r.AgentDockContext(ctx)
+func (r *Runtime) agentDockContextTool(ctx context.Context, args map[string]any) (Result, error) {
+	// Nexus fleet 只需要设备本地能力。这个桥接私有提示故意不进入模型可见 schema，
+	// 直接使用 AgentDock MCP 的客户端仍获得包含 Workflow/Recall 的完整 Context。
+	localOnly, _ := args[nexusLocalContextArgument].(bool)
+	return r.agentDockContext(ctx, localOnly)
 }
 
 type capabilityContext struct {

@@ -3,9 +3,12 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/uvwt/agentdock/internal/config"
@@ -202,6 +205,55 @@ func TestNexusAvailableExposesWorkflowAndRecallContext(t *testing.T) {
 		if !strings.Contains(rules, want) {
 			t.Fatalf("context rules missing %q with Nexus: %s", want, rules)
 		}
+	}
+}
+
+func TestAgentDockContextNexusLocalOnlySkipsSharedNexusLookups(t *testing.T) {
+	root := t.TempDir()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unexpected Nexus request", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := config.Config{
+		AgentDockDefaultDir: root,
+		AgentDockHome:       filepath.Join(root, ".agentdock"),
+		NexusEndpoint:       server.URL,
+		NexusDeviceToken:    "test-device-token",
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := NewRuntime(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rt.Close() })
+
+	result, err := rt.Call(context.Background(), "agentdock_context", map[string]any{nexusLocalContextArgument: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("local-only context made %d Nexus requests", got)
+	}
+	var contextResult capabilityContext
+	if err := remarshal(result, &contextResult); err != nil {
+		t.Fatal(err)
+	}
+	if contextResult.WorkflowTemplates == nil || len(contextResult.WorkflowTemplates) != 0 || contextResult.Recall != nil {
+		t.Fatalf("local-only context leaked shared Nexus data: %#v", contextResult)
+	}
+	rules := strings.Join(contextResult.Rules, "\n")
+	for _, sharedRule := range []string{"workflow_template_manage", "source_template_ids", "recall_search", "recall_read", "private_note_manage"} {
+		if strings.Contains(rules, sharedRule) {
+			t.Fatalf("local-only context leaked shared rule %q: %s", sharedRule, rules)
+		}
+	}
+	if !strings.Contains(rules, "task_manage checkpoint") {
+		t.Fatalf("local-only context lost device rule: %s", rules)
 	}
 }
 
