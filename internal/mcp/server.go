@@ -158,12 +158,17 @@ func (s *Server) callTool(ctx context.Context, name string, request *mcpsdk.Call
 	if decodeErr := json.Unmarshal(encoded, &response); decodeErr != nil {
 		return nil, fmt.Errorf("decode MCP tool result: %w", decodeErr)
 	}
+	if def, ok := toolDefinition(name); ok {
+		if meta := toolResultMetadata(def, arguments); len(meta) > 0 {
+			response.Meta = meta
+		}
+	}
 	return &response, nil
 }
 
 func toolMetadata(def ToolDefinition) map[string]any {
 	meta := map[string]any{}
-	if def.UIResourceURI != "" {
+	if def.UIResourceURI != "" && def.UIResourceAction == "" {
 		meta["ui"] = map[string]any{"resourceUri": def.UIResourceURI}
 	}
 	if len(def.FileArgRewritePaths) > 0 {
@@ -178,6 +183,19 @@ func toolMetadata(def ToolDefinition) map[string]any {
 		meta["openai/fileOutputs"] = paths
 	}
 	return meta
+}
+
+// Action-scoped Apps UI lives on the call result rather than the tool descriptor,
+// so unrelated actions on the same action-based tool do not render a widget.
+func toolResultMetadata(def ToolDefinition, arguments map[string]any) mcpsdk.Meta {
+	if def.UIResourceURI == "" || def.UIResourceAction == "" {
+		return nil
+	}
+	action, _ := arguments["action"].(string)
+	if action != def.UIResourceAction {
+		return nil
+	}
+	return mcpsdk.Meta{"ui": map[string]any{"resourceUri": def.UIResourceURI}}
 }
 
 func cloneBoolPointer(value *bool) *bool {

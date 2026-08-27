@@ -132,6 +132,8 @@ func OutputSchema(name string) map[string]any {
 		props["deletions"] = intProp("Deleted line count.")
 
 	case "exec_command", "session_observe", "session_act":
+		props["sessions"] = arrayProp("Command session summaries returned by list or bulk session actions.")
+		props["count"] = intProp("Command session count when a list or bulk action returns multiple sessions.")
 		props["session_id"] = stringProp("Command session id.")
 		props["status"] = stringProp("Session status.")
 		props["runtime"] = stringProp("Command runtime when reported by the host, such as windows or wsl.")

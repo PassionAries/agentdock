@@ -20,7 +20,7 @@ type mcpAppTestHarness struct {
 	serverDone chan error
 }
 
-func assertToolUIResource(t *testing.T, tool *mcpsdk.Tool, uri string) {
+func assertToolUIResource(t *testing.T, tool *mcpsdk.Tool, uri string, allowedMetaKeys ...string) {
 	t.Helper()
 	if tool == nil {
 		t.Fatal("UI tool is nil")
@@ -29,8 +29,14 @@ func assertToolUIResource(t *testing.T, tool *mcpsdk.Tool, uri string) {
 	if !ok || ui["resourceUri"] != uri {
 		t.Fatalf("%s standard ui metadata = %#v", tool.Name, tool.Meta["ui"])
 	}
-	if len(tool.Meta) != 1 {
-		t.Fatalf("%s should expose only standard ui metadata: %#v", tool.Name, tool.Meta)
+	allowed := map[string]bool{"ui": true}
+	for _, key := range allowedMetaKeys {
+		allowed[key] = true
+	}
+	for key := range tool.Meta {
+		if !allowed[key] {
+			t.Fatalf("%s has unexpected tool metadata %q: %#v", tool.Name, key, tool.Meta)
+		}
 	}
 }
 
@@ -138,6 +144,26 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 	if taskManageTool.Annotations == nil || taskManageTool.Annotations.ReadOnlyHint {
 		t.Fatalf("task_manage annotations = %#v", taskManageTool.Annotations)
 	}
+	for _, name := range []string{"exec_command", "session_observe", "session_act"} {
+		tool := tools[name]
+		if tool == nil {
+			t.Fatalf("tools/list did not expose %s", name)
+		}
+		if tool.Meta["ui"] != nil {
+			t.Fatalf("%s should not bind an Apps UI because command tools are high-frequency: %#v", name, tool.Meta)
+		}
+	}
+	assertToolUIResource(t, tools["mcp_tool_call"], app.DynamicMCPUIResourceURI)
+	for _, name := range []string{"mcp_manage", "mcp_tool_search", "mcp_tool_inspect"} {
+		tool := tools[name]
+		if tool == nil {
+			t.Fatalf("tools/list did not expose %s", name)
+		}
+		if tool.Meta["ui"] != nil {
+			t.Fatalf("%s should not bind an Apps UI: %#v", name, tool.Meta)
+		}
+	}
+	assertToolUIResource(t, tools["file_publish"], app.ArtifactUIResourceURI, "file_arg_rewrite_paths", "openai/fileParams")
 
 	resources := map[string]*mcpsdk.Resource{}
 	for resource, err := range harness.session.Resources(t.Context(), nil) {
@@ -146,10 +172,16 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		}
 		resources[resource.URI] = resource
 	}
-	if len(resources) != 3 {
-		t.Fatalf("resources/list count = %d, want 3", len(resources))
+	if len(resources) != 5 {
+		t.Fatalf("resources/list count = %d, want 5", len(resources))
 	}
-	for _, uri := range []string{app.AgentContextUIResourceURI, app.TaskProgressUIResourceURI, app.FileChangeUIResourceURI} {
+	for _, uri := range []string{
+		app.AgentContextUIResourceURI,
+		app.TaskProgressUIResourceURI,
+		app.FileChangeUIResourceURI,
+		app.DynamicMCPUIResourceURI,
+		app.ArtifactUIResourceURI,
+	} {
 		resource := resources[uri]
 		if resource == nil || resource.MIMEType != mcpAppMIMEType {
 			t.Fatalf("resource %s = %#v", uri, resource)
@@ -214,7 +246,7 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("file change resource = %#v", fileChangeRead.Contents)
 	}
 	fileChangeHTML := fileChangeRead.Contents[0].Text
-	for _, marker := range []string{`.waiting-empty{text-align:center}`, `<main><div id="content" class="empty waiting-empty">Waiting for tool output…</div></main>`} {
+	for _, marker := range []string{`.waiting-empty{text-align:center}`, `<main><div id="content" class="empty waiting-empty">Waiting for tool output…</div></main>`, `root.classList.remove("empty","waiting-empty")`} {
 		if !strings.Contains(fileChangeHTML, marker) {
 			t.Fatalf("file change resource missing scoped waiting-state marker %q", marker)
 		}
@@ -247,6 +279,40 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		if len(taskRead.Contents) != 1 || !strings.Contains(taskRead.Contents[0].Text, marker) {
 			t.Fatalf("task resource missing compact or detailed progress marker %q", marker)
 		}
+	}
+	for _, tc := range []struct {
+		uri      string
+		view     string
+		renderer string
+	}{
+		{app.DynamicMCPUIResourceURI, "dynamic_mcp", "renderDynamicMCP"},
+		{app.ArtifactUIResourceURI, "artifact", "renderArtifact"},
+	} {
+		read, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: tc.uri})
+		if err != nil || len(read.Contents) != 1 {
+			t.Fatalf("ReadResource(%s)=%#v err=%v", tc.uri, read, err)
+		}
+		html := read.Contents[0].Text
+		for _, marker := range []string{`expectedView="` + tc.view + `"`, tc.renderer, `compactShell({action:`, `function resultList(fragment,items,emptyText)`, `.compact-result-footer{display:grid;grid-template-columns:minmax(0,1fr);row-gap:2px`, `function compactResultFooter(preview,meta)`} {
+			if !strings.Contains(html, marker) {
+				t.Fatalf("resource %s missing UI marker %q", tc.uri, marker)
+			}
+		}
+		for _, forbidden := range []string{"result-kicker", "result-heading", "result-head-meta", "resultHead("} {
+			if strings.Contains(html, forbidden) {
+				t.Fatalf("resource %s contains a separate gray domain header marker %q", tc.uri, forbidden)
+			}
+		}
+		if tc.uri == app.ArtifactUIResourceURI {
+			for _, marker := range []string{`.detail-link{color:#6f9fc9;text-decoration:none}`, `href:data.url`, `link.target="_blank"`, `link.rel="noopener noreferrer"`} {
+				if !strings.Contains(html, marker) {
+					t.Fatalf("artifact resource missing clickable signed URL marker %q", marker)
+				}
+			}
+		}
+	}
+	if resources[app.RecallUIResourceURI] != nil || resources[app.WorkflowUIResourceURI] != nil {
+		t.Fatal("Nexus-only UI resources should not be listed when Nexus is disabled")
 	}
 	if resources[app.ACPStatusUIResourceURI] != nil {
 		t.Fatal("ACP UI resource should not be listed when ACP is disabled")
@@ -332,6 +398,98 @@ func TestMCPAppsBindResourcesDirectlyToBusinessTools(t *testing.T) {
 		t.Fatalf("task_manage list structuredContent = %#v", listedTasks.StructuredContent)
 	}
 
+}
+
+func TestMCPAppsExposeNexusViewsWhenNexusEnabled(t *testing.T) {
+	root := t.TempDir()
+	harness := newMCPAppTestHarness(t, config.Config{
+		AgentDockDefaultDir: root,
+		AgentDockHome:       filepath.Join(root, ".agentdock"),
+		NexusEndpoint:       "https://nexus.example.test",
+	})
+
+	tools := map[string]*mcpsdk.Tool{}
+	for tool, err := range harness.session.Tools(t.Context(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"recall_search", "recall_write"} {
+		assertToolUIResource(t, tools[name], app.RecallUIResourceURI)
+	}
+	for _, name := range []string{"recall_read", "recall_maintain"} {
+		tool := tools[name]
+		if tool == nil {
+			t.Fatalf("tools/list did not expose %s", name)
+		}
+		if tool.Meta["ui"] != nil {
+			t.Fatalf("%s should not bind an Apps UI: %#v", name, tool.Meta)
+		}
+	}
+	workflowTool := tools["workflow_template_manage"]
+	if workflowTool == nil {
+		t.Fatal("workflow_template_manage was not exposed")
+	}
+	if workflowTool.Meta["ui"] != nil {
+		t.Fatalf("workflow_template_manage should bind UI only on action=match results: %#v", workflowTool.Meta)
+	}
+	workflowDef, ok := toolDefinition("workflow_template_manage")
+	if !ok {
+		t.Fatal("workflow_template_manage definition missing")
+	}
+	matchMeta := toolResultMetadata(workflowDef, map[string]any{"action": "match"})
+	matchUI, ok := matchMeta["ui"].(map[string]any)
+	if !ok || matchUI["resourceUri"] != app.WorkflowUIResourceURI {
+		t.Fatalf("workflow match result UI metadata = %#v", matchMeta)
+	}
+	if meta := toolResultMetadata(workflowDef, map[string]any{"action": "list"}); len(meta) != 0 {
+		t.Fatalf("workflow list should not bind result UI: %#v", meta)
+	}
+	if tool := tools["recall_bootstrap"]; tool == nil {
+		t.Fatal("recall_bootstrap was not exposed")
+	} else if tool.Meta["ui"] != nil {
+		t.Fatalf("recall_bootstrap should keep the existing context-oriented presentation: %#v", tool.Meta)
+	}
+
+	resources := map[string]*mcpsdk.Resource{}
+	for resource, err := range harness.session.Resources(t.Context(), nil) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources[resource.URI] = resource
+	}
+	if len(resources) != 7 {
+		t.Fatalf("resources/list count = %d, want 7", len(resources))
+	}
+	for _, tc := range []struct {
+		uri      string
+		view     string
+		renderer string
+	}{
+		{app.RecallUIResourceURI, "recall", "renderRecall"},
+		{app.WorkflowUIResourceURI, "workflow", "renderWorkflow"},
+	} {
+		resource := resources[tc.uri]
+		if resource == nil || resource.MIMEType != mcpAppMIMEType {
+			t.Fatalf("resource %s = %#v", tc.uri, resource)
+		}
+		read, err := harness.session.ReadResource(t.Context(), &mcpsdk.ReadResourceParams{URI: tc.uri})
+		if err != nil || len(read.Contents) != 1 {
+			t.Fatalf("ReadResource(%s)=%#v err=%v", tc.uri, read, err)
+		}
+		html := read.Contents[0].Text
+		for _, marker := range []string{`expectedView="` + tc.view + `"`, tc.renderer, `function resultList(fragment,items,emptyText)`} {
+			if !strings.Contains(html, marker) {
+				t.Fatalf("resource %s missing UI marker %q", tc.uri, marker)
+			}
+		}
+		for _, forbidden := range []string{"result-kicker", "result-heading", "result-head-meta", "resultHead("} {
+			if strings.Contains(html, forbidden) {
+				t.Fatalf("resource %s contains a separate gray domain header marker %q", tc.uri, forbidden)
+			}
+		}
+	}
 }
 
 func TestReadAppResourceForNexusBridge(t *testing.T) {
